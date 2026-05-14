@@ -1,0 +1,14 @@
+# Hard-pinned because the HF stack moves fast and breaking changes are common.
+torch>=2.4
+transformers>=4.45
+peft>=0.13
+trl>=0.11
+datasets>=3.0
+accelerate>=1.0
+bitsandbytes>=0.44       # only needed for QLoRA
+pyyaml
+tqdm
+# eval
+evaluate
+# Optional: vllm for fast inference (requires 12GB+ VRAM for 7B, fine for 0.5B/1.5B)
+# vllm>=0.6

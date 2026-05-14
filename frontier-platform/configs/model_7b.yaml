@@ -1,0 +1,24 @@
+model:
+  vocab_size: 100352
+  n_layer: 32
+  n_head: 32
+  n_kv_head: 8
+  d_model: 4096
+  d_ffn: 11008
+  max_seq_len: 8192
+  rope_base: 500000
+optim:
+  peak_lr: 1.5e-4
+  warmup_steps: 2000
+  total_steps: 480000
+parallel:
+  backend: megatron
+  dp: 64
+  tp: 1
+  pp: 1
+  zero_stage: 3
+train:
+  seq_len: 8192
+  micro_batch: 2
+  global_batch_tokens: 4000000
+  total_tokens: 2.0e12

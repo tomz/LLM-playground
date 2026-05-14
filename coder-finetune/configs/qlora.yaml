@@ -1,0 +1,46 @@
+out_dir: out/qlora
+seed: 1337
+
+model:
+  name: Qwen/Qwen2.5-Coder-7B
+  dtype: bfloat16
+  attn_impl: sdpa
+  trust_remote_code: false
+
+method: qlora
+
+lora:
+  r: 32
+  alpha: 64
+  dropout: 0.05
+  target_modules: ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']
+  bias: none
+
+qlora:
+  bnb_4bit_quant_type: nf4
+  bnb_4bit_compute_dtype: bfloat16
+  bnb_4bit_use_double_quant: true
+
+dataset:
+  source: hf
+  hf_name: ise-uiuc/Magicoder-OSS-Instruct-75K
+  max_examples: 50000
+  format: chatml
+
+train:
+  max_seq_len: 2048
+  batch_size: 1
+  grad_accum: 32
+  epochs: 2
+  lr: 1.0e-4
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  grad_clip: 0.3
+  log_every: 20
+  save_every: 200
+  packing: true
+
+eval:
+  enable: true
+  n_problems: 50
+  n_samples_per_problem: 1

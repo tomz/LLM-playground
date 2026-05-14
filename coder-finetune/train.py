@@ -1,0 +1,137 @@
+"""SFT / LoRA / QLoRA fine-tuning entry point.
+
+Wraps HuggingFace TRL SFTTrainer; no custom training loop. The point is to
+demonstrate the *plumbing*, not to reinvent it.
+
+Usage:
+    python train.py --config configs/tiny.yaml
+    python train.py --config configs/qlora.yaml
+"""
+from __future__ import annotations
+import argparse, os, sys
+from pathlib import Path
+
+import yaml
+import torch
+
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
+
+DTYPES = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}
+
+
+def build_model_and_tokenizer(cfg: dict):
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    name = cfg["model"]["name"]
+    dtype = DTYPES[cfg["model"]["dtype"]]
+    method = cfg["method"]
+
+    tok = AutoTokenizer.from_pretrained(name, trust_remote_code=cfg["model"]["trust_remote_code"])
+    if tok.pad_token is None:
+        tok.pad_token = tok.eos_token
+
+    kwargs = dict(
+        torch_dtype=dtype,
+        attn_implementation=cfg["model"]["attn_impl"],
+        trust_remote_code=cfg["model"]["trust_remote_code"],
+    )
+
+    if method == "qlora":
+        from transformers import BitsAndBytesConfig
+        q = cfg["qlora"]
+        kwargs["quantization_config"] = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type=q["bnb_4bit_quant_type"],
+            bnb_4bit_compute_dtype=DTYPES[q["bnb_4bit_compute_dtype"]],
+            bnb_4bit_use_double_quant=q["bnb_4bit_use_double_quant"],
+        )
+
+    model = AutoModelForCausalLM.from_pretrained(name, **kwargs)
+
+    if method in ("lora", "qlora"):
+        from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+        if method == "qlora":
+            model = prepare_model_for_kbit_training(model)
+        lcfg = cfg["lora"]
+        peft_cfg = LoraConfig(
+            r=lcfg["r"], lora_alpha=lcfg["alpha"], lora_dropout=lcfg["dropout"],
+            bias=lcfg["bias"], target_modules=lcfg["target_modules"],
+            task_type="CAUSAL_LM",
+        )
+        model = get_peft_model(model, peft_cfg)
+        model.print_trainable_parameters()
+
+    return model, tok
+
+
+def build_trainer(model, tok, train_ds, cfg: dict):
+    from trl import SFTTrainer, SFTConfig
+    t = cfg["train"]
+    args = SFTConfig(
+        output_dir=cfg["out_dir"],
+        num_train_epochs=t["epochs"],
+        per_device_train_batch_size=t["batch_size"],
+        gradient_accumulation_steps=t["grad_accum"],
+        learning_rate=t["lr"],
+        warmup_ratio=t["warmup_ratio"],
+        weight_decay=t["weight_decay"],
+        max_grad_norm=t["grad_clip"],
+        logging_steps=t["log_every"],
+        save_steps=t["save_every"],
+        save_total_limit=2,
+        bf16=(cfg["model"]["dtype"] == "bfloat16"),
+        fp16=(cfg["model"]["dtype"] == "float16"),
+        max_length=t["max_seq_len"],
+        packing=t["packing"],
+        gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
+        report_to="none",
+        seed=cfg["seed"],
+    )
+    return SFTTrainer(
+        model=model,
+        processing_class=tok,
+        args=args,
+        train_dataset=train_ds,
+    )
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config", required=True)
+    args = ap.parse_args()
+
+    with open(args.config) as f:
+        cfg = yaml.safe_load(f)
+    os.makedirs(cfg["out_dir"], exist_ok=True)
+    torch.manual_seed(cfg["seed"])
+
+    print(f"[load] dataset: {cfg['dataset']['source']}")
+    import data
+    train_ds = data.load(cfg["dataset"])
+    if cfg["dataset"].get("max_examples"):
+        train_ds = train_ds.select(range(min(cfg["dataset"]["max_examples"], len(train_ds))))
+    print(f"[load] {len(train_ds)} training examples")
+
+    print(f"[load] model: {cfg['model']['name']} method={cfg['method']}")
+    model, tok = build_model_and_tokenizer(cfg)
+
+    trainer = build_trainer(model, tok, train_ds, cfg)
+    print("[train] starting")
+    trainer.train()
+
+    save_path = os.path.join(cfg["out_dir"], "final")
+    trainer.save_model(save_path)
+    tok.save_pretrained(save_path)
+    print(f"[train] saved -> {save_path}")
+
+    if cfg.get("eval", {}).get("enable"):
+        from eval.run_humaneval import quick_eval
+        ev = cfg["eval"]
+        score = quick_eval(save_path, n_problems=ev["n_problems"],
+                           n_samples=ev["n_samples_per_problem"])
+        print(f"[eval] HumanEval pass@1 = {score*100:.1f}%  (n={ev['n_problems']})")
+
+
+if __name__ == "__main__":
+    main()

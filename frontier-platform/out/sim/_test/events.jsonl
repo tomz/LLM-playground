@@ -1,0 +1,115 @@
+{"kind": "program.start", "name": "toy", "n_params": 1000000000.0, "total_tokens": 10000000000.0, "pretrain_gpus": 64, "pretrain_gpu_type": "H100"}
+{"kind": "data.start", "target_tokens": 10000000000.0, "nodes": 200}
+{"kind": "data.done", "raw_tb": 0.08363651570275582, "yield_tokens": 10000000000.0, "hours": 0.0023232365472987725, "dollars": 0.7434356951356073}
+{"kind": "tokenizer.start", "sample_gb": 200.0, "vocab": 100352}
+{"kind": "tokenizer.done", "hours": 24.0, "dollars": 92.16}
+{"kind": "pretrain.start", "n_params": 1000000000.0, "total_tokens": 10000000000.0, "total_steps": 10000, "seconds_per_step": 0.18958543983822043, "cluster_gpus": 64, "mfu": 0.5, "estimated_hours": 0.5266262217728346}
+{"kind": "pretrain.log", "step": 100, "loss": 4.474523484170523, "day": 1.0003162291152097, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 200, "loss": 3.867390781247362, "day": 1.000535656707615, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 300, "loss": 3.5743406220778273, "day": 1.0007550843000204, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 400, "loss": 3.7184743132507583, "day": 1.0009745118924258, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 500, "loss": 3.5762292136659712, "day": 1.0011939394848313, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 600, "loss": 3.5355617751874933, "day": 1.0014133670772365, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 700, "loss": 3.426485481859697, "day": 1.001632794669642, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 800, "loss": 3.274071922960783, "day": 1.0018522222620474, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 900, "loss": 3.239910275569936, "day": 1.0020716498544529, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 1000, "loss": 3.3131379884121257, "day": 1.002291077446858, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 1100, "loss": 3.169741466381878, "day": 1.0025105050392635, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 1200, "loss": 3.2760476336378175, "day": 1.002729932631669, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 1300, "loss": 3.2776477617164717, "day": 1.0029493602240744, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 1400, "loss": 3.145137192453993, "day": 1.00316878781648, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 1500, "loss": 3.1947824415561468, "day": 1.0033882154088851, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 1600, "loss": 3.069128701563215, "day": 1.0036076430012906, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 1700, "loss": 3.1201459559314073, "day": 1.003827070593696, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 1800, "loss": 3.120161072307589, "day": 1.0040464981861015, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 1900, "loss": 3.022387677302368, "day": 1.0042659257785067, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 2000, "loss": 3.1546783225783464, "day": 1.0044853533709122, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 2100, "loss": 3.0942170877648962, "day": 1.0047047809633176, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 2200, "loss": 3.0673812140976073, "day": 1.004924208555723, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 2300, "loss": 3.0707890599900574, "day": 1.0051436361481283, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 2400, "loss": 3.046257032751875, "day": 1.0053630637405337, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 2500, "loss": 2.9989701145647785, "day": 1.0055824913329392, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 2600, "loss": 3.0207431097813475, "day": 1.0058019189253447, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 2700, "loss": 2.9528234610947557, "day": 1.0060213465177499, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 2800, "loss": 2.9478460934090887, "day": 1.0062407741101553, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 2900, "loss": 3.031279875221011, "day": 1.0064602017025608, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 3000, "loss": 2.942344060924426, "day": 1.0066796292949662, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 3100, "loss": 2.865319885081401, "day": 1.0068990568873715, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 3200, "loss": 2.92673924236949, "day": 1.007118484479777, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 3300, "loss": 2.9143552673902215, "day": 1.0073379120721824, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 3400, "loss": 2.869013317536736, "day": 1.0075573396645878, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 3500, "loss": 2.9451348082161797, "day": 1.0077767672569933, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 3600, "loss": 2.804059594846854, "day": 1.0079961948493985, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 3700, "loss": 2.8483974198219455, "day": 1.008215622441804, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 3800, "loss": 2.876768080026728, "day": 1.0084350500342094, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 3900, "loss": 2.8610208622669306, "day": 1.0086544776266149, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 4000, "loss": 2.911188878793838, "day": 1.00887390521902, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 4100, "loss": 2.90756032111374, "day": 1.0090933328114255, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 4200, "loss": 2.8619635872262625, "day": 1.009312760403831, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 4300, "loss": 2.8267493969790793, "day": 1.0095321879962365, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 4400, "loss": 2.8454456410377547, "day": 1.0097516155886417, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 4500, "loss": 2.9317057045451835, "day": 1.0099710431810471, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 4600, "loss": 2.873626511409754, "day": 1.0101904707734526, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 4700, "loss": 2.8502640057301125, "day": 1.010409898365858, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 4800, "loss": 2.894341551207136, "day": 1.0106293259582633, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 4900, "loss": 2.8142142820628786, "day": 1.0108487535506687, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 5000, "loss": 2.80553032612569, "day": 1.0110681811430742, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 5100, "loss": 2.842029300452245, "day": 1.0112876087354796, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 5200, "loss": 2.788494345496732, "day": 1.011507036327885, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 5300, "loss": 2.8731318780786506, "day": 1.0117264639202903, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 5400, "loss": 2.8058747658162293, "day": 1.0119458915126958, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 5500, "loss": 2.795799208809881, "day": 1.0121653191051012, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 5600, "loss": 2.7937911204043386, "day": 1.0123847466975067, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 5700, "loss": 2.840218778990729, "day": 1.012604174289912, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 5800, "loss": 2.788969025483664, "day": 1.0128236018823173, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 5900, "loss": 2.828826022525403, "day": 1.0130430294747228, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 6000, "loss": 2.8038325998258147, "day": 1.0132624570671283, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 6100, "loss": 2.7547161644537788, "day": 1.0134818846595335, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 6200, "loss": 2.7546531444918, "day": 1.013701312251939, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 6300, "loss": 2.735026729132691, "day": 1.0139207398443444, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 6400, "loss": 2.7757744625921363, "day": 1.0141401674367498, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 6500, "loss": 2.816876444381394, "day": 1.014359595029155, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 6600, "loss": 2.792703581268108, "day": 1.0145790226215605, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 6700, "loss": 2.7557054303236734, "day": 1.014798450213966, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 6800, "loss": 2.7707227864920196, "day": 1.0150178778063714, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 6900, "loss": 2.7426089052191838, "day": 1.0152373053987767, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 7000, "loss": 2.8254760556871554, "day": 1.015456732991182, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 7100, "loss": 2.781268671283739, "day": 1.0156761605835876, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 7200, "loss": 2.7593204748452376, "day": 1.015895588175993, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 7300, "loss": 2.7716121103620734, "day": 1.0161150157683985, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 7400, "loss": 2.7647136022660614, "day": 1.0163344433608037, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 7500, "loss": 2.7234354597486066, "day": 1.0165538709532091, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 7600, "loss": 2.7133981507475973, "day": 1.0167732985456146, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 7700, "loss": 2.7120854824916005, "day": 1.01699272613802, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 7800, "loss": 2.7726787155615917, "day": 1.0172121537304253, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 7900, "loss": 2.744056155404812, "day": 1.0174315813228307, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 8000, "loss": 2.7440607047426164, "day": 1.0176510089152362, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 8100, "loss": 2.7280894802613407, "day": 1.0178704365076416, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 8200, "loss": 2.7354105188521047, "day": 1.0180898641000469, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 8300, "loss": 2.7243809575782527, "day": 1.0183092916924523, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 8400, "loss": 2.7360463586783395, "day": 1.0185287192848578, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 8500, "loss": 2.7006154971626484, "day": 1.0187481468772632, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 8600, "loss": 2.72063057790336, "day": 1.0189675744696685, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 8700, "loss": 2.7063981561068466, "day": 1.019187002062074, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 8800, "loss": 2.735789941373724, "day": 1.0194064296544794, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 8900, "loss": 2.699474489432856, "day": 1.0196258572468848, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 9000, "loss": 2.7060517657886893, "day": 1.0198452848392903, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 9100, "loss": 2.7153508933910095, "day": 1.0200647124316955, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 9200, "loss": 2.701628787800318, "day": 1.020284140024101, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 9300, "loss": 2.70544678027268, "day": 1.0205035676165064, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 9400, "loss": 2.696615172546363, "day": 1.0207229952089119, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 9500, "loss": 2.7062801594675956, "day": 1.020942422801317, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 9600, "loss": 2.713637791950303, "day": 1.0211618503937225, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 9700, "loss": 2.7029029921832035, "day": 1.021381277986128, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 9800, "loss": 2.700459029700162, "day": 1.0216007055785334, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 9900, "loss": 2.678195187097381, "day": 1.0218201331709387, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.log", "step": 10000, "loss": 2.6896534825499754, "day": 1.0220395607633441, "failures": 0, "healthy_gpus": 64, "dollars": 0.6740815638692282}
+{"kind": "pretrain.done", "final_loss": 2.6896534825499754, "steps": 10000, "spikes": 0, "failures": 0, "dollars": 67.40815638692288}
+{"kind": "align.start", "sft_examples": 10000, "sft_epochs": 3, "sft_seq_len": 4096, "pref_pairs": 10000, "rlhf": "dpo", "label_dollar_per_pair": 4.0, "label_dollar_per_sft": 0.5, "n_params": 1000000000.0}
+{"kind": "align.sft.done", "hours": 0.007190203347938433, "dollars": 0.9203460285361195}
+{"kind": "align.rlhf.done", "method": "dpo", "hours": 0.010785305021907651, "dollars": 1.3805190428041794}
+{"kind": "align.done", "sft_quality": 0.8611285422437746, "rlhf_quality": 0.9578572200402161}
+{"kind": "eval.done", "mmlu": 0.2898020861932096, "humaneval": 0.08328697011218217, "gsm8k": 0.0672802963360405, "arena_elo": 1216.7162632284633, "hours": 16.0}
+{"kind": "safety.done", "verdict": "BLOCK", "failed": ["jailbreak"], "scores": {"cbrn": 0.07497076813447878, "cyber": 0.08676817972240103, "persuasion": 0.09830021448696102, "autonomy": 0.10849407836184853, "bias": 0.04744823432434226, "jailbreak": 0.21074790658359954}, "thresholds": {"cbrn": 0.3, "cyber": 0.4, "persuasion": 0.5, "autonomy": 0.35, "bias": 0.1, "jailbreak": 0.2}}
+{"kind": "serve.tier", "tier": "mid", "qps": 5.0, "replicas": 3, "gpus": 3, "daily_dollars": 144.0, "cost_per_mtok": 0.3333333333333333, "ttft_ms": 250}
+{"kind": "program.done", "total_dollars": 45419.44882231043, "total_days": 1.6894552069454212, "evals": {"mmlu": 0.2898020861932096, "humaneval": 0.08328697011218217, "gsm8k": 0.0672802963360405, "arena_elo": 1216.7162632284633}, "safety_verdict": "BLOCK"}

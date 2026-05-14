@@ -1,0 +1,40 @@
+run_id: gpt_7b
+out_dir: out/7b
+data: {dir: data/tiny, seq_len: 4096}
+seed: 1337
+dtype: bfloat16
+log: {jsonl: true, wandb_project: null}
+
+model:
+  vocab_size: 50304
+  n_layer: 32
+  n_head: 32
+  n_kv_head: 8
+  d_model: 4096
+  d_ffn: 11008
+  max_seq_len: 4096
+  rope_base: 10000.0
+  tie_embeddings: false
+
+parallel:
+  dp: -1
+  tp: 1
+  pp: 1
+  zero: fsdp
+  activation_ckpt: selective
+
+optim:
+  lr: 1.5e-4
+  min_lr: 1.5e-5
+  betas: [0.9, 0.95]
+  weight_decay: 0.1
+  grad_clip: 1.0
+  warmup_steps: 2000
+  total_steps: 250000
+
+train:
+  micro_batch: 1
+  grad_accum: 16
+  log_every: 10
+  eval_every: 1000
+  ckpt_every: 2000

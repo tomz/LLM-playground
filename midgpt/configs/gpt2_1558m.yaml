@@ -1,0 +1,37 @@
+out_dir: out/gpt2_1558m
+dataset: openwebtext
+tokenizer: gpt2
+seed: 1337
+dtype: bfloat16
+compile: true
+grad_checkpoint: true
+log: {jsonl: true, wandb_project: null}
+
+model:
+  vocab_size: 50304
+  block_size: 1024
+  n_layer: 48
+  n_head: 25
+  d_model: 1600
+  d_ffn: 6400
+  dropout: 0.0
+  bias: false
+  tie_embeddings: true
+
+optim:
+  lr: 1.5e-4
+  min_lr: 1.5e-5
+  betas: [0.9, 0.95]
+  weight_decay: 0.1
+  grad_clip: 1.0
+  warmup_iters: 2000
+  lr_decay_iters: 400000
+  max_iters: 400000
+
+train:
+  micro_batch: 2
+  grad_accum: 16
+  eval_interval: 5000
+  eval_iters: 200
+  log_interval: 20
+  ckpt_interval: 10000

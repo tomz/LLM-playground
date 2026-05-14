@@ -1,0 +1,80 @@
+{
+  "size": "70b",
+  "gpus": 4096,
+  "gpu_type": "H100",
+  "clock_days": 13.235493796359874,
+  "total_dollars": 3305834.047843211,
+  "cost_by_phase": {
+    "data": 789.9004260815827,
+    "tokenizer": 92.16,
+    "pretrain": 2375669.4735422838,
+    "sft.compute": 1610.6055499382092,
+    "sft.labels": 125000.0,
+    "rlhf.labels": 800000.0,
+    "rlhf.compute": 2415.9083249073137,
+    "eval": 256.0
+  },
+  "cost_by_resource": {
+    "cpu_nodes": 463.87784756780354,
+    "storage_egress": 418.1825785137791,
+    "_dt_acc": 7200.0,
+    "gpu_H100": 2379951.9874171293,
+    "human_labels": 925000.0
+  },
+  "final_loss": 1.8937565332827082,
+  "eval": {
+    "mmlu": 0.7677732219893134,
+    "humaneval": 0.6389375144527467,
+    "gsm8k": 0.6330766521075457,
+    "arena_elo": 1985.255432139811
+  },
+  "safety": {
+    "verdict": "BLOCK",
+    "failed": [
+      "cbrn",
+      "autonomy"
+    ],
+    "scores": {
+      "cbrn": 0.41162963742132097,
+      "cyber": 0.37212502895069044,
+      "persuasion": 0.44876181273843785,
+      "autonomy": 0.3584897431313006,
+      "bias": 0.029673022116238585,
+      "jailbreak": 0.16112937318529005
+    }
+  },
+  "serving": {
+    "nano": {
+      "qps": 80.0,
+      "replicas": 20,
+      "gpus": 20,
+      "daily_dollars": 576.0,
+      "cost_per_mtok": 0.08333333333333333,
+      "ttft_ms": 50
+    },
+    "mid": {
+      "qps": 30.0,
+      "replicas": 12,
+      "gpus": 12,
+      "daily_dollars": 576.0,
+      "cost_per_mtok": 0.2222222222222222,
+      "ttft_ms": 100
+    },
+    "pro": {
+      "qps": 8.0,
+      "replicas": 5,
+      "gpus": 40,
+      "daily_dollars": 1920.0,
+      "cost_per_mtok": 2.7777777777777777,
+      "ttft_ms": 250
+    },
+    "max": {
+      "qps": 1.5,
+      "replicas": 2,
+      "gpus": 128,
+      "daily_dollars": 6144.0,
+      "cost_per_mtok": 47.40740740740741,
+      "ttft_ms": 600
+    }
+  }
+}

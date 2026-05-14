@@ -1,0 +1,10 @@
+# Default pretraining mixture. Weights are renormalized.
+domains:
+  - {name: web_en,         shard_glob: "s3://corpus/web/en/*.bin",     weight: 0.40, epochs_cap: 1.5}
+  - {name: web_multi,      shard_glob: "s3://corpus/web/multi/*.bin",  weight: 0.10, epochs_cap: 1.5}
+  - {name: code,           shard_glob: "s3://corpus/code/*.bin",       weight: 0.15, epochs_cap: 4.0}
+  - {name: books,          shard_glob: "s3://corpus/books/*.bin",      weight: 0.10, epochs_cap: 4.0}
+  - {name: papers,         shard_glob: "s3://corpus/arxiv/*.bin",      weight: 0.08, epochs_cap: 4.0}
+  - {name: math,           shard_glob: "s3://corpus/math/*.bin",       weight: 0.07, epochs_cap: 4.0}
+  - {name: stackexchange,  shard_glob: "s3://corpus/se/*.bin",         weight: 0.05, epochs_cap: 4.0}
+  - {name: synthetic,      shard_glob: "s3://corpus/synth/*.bin",      weight: 0.05, epochs_cap: 2.0}

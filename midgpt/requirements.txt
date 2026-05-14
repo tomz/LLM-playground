@@ -1,0 +1,9 @@
+torch>=2.1
+numpy
+tiktoken>=0.6
+datasets>=2.18
+pyyaml
+tqdm
+requests
+# optional
+# wandb

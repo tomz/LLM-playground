@@ -1,0 +1,8 @@
+torch>=2.4         # FSDP2 + DTensor + pipelining stable in 2.4+
+numpy
+pyyaml
+tqdm
+# optional
+# wandb
+# transformer-engine
+# flash-attn

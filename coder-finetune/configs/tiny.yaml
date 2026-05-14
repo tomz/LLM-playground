@@ -1,0 +1,35 @@
+out_dir: out/tiny
+seed: 1337
+
+model:
+  name: Qwen/Qwen2.5-Coder-0.5B
+  dtype: bfloat16
+  attn_impl: sdpa            # 'sdpa' | 'flash_attention_2' | 'eager'
+  trust_remote_code: false
+
+method: full                 # 'full' | 'lora' | 'qlora'
+
+dataset:
+  source: builtin            # 'builtin' | 'hf' | 'jsonl'
+  hf_name: null              # e.g. 'ise-uiuc/Magicoder-OSS-Instruct-75K'
+  jsonl_path: null
+  max_examples: 200          # cap for smoke runs; null = no cap
+  format: chatml             # 'chatml' | 'alpaca'
+
+train:
+  max_seq_len: 1024
+  batch_size: 1
+  grad_accum: 8              # effective batch = 8
+  epochs: 1
+  lr: 2.0e-5
+  warmup_ratio: 0.05
+  weight_decay: 0.0
+  grad_clip: 1.0
+  log_every: 5
+  save_every: 100
+  packing: false             # multi-pack examples; saves time but care with masking
+
+eval:
+  enable: false              # run a quick HumanEval slice after training
+  n_problems: 20
+  n_samples_per_problem: 1

@@ -1,0 +1,79 @@
+{
+  "size": "7b",
+  "gpus": 512,
+  "gpu_type": "H100",
+  "clock_days": 4.793787569287871,
+  "total_dollars": 1016376.4446283624,
+  "cost_by_phase": {
+    "data": 315.96017043263316,
+    "tokenizer": 92.16,
+    "pretrain": 90326.92955848025,
+    "sft.compute": 154.15795977980002,
+    "sft.labels": 125000.0,
+    "rlhf.labels": 800000.0,
+    "rlhf.compute": 231.23693966970004,
+    "eval": 256.0
+  },
+  "cost_by_resource": {
+    "cpu_nodes": 240.84713902712147,
+    "storage_egress": 167.27303140551166,
+    "_dt_acc": 0.0,
+    "gpu_H100": 90968.32445792975,
+    "human_labels": 925000.0
+  },
+  "final_loss": 2.0196038153554947,
+  "eval": {
+    "mmlu": 0.6272743955172635,
+    "humaneval": 0.4103461029074896,
+    "gsm8k": 0.3609586366237161,
+    "arena_elo": 1710.7973804467197
+  },
+  "safety": {
+    "verdict": "BLOCK",
+    "failed": [
+      "jailbreak"
+    ],
+    "scores": {
+      "cbrn": 0.2940747909461126,
+      "cyber": 0.23319657402544416,
+      "persuasion": 0.2991465535881726,
+      "autonomy": 0.2516217008811112,
+      "bias": 0.029673022116238585,
+      "jailbreak": 0.20387659008536585
+    }
+  },
+  "serving": {
+    "nano": {
+      "qps": 80.0,
+      "replicas": 20,
+      "gpus": 20,
+      "daily_dollars": 576.0,
+      "cost_per_mtok": 0.08333333333333333,
+      "ttft_ms": 50
+    },
+    "mid": {
+      "qps": 30.0,
+      "replicas": 12,
+      "gpus": 12,
+      "daily_dollars": 576.0,
+      "cost_per_mtok": 0.2222222222222222,
+      "ttft_ms": 100
+    },
+    "pro": {
+      "qps": 8.0,
+      "replicas": 5,
+      "gpus": 40,
+      "daily_dollars": 1920.0,
+      "cost_per_mtok": 2.7777777777777777,
+      "ttft_ms": 250
+    },
+    "max": {
+      "qps": 1.5,
+      "replicas": 2,
+      "gpus": 128,
+      "daily_dollars": 6144.0,
+      "cost_per_mtok": 47.40740740740741,
+      "ttft_ms": 600
+    }
+  }
+}

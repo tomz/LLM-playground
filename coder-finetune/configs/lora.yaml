@@ -1,0 +1,41 @@
+out_dir: out/lora
+seed: 1337
+
+model:
+  name: Qwen/Qwen2.5-Coder-1.5B
+  dtype: bfloat16
+  attn_impl: sdpa
+  trust_remote_code: false
+
+method: lora
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules: ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']
+  bias: none
+
+dataset:
+  source: hf
+  hf_name: ise-uiuc/Magicoder-OSS-Instruct-75K
+  max_examples: 20000
+  format: chatml
+
+train:
+  max_seq_len: 2048
+  batch_size: 1
+  grad_accum: 16
+  epochs: 2
+  lr: 2.0e-4
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  grad_clip: 1.0
+  log_every: 10
+  save_every: 200
+  packing: true
+
+eval:
+  enable: true
+  n_problems: 50
+  n_samples_per_problem: 1

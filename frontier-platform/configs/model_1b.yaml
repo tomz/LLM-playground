@@ -1,0 +1,25 @@
+model:
+  vocab_size: 100352
+  n_layer: 24
+  n_head: 16
+  n_kv_head: 8
+  d_model: 2048
+  d_ffn: 5632
+  max_seq_len: 8192
+  rope_base: 500000
+  tie_embeddings: true
+optim:
+  peak_lr: 3.0e-4
+  warmup_steps: 2000
+  total_steps: 240000
+parallel:
+  backend: torch_native
+  dp: 8
+  tp: 1
+  pp: 1
+  zero_stage: 3
+train:
+  seq_len: 8192
+  micro_batch: 4
+  global_batch_tokens: 1000000
+  total_tokens: 1.0e12
