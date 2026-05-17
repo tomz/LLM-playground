@@ -1,5 +1,9 @@
 import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+# Evict stdlib `platform` so our local package wins (pytest imports stdlib
+# platform during startup before conftest runs).
+for _m in [k for k in list(sys.modules) if k == "platform" or k.startswith("platform.")]:
+    del sys.modules[_m]
 
 import pytest
 
