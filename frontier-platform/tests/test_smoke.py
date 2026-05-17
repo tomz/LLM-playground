@@ -10,7 +10,7 @@ MODULES = [
     "platform.data.acquire", "platform.data.extract", "platform.data.filter",
     "platform.data.dedup", "platform.data.decontaminate", "platform.data.mix",
     "platform.data.shard", "platform.data.loader",
-    "platform.tokenizer.bpe",
+    "platform.tokenizer.bpe", "platform.tokenizer.bytes",
     "platform.model.config", "platform.model.transformer",
     "platform.training.optim", "platform.training.parallel",
     "platform.training.checkpoint", "platform.training.stability",
