@@ -1,61 +1,241 @@
-"""Reference decoder-only transformer skeleton (PyTorch-flavored pseudocode).
+"""Decoder-only transformer (real implementation, ported from distgpt).
 
-Production would back this with Megatron-Core or Transformer Engine modules.
-We deliberately keep one file readable end-to-end.
+Pascal-friendly: uses `F.scaled_dot_product_attention` (SDPA math backend
+auto-selects on sm_60). No FlashAttention, no bf16 — fp16 or fp32 only.
 """
 from __future__ import annotations
+import math
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
 from .config import ModelConfig
 
 
-class RMSNorm:
-    def __init__(self, dim: int, eps: float = 1e-5): ...
-    def __call__(self, x): raise NotImplementedError
+class RMSNorm(nn.Module):
+    def __init__(self, dim: int, eps: float = 1e-5):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        n = x.float() * torch.rsqrt(x.float().pow(2).mean(-1, keepdim=True) + self.eps)
+        return n.type_as(x) * self.weight
 
 
-class RoPE:
-    def __init__(self, head_dim: int, base: float, max_seq: int): ...
-    def apply(self, q, k, positions): raise NotImplementedError
+def _build_rope(seq_len: int, head_dim: int, base: float, device, dtype):
+    inv_freq = 1.0 / (base ** (torch.arange(0, head_dim, 2, device=device).float() / head_dim))
+    t = torch.arange(seq_len, device=device).float()
+    f = torch.outer(t, inv_freq)
+    return f.cos().to(dtype), f.sin().to(dtype)
 
 
-class GQAttention:
-    """Grouped-Query Attention. Backed by FlashAttention-2/3 in production."""
-    def __init__(self, cfg: ModelConfig): ...
-    def __call__(self, x, kv_cache=None): raise NotImplementedError
+def _apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    x1, x2 = x[..., : x.shape[-1] // 2], x[..., x.shape[-1] // 2 :]
+    cos = cos[None, None, : x.shape[-2], :]
+    sin = sin[None, None, : x.shape[-2], :]
+    return torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
 
 
-class SwiGLU:
-    def __init__(self, d_model: int, d_ffn: int): ...
-    def __call__(self, x): raise NotImplementedError
+class RoPE(nn.Module):
+    """Rotary Position Embedding. Stateless except for a cached (cos, sin) buffer."""
+
+    def __init__(self, head_dim: int, base: float = 10_000.0, max_seq: int = 8192):
+        super().__init__()
+        self.head_dim = head_dim
+        self.base = base
+        self.max_seq = max_seq
+        self._cache: tuple[torch.Tensor, torch.Tensor] | None = None
+
+    def _ensure(self, seq_len: int, device, dtype):
+        if (
+            self._cache is None
+            or self._cache[0].device != device
+            or self._cache[0].dtype != dtype
+            or self._cache[0].shape[0] < seq_len
+        ):
+            self._cache = _build_rope(max(seq_len, self.max_seq), self.head_dim, self.base, device, dtype)
+        return self._cache
+
+    def apply(self, q: torch.Tensor, k: torch.Tensor, positions: torch.Tensor | None = None):
+        T = q.shape[-2]
+        cos, sin = self._ensure(T, q.device, q.dtype)
+        if positions is not None:
+            cos = cos[positions]
+            sin = sin[positions]
+        else:
+            cos = cos[:T]
+            sin = sin[:T]
+        return _apply_rope(q, cos, sin), _apply_rope(k, cos, sin)
 
 
-class MoEFFN:
-    """Optional sparse FFN. Top-k routing with load-balance + z-loss."""
-    def __init__(self, cfg: ModelConfig): ...
-    def __call__(self, x): raise NotImplementedError
+class GQAttention(nn.Module):
+    """Grouped-Query Attention via SDPA. KV cache argument is accepted but ignored
+    here (used by the serving engine via a separate code path)."""
+
+    def __init__(self, cfg: ModelConfig):
+        super().__init__()
+        self.cfg = cfg
+        D = cfg.head_dim
+        self.q_proj = nn.Linear(cfg.d_model, cfg.n_head * D, bias=False)
+        self.k_proj = nn.Linear(cfg.d_model, cfg.n_kv_head * D, bias=False)
+        self.v_proj = nn.Linear(cfg.d_model, cfg.n_kv_head * D, bias=False)
+        self.o_proj = nn.Linear(cfg.n_head * D, cfg.d_model, bias=False)
+        self.rope = RoPE(D, base=cfg.rope_base, max_seq=cfg.max_seq_len)
+
+    def forward(self, x: torch.Tensor, kv_cache=None) -> torch.Tensor:
+        B, T, _ = x.shape
+        H, Hk, D = self.cfg.n_head, self.cfg.n_kv_head, self.cfg.head_dim
+        q = self.q_proj(x).view(B, T, H, D).transpose(1, 2)
+        k = self.k_proj(x).view(B, T, Hk, D).transpose(1, 2)
+        v = self.v_proj(x).view(B, T, Hk, D).transpose(1, 2)
+        q, k = self.rope.apply(q, k)
+        if Hk != H:
+            rep = H // Hk
+            k = k.repeat_interleave(rep, dim=1)
+            v = v.repeat_interleave(rep, dim=1)
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        y = y.transpose(1, 2).contiguous().view(B, T, H * D)
+        return self.o_proj(y)
 
 
-class Block:
-    def __init__(self, cfg: ModelConfig, layer_idx: int):
+class SwiGLU(nn.Module):
+    def __init__(self, d_model: int, d_ffn: int):
+        super().__init__()
+        self.w1 = nn.Linear(d_model, d_ffn, bias=False)
+        self.w3 = nn.Linear(d_model, d_ffn, bias=False)
+        self.w2 = nn.Linear(d_ffn, d_model, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+
+
+class MoEFFN(nn.Module):
+    """Top-k softmax routing over a small stack of SwiGLU experts.
+
+    Stores `self.last_aux_loss` (load-balance + router z-loss) so the trainer
+    can add it to the main loss. No expert-parallelism (single-device)."""
+
+    def __init__(self, cfg: ModelConfig, z_loss_coeff: float = 1e-3, lb_loss_coeff: float = 1e-2):
+        super().__init__()
+        self.cfg = cfg
+        self.n_experts = int(cfg.moe_num_experts)
+        self.top_k = int(cfg.moe_top_k)
+        assert self.n_experts > 0 and 1 <= self.top_k <= self.n_experts
+        self.gate = nn.Linear(cfg.d_model, self.n_experts, bias=False)
+        self.experts = nn.ModuleList(
+            [SwiGLU(cfg.d_model, cfg.d_ffn) for _ in range(self.n_experts)]
+        )
+        self.z_loss_coeff = z_loss_coeff
+        self.lb_loss_coeff = lb_loss_coeff
+        self.last_aux_loss: torch.Tensor = torch.tensor(0.0)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, T, D = x.shape
+        flat = x.reshape(B * T, D)
+        logits = self.gate(flat)                                  # [N, E]
+        # z-loss: penalize large logsumexp
+        lse = torch.logsumexp(logits, dim=-1)
+        z_loss = self.z_loss_coeff * (lse.pow(2).mean())
+        probs = logits.softmax(dim=-1)                            # [N, E]
+        top_w, top_i = probs.topk(self.top_k, dim=-1)             # [N, k]
+        top_w = top_w / (top_w.sum(dim=-1, keepdim=True) + 1e-9)
+
+        # Load-balance: f_e * P_e per Switch Transformer
+        with torch.no_grad():
+            one_hot = torch.zeros_like(probs).scatter_(1, top_i, 1.0 / self.top_k)
+            f = one_hot.mean(dim=0)        # fraction of tokens routed to e
+        P = probs.mean(dim=0)              # mean gating probability per e
+        lb_loss = self.lb_loss_coeff * self.n_experts * (f * P).sum()
+        self.last_aux_loss = z_loss + lb_loss
+
+        out = torch.zeros_like(flat)
+        # Dispatch: per-expert mask + matmul. Fine for small N.
+        for e in range(self.n_experts):
+            mask = (top_i == e)                                   # [N, k]
+            if not mask.any():
+                continue
+            # weight contribution from each slot routed to expert e
+            w_e = (top_w * mask).sum(dim=-1)                      # [N]
+            sel = w_e > 0
+            if not sel.any():
+                continue
+            y_e = self.experts[e](flat[sel])
+            out[sel] += w_e[sel, None] * y_e
+        return out.view(B, T, D)
+
+
+class Block(nn.Module):
+    def __init__(self, cfg: ModelConfig, layer_idx: int = 0):
+        super().__init__()
+        self.layer_idx = layer_idx
         self.attn_norm = RMSNorm(cfg.d_model, cfg.rms_eps)
         self.attn = GQAttention(cfg)
         self.ffn_norm = RMSNorm(cfg.d_model, cfg.rms_eps)
         self.ffn = MoEFFN(cfg) if cfg.moe_num_experts else SwiGLU(cfg.d_model, cfg.d_ffn)
 
-    def __call__(self, x, kv_cache=None):
+    def forward(self, x: torch.Tensor, kv_cache=None) -> torch.Tensor:
         x = x + self.attn(self.attn_norm(x), kv_cache=kv_cache)
         x = x + self.ffn(self.ffn_norm(x))
         return x
 
 
-class Transformer:
+class Transformer(nn.Module):
     def __init__(self, cfg: ModelConfig):
+        super().__init__()
         self.cfg = cfg
-        # embedding, blocks x n_layer, final norm, lm_head
+        self.tok_emb = nn.Embedding(cfg.vocab_size, cfg.d_model)
+        self.layers = nn.ModuleList([Block(cfg, layer_idx=i) for i in range(cfg.n_layer)])
+        self.final_norm = RMSNorm(cfg.d_model, cfg.rms_eps)
+        self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
+        if cfg.tie_embeddings:
+            self.lm_head.weight = self.tok_emb.weight
+        self.init_weights("default")
 
-    def forward(self, tokens, positions=None):
-        """Returns logits [B, T, V]."""
-        raise NotImplementedError
+    def forward(self, tokens: torch.Tensor, targets: torch.Tensor | None = None, positions=None):
+        x = self.tok_emb(tokens)
+        for blk in self.layers:
+            x = blk(x)
+        x = self.final_norm(x)
+        logits = self.lm_head(x)
+        loss = None
+        if targets is not None:
+            loss = F.cross_entropy(
+                logits.float().view(-1, logits.size(-1)),
+                targets.reshape(-1),
+            )
+            # Add MoE aux losses if any
+            for blk in self.layers:
+                if isinstance(blk.ffn, MoEFFN):
+                    loss = loss + blk.ffn.last_aux_loss
+        return logits, loss
 
-    def init_weights(self, scheme: str = "muP"):
-        """Width-scaled init so that hyperparams transfer across model sizes."""
-        raise NotImplementedError
+    def init_weights(self, scheme: str = "muP") -> None:
+        """muP-flavored: residual output projections get smaller std."""
+        n_layer = self.cfg.n_layer
+        residual_std = 0.02 / math.sqrt(2 * max(1, n_layer)) if scheme == "muP" else 0.02
+        base_std = 0.02
+
+        def _init(m: nn.Module, std: float):
+            if isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, mean=0.0, std=std)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+        for m in self.modules():
+            if isinstance(m, nn.Embedding):
+                nn.init.normal_(m.weight, mean=0.0, std=base_std)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, mean=0.0, std=base_std)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+        # Overwrite the output projections with the residual-scaled std.
+        for blk in self.layers:
+            _init(blk.attn.o_proj, residual_std)
+            if isinstance(blk.ffn, SwiGLU):
+                _init(blk.ffn.w2, residual_std)
+            elif isinstance(blk.ffn, MoEFFN):
+                for e in blk.ffn.experts:
+                    _init(e.w2, residual_std)

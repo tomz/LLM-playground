@@ -19,7 +19,7 @@ MODULES = [
     "platform.alignment.ppo", "platform.alignment.dpo",
     "platform.eval.harness", "platform.eval.arena",
     "platform.safety.gates", "platform.safety.classifiers", "platform.safety.redteam",
-    "platform.serving.engine", "platform.serving.router",
+    "platform.serving.engine", "platform.serving.router", "platform.serving.torch_engine",
     "platform.infra.cluster", "platform.infra.scheduler", "platform.infra.observability",
 ]
 

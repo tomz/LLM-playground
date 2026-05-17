@@ -10,5 +10,8 @@ requires-python = ">=3.10"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "gpu: requires CUDA",
+]
 addopts = "-p no:anyio"
 pythonpath = ["."]
