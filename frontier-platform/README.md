@@ -66,3 +66,29 @@ frontier-platform/
 | Safety           | ✅        | ✅            | —     |
 | Serving          | ✅        | ✅            | smoke |
 | Infra            | ✅        | ✅            | —     |
+
+## What works today
+
+- ✅ Tier 1 — **data pipeline**: acquire local files, extract, filter, dedup, decontaminate, shard, mix, stream-load (resumable).
+- ✅ Tier 1 — **tokenizer**: bytes-level (stdlib) + optional HF BPE.
+- ✅ Tier 1 — **safety**: classifiers, gates, red-team toy suite. **Infra**: cluster, local scheduler, observability.
+- ✅ Tier 1 — **eval**: in-process perplexity + arena ELO.
+- ✅ Tier 2 — real **Transformer** (RoPE / RMSNorm / SwiGLU / GQA / MoE) with muP-style init.
+- ✅ Tier 2 — **training**: AdamW (WD-by-dim), cosine+warmup LR, single-process ParallelEngine, DCP-style checkpointing, SpikeMonitor + RewindController, `Trainer.fit`.
+- ✅ Tier 2 — **serving**: in-process `TorchEngine` with streaming generate, router.
+- ✅ Tier 3 — **alignment**: SFT (assistant-token loss mask), BT reward model, DPO (sigmoid / IPO / KTO variants), PPO with GAE + KL-to-reference penalty + clipped objective + value head.
+- ✅ End-to-end **smoke pipeline** (`bash scripts/smoke_pipeline.sh`, < 10s CPU): corpus → shards → pretrain → SFT → RM → DPO → PPO → eval → generate.
+
+Still `NotImplementedError` (intentionally — out of scope for a single-machine blueprint):
+
+- CommonCrawl / GitHub / Arxiv / Wikipedia source connectors (need real network + scrubbing).
+- FSDP2 / TP / PP backends (use `distgpt` for those).
+- vLLM / TRT-LLM / SGLang serving backends (lazy-import stubs).
+
+## Running tests
+
+```bash
+cd frontier-platform
+.venv/bin/python -m pytest -q             # 69 tests, ~4 s on CPU
+bash scripts/smoke_pipeline.sh            # full pipeline, ~6 s on CPU
+```
