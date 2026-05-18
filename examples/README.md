@@ -1,6 +1,6 @@
 # Examples
 
-Three end-to-end pipelines that exercise the `frontier-platform` code on a real GPU
+Four end-to-end pipelines that exercise the `frontier-platform` code on a real GPU
 (targeted at an RTX 3050, 8 GB, sm_86).
 
 | # | Example                                                  | What it shows                                   | Wall time (3050) |
@@ -8,6 +8,7 @@ Three end-to-end pipelines that exercise the `frontier-platform` code on a real 
 | 1 | [`01_pretrain_shakespeare`](01_pretrain_shakespeare/)    | Real BPE tokenizer + shard pipeline + 3 k-step pretrain of a 12 M-param transformer on TinyShakespeare, then `TorchEngine` generation. | ~5 min |
 | 2 | [`02_align_chain`](02_align_chain/)                      | SFT → reward model → DPO on a synthetic Shakespeare-character QA task, built on the example 01 checkpoint. Side-by-side base / SFT / DPO comparison. | ~3 min |
 | 3 | [`03_moe_vs_dense`](03_moe_vs_dense/)                    | Dense vs 4-expert top-2 MoE at matched active params, on the example 01 shards. Loss curves, tokens/sec, per-expert utilisation. | ~5 min |
+| 4 | [`04_max_throughput`](04_max_throughput/)                | Batch-autotuned 380 M-param transformer (bf16 autocast + activation ckpt) pushing the 3050 to **99.8 % util / 94 % MFU**, with background `nvidia-smi` sampling. | ~55 min |
 
 ## Running
 

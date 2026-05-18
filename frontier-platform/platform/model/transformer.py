@@ -201,8 +201,14 @@ class Transformer(nn.Module):
 
     def forward(self, tokens: torch.Tensor, targets: torch.Tensor | None = None, positions=None):
         x = self.tok_emb(tokens)
-        for blk in self.layers:
-            x = blk(x)
+        use_ckpt = getattr(self.cfg, "activation_ckpt", "none") == "selective" and self.training
+        if use_ckpt:
+            from torch.utils.checkpoint import checkpoint
+            for blk in self.layers:
+                x = checkpoint(blk, x, use_reentrant=False)
+        else:
+            for blk in self.layers:
+                x = blk(x)
         x = self.final_norm(x)
         logits = self.lm_head(x)
         loss = None

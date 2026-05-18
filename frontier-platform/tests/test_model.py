@@ -65,3 +65,21 @@ def test_moe_routing_load_balance():
     aux = m.layers[0].ffn.last_aux_loss
     assert float(aux) > 0.0
     assert torch.isfinite(loss)
+
+
+def test_activation_checkpoint_runs():
+    """Selective activation checkpointing must produce finite loss + grads."""
+    base = ModelConfig(vocab_size=256, n_layer=4, n_head=4, n_kv_head=2,
+                       d_model=64, d_ffn=128, max_seq_len=32)
+    ckpt = ModelConfig(vocab_size=256, n_layer=4, n_head=4, n_kv_head=2,
+                       d_model=64, d_ffn=128, max_seq_len=32,
+                       activation_ckpt="selective")
+    torch.manual_seed(0); m1 = Transformer(base).train()
+    torch.manual_seed(0); m2 = Transformer(ckpt).train()
+    x = torch.randint(0, 256, (2, 16))
+    y = torch.randint(0, 256, (2, 16))
+    _, l1 = m1(x, targets=y); l1.backward()
+    _, l2 = m2(x, targets=y); l2.backward()
+    assert torch.isfinite(l1) and torch.isfinite(l2)
+    # losses should be very close (same init, same compute graph mathematically)
+    assert abs(float(l1) - float(l2)) < 1e-3

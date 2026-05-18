@@ -18,6 +18,9 @@ class ModelConfig:
     moe_num_experts: int = 0
     moe_top_k: int = 2
     moe_capacity_factor: float = 1.25
+    # Activation checkpointing: "none" or "selective" (wraps each Block in
+    # torch.utils.checkpoint to trade compute for memory).
+    activation_ckpt: str = "none"
 
     @property
     def head_dim(self) -> int:
