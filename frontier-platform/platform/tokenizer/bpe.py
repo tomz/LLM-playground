@@ -41,6 +41,7 @@ def train(corpus_glob: str, cfg: TokenizerConfig, out_path: str) -> None:
     from tokenizers.models import BPE  # type: ignore
     from tokenizers.trainers import BpeTrainer  # type: ignore
     from tokenizers.pre_tokenizers import ByteLevel, Digits, Sequence  # type: ignore
+    from tokenizers.decoders import ByteLevel as ByteLevelDecoder  # type: ignore
 
     files = sorted(glob.glob(corpus_glob))
     if not files:
@@ -50,6 +51,8 @@ def train(corpus_glob: str, cfg: TokenizerConfig, out_path: str) -> None:
     if cfg.split_digits:
         pre.append(Digits(individual_digits=True))
     tok.pre_tokenizer = Sequence(pre) if len(pre) > 1 else (pre[0] if pre else None)
+    if cfg.byte_level:
+        tok.decoder = ByteLevelDecoder()
     trainer = BpeTrainer(vocab_size=cfg.vocab_size, special_tokens=list(cfg.specials))
     tok.train(files, trainer)
     tok.save(out_path)

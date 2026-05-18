@@ -130,6 +130,7 @@ class MoEFFN(nn.Module):
         self.z_loss_coeff = z_loss_coeff
         self.lb_loss_coeff = lb_loss_coeff
         self.last_aux_loss: torch.Tensor = torch.tensor(0.0)
+        self.last_expert_counts: torch.Tensor = torch.zeros(self.n_experts, dtype=torch.long)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, T, D = x.shape
@@ -146,6 +147,11 @@ class MoEFFN(nn.Module):
         with torch.no_grad():
             one_hot = torch.zeros_like(probs).scatter_(1, top_i, 1.0 / self.top_k)
             f = one_hot.mean(dim=0)        # fraction of tokens routed to e
+            # Per-expert token counts (top-k routing → each token counted top_k times)
+            counts = torch.zeros(self.n_experts, device=probs.device, dtype=torch.long)
+            for e in range(self.n_experts):
+                counts[e] = (top_i == e).sum()
+            self.last_expert_counts = counts
         P = probs.mean(dim=0)              # mean gating probability per e
         lb_loss = self.lb_loss_coeff * self.n_experts * (f * P).sum()
         self.last_aux_loss = z_loss + lb_loss
