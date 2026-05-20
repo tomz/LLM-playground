@@ -1,0 +1,17 @@
+model: 0.86M params
+iter      0 | loss 4.2281 | lr 5.00e-05 | 16.1 ms/it
+iter     25 | loss 3.0775 | lr 9.99e-04 | 14.0 ms/it
+iter     50 | loss 2.6099 | lr 9.75e-04 | 14.1 ms/it
+iter     75 | loss 2.3795 | lr 9.17e-04 | 14.1 ms/it
+iter    100 | loss 2.2536 | lr 8.31e-04 | 14.1 ms/it
+           eval | train 2.2231 | val 2.2395
+iter    125 | loss 2.1155 | lr 7.22e-04 | 22.5 ms/it
+iter    150 | loss 2.0298 | lr 6.00e-04 | 13.8 ms/it
+iter    175 | loss 1.9210 | lr 4.75e-04 | 13.8 ms/it
+iter    200 | loss 1.8976 | lr 3.55e-04 | 13.8 ms/it
+           eval | train 1.9006 | val 1.9915
+           saved ckpt -> out/smoke/ckpt.pt
+iter    225 | loss 1.8752 | lr 2.50e-04 | 22.7 ms/it
+iter    250 | loss 1.8326 | lr 1.69e-04 | 13.9 ms/it
+iter    275 | loss 1.7789 | lr 1.18e-04 | 14.0 ms/it
+done. final ckpt -> out/smoke/ckpt.pt
