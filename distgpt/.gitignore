@@ -2,6 +2,6 @@ __pycache__/
 *.pyc
 .venv/
 out/
-data/
+/data/
 wandb/
 *.egg-info/
