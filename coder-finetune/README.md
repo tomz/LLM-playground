@@ -38,6 +38,21 @@ python -m venv .venv
 .venv/bin/python infer/generate.py --model out/tiny --prompt 'def fib(n):'
 ```
 
+## Worked example: 84-second LoRA on RTX 3050
+
+A reproducible run with real numbers (1.76 GB peak VRAM, 80 steps, loss
+2.85 → 0.45) lives at [`examples/3050_lora.md`](examples/3050_lora.md). It
+uses the built-in 16-pair instruction set so no dataset download is needed
+beyond the 0.5B base weights.
+
+```bash
+CUDA_VISIBLE_DEVICES=0 .venv/bin/python train.py --config configs/lora_3050.yaml
+.venv/bin/python infer/generate.py --model out/lora_3050/final --prompt-style raw \
+    --prompt 'def gcd(a, b):
+    """Return the greatest common divisor of a and b."""
+'
+```
+
 ## What this is NOT
 
 - Not a from-scratch trainer (use `nanogpt-edu` / `midgpt` / `distgpt`).

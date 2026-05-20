@@ -1,0 +1,58 @@
+# 3050-friendly LoRA recipe for Qwen2.5-Coder-0.5B on the builtin dataset.
+# Designed to (a) finish in ~5 minutes, (b) fit comfortably in 8 GB VRAM, and
+# (c) actually move the loss curve so the run is informative, not a smoke test.
+#
+# Hardware target: RTX 3050 8 GB (Ampere, sm_86, native bf16).
+# Expected VRAM: ~3.0 GB peak (model + LoRA grads + AdamW state + AMP buffers).
+#
+out_dir: out/lora_3050
+seed: 1337
+
+model:
+  name: Qwen/Qwen2.5-Coder-0.5B
+  dtype: bfloat16
+  attn_impl: sdpa
+  trust_remote_code: false
+
+method: lora
+
+# Standard LoRA-on-attention recipe. r=16 / alpha=32 is the published sweet
+# spot for sub-2B models on small instruction sets — large enough to actually
+# learn, small enough that AdamW state stays in single-digit MBs.
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  bias: none
+  target_modules: ['q_proj', 'k_proj', 'v_proj', 'o_proj',
+                   'gate_proj', 'up_proj', 'down_proj']
+
+# 16 builtin (prompt, response) pairs × repeat=20 → 320 examples.
+# We override repeat by setting the dataset's max_examples after .repeat
+# is applied in cf_data.load_builtin (default repeat=50 → 800 rows).
+# 320 * 1 epoch * micro_batch=1 / grad_accum=4  =  80 optimizer steps.
+dataset:
+  source: builtin
+  hf_name: null
+  jsonl_path: null
+  max_examples: 320
+  format: chatml
+
+train:
+  max_seq_len: 512        # builtin replies are short; 512 is plenty
+  batch_size: 1
+  grad_accum: 4           # effective batch = 4
+  epochs: 1
+  lr: 2.0e-4              # standard LoRA LR (10× higher than full FT)
+  warmup_ratio: 0.05
+  weight_decay: 0.0
+  grad_clip: 1.0
+  log_every: 5
+  save_every: 50
+  packing: false          # builtin dataset is too small to benefit from packing
+  gradient_checkpointing: false   # 0.5B + r=16 LoRA fits without it on 8 GB
+
+eval:
+  enable: false           # run separately: python eval/run_humaneval.py --model out/lora_3050/final
+  n_problems: 20
+  n_samples_per_problem: 1

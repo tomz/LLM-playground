@@ -83,6 +83,23 @@ cumulative failures), JSON summaries, and a reproducible CLI. See
 [`frontier-platform/README.md`](./frontier-platform/README.md#simulator-results-scriptssimulatepy)
 for the full story.
 
+### `coder-finetune/` — 84-second LoRA on RTX 3050
+
+[`coder-finetune/examples/3050_lora.md`](coder-finetune/examples/3050_lora.md)
+walks through a reproducible LoRA fine-tune of `Qwen/Qwen2.5-Coder-0.5B`
+on the built-in 16-pair instruction set, on a single RTX 3050 (8 GB):
+
+| Metric              | Value |
+|---------------------|------:|
+| Wall-clock          | **83.8 s** (1 epoch, 80 optimizer steps) |
+| Peak VRAM allocated | **1.76 GB** |
+| Trainable params    | 8.8 M (1.75 % of base) |
+| Train loss          | 2.85 → **0.45** |
+| Adapter checkpoint  | 35 MB |
+
+The recipe lives at
+[`coder-finetune/configs/lora_3050.yaml`](coder-finetune/configs/lora_3050.yaml).
+
 ## The five projects
 
 | Project | Scale | What it teaches | Hardware |
