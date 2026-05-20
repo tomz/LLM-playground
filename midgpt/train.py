@@ -52,10 +52,22 @@ def main():
 
     use_ddp, rank, local_rank, world = setup_ddp()
     is_master = (rank == 0)
-    device = f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu"
+    if torch.cuda.is_available():
+        device = f"cuda:{local_rank}"
+    elif torch.backends.mps.is_available():
+        device = "mps"
+    else:
+        device = "cpu"
     is_cuda = device.startswith("cuda")
+    is_mps = device == "mps"
     dtype = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}[cfg["dtype"]]
-    ctx = torch.amp.autocast("cuda", dtype=dtype) if is_cuda else contextlib.nullcontext()
+    if is_cuda:
+        ctx = torch.amp.autocast("cuda", dtype=dtype)
+    elif is_mps:
+        # MPS supports fp16 autocast natively; bf16 is also accepted.
+        ctx = torch.amp.autocast("mps", dtype=dtype)
+    else:
+        ctx = contextlib.nullcontext()
 
     if is_master:
         os.makedirs(cfg["out_dir"], exist_ok=True)
@@ -86,7 +98,7 @@ def main():
         cfg["optim"]["weight_decay"], cfg["optim"]["lr"],
         tuple(cfg["optim"]["betas"]), fused=is_cuda,
     )
-    scaler = torch.amp.GradScaler("cuda", enabled=(dtype == torch.float16))
+    scaler = torch.amp.GradScaler("cuda", enabled=(dtype == torch.float16 and is_cuda))
 
     # Wrap in DDP AFTER optimizer construction (params are the same tensors)
     if use_ddp:
