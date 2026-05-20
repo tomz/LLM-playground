@@ -423,9 +423,9 @@ def plot_compare(runs: list[Run], out_path: str,
         print("matplotlib required for --compare", file=sys.stderr)
         return
 
-    fig = plt.figure(figsize=(13.5, 5.6))
+    fig = plt.figure(figsize=(13.5, 6.0))
     gs = fig.add_gridspec(1, 2, wspace=0.22,
-                          left=0.07, right=0.985, top=0.86, bottom=0.13)
+                          left=0.07, right=0.985, top=0.82, bottom=0.13)
     ax_lin = fig.add_subplot(gs[0])
     ax_log = fig.add_subplot(gs[1])
 
@@ -466,7 +466,7 @@ def plot_compare(runs: list[Run], out_path: str,
                  fontweight="bold", y=0.965)
     sub = (f"{len(runs)} runs · "
            + " · ".join(f"{r.name} {r.params_m:.1f}M" for r in runs))
-    fig.text(0.5, 0.925, sub, ha="center", fontsize=10.5, color=TEXT_MUTED)
+    fig.text(0.5, 0.905, sub, ha="center", fontsize=10.5, color=TEXT_MUTED)
 
     bits = [b for b in [hardware, dataset, "★ marks best val per run"] if b]
     if bits:
