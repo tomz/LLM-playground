@@ -83,11 +83,17 @@ cumulative failures), JSON summaries, and a reproducible CLI. See
 [`frontier-platform/README.md`](./frontier-platform/README.md#simulator-results-scriptssimulatepy)
 for the full story.
 
-### `coder-finetune/` — 84-second LoRA on RTX 3050
+### `coder-finetune/` — LoRA on RTX 3050, two recipes
+
+Two reproducible recipes for the same 8 GB consumer card. The first
+proves the plumbing on a tiny model + tiny dataset; the second pushes
+the card to its practical limit on a real 1.5 B-parameter model and a
+real 38 k-row dataset.
+
+#### 0.5 B model, built-in 16-pair set — 84 seconds
 
 [`coder-finetune/examples/3050_lora.md`](coder-finetune/examples/3050_lora.md)
-walks through a reproducible LoRA fine-tune of `Qwen/Qwen2.5-Coder-0.5B`
-on the built-in 16-pair instruction set, on a single RTX 3050 (8 GB):
+walks through a LoRA fine-tune of `Qwen/Qwen2.5-Coder-0.5B`:
 
 | Metric              | Value |
 |---------------------|------:|
@@ -97,8 +103,33 @@ on the built-in 16-pair instruction set, on a single RTX 3050 (8 GB):
 | Train loss          | 2.85 → **0.45** |
 | Adapter checkpoint  | 35 MB |
 
-The recipe lives at
-[`coder-finetune/configs/lora_3050.yaml`](coder-finetune/configs/lora_3050.yaml).
+Recipe: [`configs/lora_3050.yaml`](coder-finetune/configs/lora_3050.yaml).
+
+#### 1.5 B model, Magicoder-OSS-Instruct-Python — 24 minutes
+
+[`coder-finetune/configs/lora_3050.RESULTS.md`](coder-finetune/configs/lora_3050_1p5b.RESULTS.md)
+documents the limit-pushing run: `Qwen/Qwen2.5-Coder-1.5B` LoRA r=16 on
+2,000 Python rows of `ise-uiuc/Magicoder-OSS-Instruct-75K` at
+`max_seq_len=1024`, gradient checkpointing on, bf16:
+
+| Metric              | Value |
+|---------------------|------:|
+| Wall-clock          | **24 min 5 s** (250 steps × eff-batch 8) |
+| Peak VRAM allocated | **5.12 GB** |
+| Peak VRAM reserved  | **7.50 GB** (of 8 GB) |
+| Trainable params    | 18.46 M (1.18 % of 1.56 B) |
+| Train loss          | 0.88 → **0.58** |
+| Mean-token-acc      | 0.79 → **0.85** |
+
+![1.5B LoRA on 3050 — training curves](coder-finetune/configs/lora_3050_1p5b.training.png)
+
+Recipe: [`configs/lora_3050_1p5b.yaml`](coder-finetune/configs/lora_3050_1p5b.yaml).
+Plotter: [`scripts/plot_training.py`](coder-finetune/scripts/plot_training.py)
+(reusable for any TRL `trainer_state.json`).
+
+The headline takeaway: on an 8 GB consumer card, you have ~500 MB of
+headroom left at 1.5 B / seq 1024 — enough to fine-tune real models on
+real data, not just toy demos.
 
 ## The five projects
 
