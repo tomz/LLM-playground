@@ -23,17 +23,26 @@ bf16) against char-level Tiny Shakespeare (1 MB). The whole sweep,
 including a 25 M parameter model overfitting hard for 2 h, was run on a
 desktop GPU at home — no cluster, no API.
 
-| Run     | Params  | Iters         | ms/it | Wall    | Final train | **Best val** | Final val |
-|---------|--------:|--------------:|------:|--------:|------------:|-------------:|----------:|
-| `smoke` |  0.86 M | 275 / 300     |  14.0 |   ~5 s  | 1.90        | **1.99**     | 1.99      |
-| `tiny`  | 10.65 M | 4,990 / 5,000 | 203.4 | ~17 min | 0.07        | **1.53**     | 4.34      |
-| `small` | 25.73 M | 9,600 / 15,000| 798.4 | ~2 h 15 | 0.04        | **1.87**     | 5.21      |
+| Run         | Params  | Iters         | ms/it | Wall    | Final train | **Best val** | Final val | Overfit Δ |
+|-------------|--------:|--------------:|------:|--------:|------------:|-------------:|----------:|----------:|
+| `smoke`     |  0.86 M | 275 / 300     |  14.0 |   ~5 s  | 1.90        | **1.99**     | 1.99      |   ~0      |
+| `tiny`      | 10.65 M | 4,990 / 5,000 | 203.4 | ~17 min | 0.07        | **1.53**     | 4.34      | **2.81**  |
+| `tiny_clean`| 10.65 M | 1,500 / 1,500 | 203.0 |  ~5 min | 0.53        | **1.48**     | 1.85      |   0.36    |
+| `small`     | 25.73 M | 9,600 / 15,000| 798.4 | ~2 h 15 | 0.04        | **1.87**     | 5.21      |   3.35    |
 
 The classic "best val arrives in the first ~1000 iters and then val
-climbs monotonically while train collapses to zero" story — visible in
-the published plot:
+climbs monotonically while train collapses to zero" overfit story
+(`tiny`, `small`) — and the textbook **U-shaped** counter-example
+(`tiny_clean`: same architecture, `dropout=0.1`, `max_iters=1500`),
+which lands on a *better* best-val while overfitting **8× less**:
 
 ![nanogpt-edu cross-run comparison](nanogpt-edu/out/compare.png)
+
+Side-by-side: `tiny` (no dropout) vs `tiny_clean` (dropout 0.1) on the
+same 10.65 M model and same 1 MB dataset — the only intervention is
+regularization + early stopping:
+
+![tiny vs tiny_clean](nanogpt-edu/out/compare_overfit.png)
 
 Per-run 3-panel plots (loss + LR + step time) and the parser that
 generated them live at [`nanogpt-edu/out/`](./nanogpt-edu/out/) and

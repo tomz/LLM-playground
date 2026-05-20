@@ -33,11 +33,18 @@ Char-level Tiny Shakespeare (1 MB). Training stdout logs are committed
 under `out/<run>/train.log`; PNG/SVG plots are written by
 `python tools/plot_nanogpt.py out/<run>/train.log`.
 
-| Run       | Params  | Iters done   | ms/it (3050) | Wall    | Final train | **Best val** | Final val |
-|-----------|--------:|-------------:|-------------:|--------:|------------:|-------------:|----------:|
-| `smoke`   |  0.86 M | 275 / 300    |  14.0        |  ~5 s   | 1.90        | **1.99**     | 1.99      |
-| `tiny`    | 10.65 M | 4,990 / 5,000|  203.4       | ~17 min | 0.07        | **1.53**     | 4.34      |
-| `small`   | 25.73 M | 9,600 / 15,000 (killed @ 64 %) |  798.4 | ~2 h 15 | 0.04        | **1.87**     | 5.21      |
+| Run         | Params  | Iters done   | ms/it (3050) | Wall    | Final train | **Best val** | Final val | Overfit Δ |
+|-------------|--------:|-------------:|-------------:|--------:|------------:|-------------:|----------:|----------:|
+| `smoke`     |  0.86 M | 275 / 300    |  14.0        |  ~5 s   | 1.90        | **1.99**     | 1.99      |  ~0       |
+| `tiny`      | 10.65 M | 4,990 / 5,000|  203.4       | ~17 min | 0.07        | **1.53**     | 4.34      | **2.81**  |
+| `tiny_clean`| 10.65 M | 1,500 / 1,500|  203.0       | ~5 min  | 0.53        | **1.48**     | 1.85      |   0.36    |
+| `small`     | 25.73 M | 9,600 / 15,000 (killed @ 64 %) |  798.4 | ~2 h 15 | 0.04        | **1.87**     | 5.21      |   3.35    |
+
+`tiny_clean` is the same architecture as `tiny`, run for 1,500 iterations
+with `dropout=0.1` instead of `0.0`. It's the **regularized** counterpart
+that produces the textbook U-shaped val curve (descent → minimum → mild
+ascent) — and notably, it lands on a *slightly better* best-val (1.48 vs
+1.53) than the un-regularized `tiny` did, while overfitting **8× less**.
 
 Things the plots make obvious:
 
@@ -58,27 +65,42 @@ Things the plots make obvious:
 
 Each PNG is 3-panel: train+val loss / cosine LR / step time.
 
-| smoke | tiny | small |
-|---|---|---|
-| ![smoke](out/smoke/loss.png) | ![tiny](out/tiny/loss.png) | ![small](out/small/loss.png) |
+| smoke | tiny | tiny_clean | small |
+|---|---|---|---|
+| ![smoke](out/smoke/loss.png) | ![tiny](out/tiny/loss.png) | ![tiny_clean](out/tiny_clean/loss.png) | ![small](out/small/loss.png) |
 
 ### Cross-run comparison
 
-Linear-x and log-x val-loss overlays for all three runs:
+Linear-x and log-x val-loss overlays for all three "real" runs (`tiny`,
+`tiny_clean`, `small`):
 
 ![compare](out/compare.png)
+
+### Overfit vs regularized — same architecture, two outcomes
+
+`tiny` (no dropout, 5,000 iters) vs `tiny_clean` (dropout 0.1, 1,500 iters).
+Both are 10.65 M params on the same 1 MB of Shakespeare. The *only*
+intervention is dropout + early stopping; you can read the textbook
+overfit picture directly off the val curves:
+
+![tiny vs tiny_clean](out/compare_overfit.png)
 
 ### Reproducing
 
 ```bash
-mkdir -p out/{smoke,tiny,small}
-python train.py --config configs/smoke.py 2>&1 | tee out/smoke/train.log
-python train.py --config configs/tiny.py  2>&1 | tee out/tiny/train.log
-python train.py --config configs/small.py 2>&1 | tee out/small/train.log
+mkdir -p out/{smoke,tiny,tiny_clean,small}
+python train.py --config configs/smoke.py      2>&1 | tee out/smoke/train.log
+python train.py --config configs/tiny.py       2>&1 | tee out/tiny/train.log
+python train.py --config configs/tiny_clean.py 2>&1 | tee out/tiny_clean/train.log
+python train.py --config configs/small.py      2>&1 | tee out/small/train.log
 
-# Plot one run, or all + a comparison overlay:
+# Plot one run, all + a comparison overlay, or the overfit-vs-regularized panel:
 python tools/plot_nanogpt.py out/tiny/train.log
-python tools/plot_nanogpt.py out/*/train.log --compare out/compare.png
+python tools/plot_nanogpt.py out/{smoke,tiny,tiny_clean,small}/train.log \
+    --compare out/compare.png \
+    --hardware "RTX 3050 bf16" --dataset "Tiny Shakespeare 1.1 MB"
+python tools/plot_nanogpt.py out/{tiny,tiny_clean}/train.log \
+    --compare out/compare_overfit.png
 ```
 
 `tools/plot_nanogpt.py` uses matplotlib for PNGs if available and always

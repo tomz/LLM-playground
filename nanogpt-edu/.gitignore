@@ -8,11 +8,14 @@ data/*.txt
 # below so README image links + reproducible artefacts stay in git.
 out/*
 !out/compare.png
+!out/compare_overfit.png
 !out/smoke/
 !out/tiny/
+!out/tiny_clean/
 !out/small/
 out/smoke/*
 out/tiny/*
+out/tiny_clean/*
 out/small/*
 !out/smoke/train.log
 !out/smoke/loss.png
@@ -20,6 +23,9 @@ out/small/*
 !out/tiny/train.log
 !out/tiny/loss.png
 !out/tiny/loss.svg
+!out/tiny_clean/train.log
+!out/tiny_clean/loss.png
+!out/tiny_clean/loss.svg
 !out/small/train.log
 !out/small/loss.png
 !out/small/loss.svg
