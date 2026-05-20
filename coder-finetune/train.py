@@ -1,7 +1,8 @@
 """SFT / LoRA / QLoRA fine-tuning entry point.
 
 Wraps HuggingFace TRL SFTTrainer; no custom training loop. The point is to
-demonstrate the *plumbing*, not to reinvent it.
+demonstrate the *plumbing*, not to reinvent it. Eval is split into a
+separate CLI (`python eval/run_humaneval.py`) to keep this file pure-train.
 
 Usage:
     python train.py --config configs/tiny.yaml
@@ -51,6 +52,8 @@ def build_model_and_tokenizer(cfg: dict):
     if method in ("lora", "qlora"):
         from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
         if method == "qlora":
+            # `prepare_model_for_kbit_training` already enables gradient
+            # checkpointing internally — don't double-set it via SFTConfig.
             model = prepare_model_for_kbit_training(model)
         lcfg = cfg["lora"]
         peft_cfg = LoraConfig(
@@ -67,6 +70,11 @@ def build_model_and_tokenizer(cfg: dict):
 def build_trainer(model, tok, train_ds, cfg: dict):
     from trl import SFTTrainer, SFTConfig
     t = cfg["train"]
+    method = cfg["method"]
+    # Only force gradient checkpointing for the largest recipes; QLoRA already
+    # gets it from prepare_model_for_kbit_training, full FT of 0.5B doesn't
+    # need it on a 3050.
+    grad_ckpt = bool(t.get("gradient_checkpointing", method != "full"))
     args = SFTConfig(
         output_dir=cfg["out_dir"],
         num_train_epochs=t["epochs"],
@@ -83,8 +91,8 @@ def build_trainer(model, tok, train_ds, cfg: dict):
         fp16=(cfg["model"]["dtype"] == "float16"),
         max_length=t["max_seq_len"],
         packing=t["packing"],
-        gradient_checkpointing=True,
-        gradient_checkpointing_kwargs={"use_reentrant": False},
+        gradient_checkpointing=grad_ckpt,
+        gradient_checkpointing_kwargs={"use_reentrant": False} if grad_ckpt else None,
         report_to="none",
         seed=cfg["seed"],
     )
@@ -107,7 +115,9 @@ def main():
     torch.manual_seed(cfg["seed"])
 
     print(f"[load] dataset: {cfg['dataset']['source']}")
-    import data
+    # Import via the explicit subpackage name to avoid shadowing if someone
+    # runs from a different cwd.
+    import cf_data as data  # local package; see coder-finetune/cf_data/__init__.py
     train_ds = data.load(cfg["dataset"])
     if cfg["dataset"].get("max_examples"):
         train_ds = train_ds.select(range(min(cfg["dataset"]["max_examples"], len(train_ds))))
@@ -124,13 +134,7 @@ def main():
     trainer.save_model(save_path)
     tok.save_pretrained(save_path)
     print(f"[train] saved -> {save_path}")
-
-    if cfg.get("eval", {}).get("enable"):
-        from eval.run_humaneval import quick_eval
-        ev = cfg["eval"]
-        score = quick_eval(save_path, n_problems=ev["n_problems"],
-                           n_samples=ev["n_samples_per_problem"])
-        print(f"[eval] HumanEval pass@1 = {score*100:.1f}%  (n={ev['n_problems']})")
+    print(f"[train] to evaluate: python eval/run_humaneval.py --model {save_path}")
 
 
 if __name__ == "__main__":

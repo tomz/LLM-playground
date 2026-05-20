@@ -1,7 +1,9 @@
 """Pipeline parallelism: split layers across PP ranks, run 1F1B schedule.
 
-This is a thin wrapper around `torch.distributed.pipelining`. We carve the model
-into N stages by even layer split.
+Thin wrapper around `torch.distributed.pipelining`. We carve the model into
+`pp_size` even stages by layer count. Returns a pair `(stage_module, schedule)`;
+the schedule expects to be called once per **macro-batch**, with `n_microbatches`
+already configured.
 """
 from __future__ import annotations
 import torch.nn as nn
@@ -11,7 +13,7 @@ def build_pipeline(model: nn.Module, pp_mesh, n_microbatches: int):
     """Return (stage, schedule). If pp size == 1, returns (model, None)."""
     if pp_mesh is None or pp_mesh.size() == 1:
         return model, None
-    from torch.distributed.pipelining import ScheduleGPipe
+    from torch.distributed.pipelining import Schedule1F1B
     pp_size = pp_mesh.size()
     pp_rank = pp_mesh.get_local_rank()
     n_layers = len(model.layers)
@@ -25,6 +27,6 @@ def build_pipeline(model: nn.Module, pp_mesh, n_microbatches: int):
     if pp_rank != pp_size - 1:
         model.lm_head = nn.Identity()  # type: ignore
         model.final_norm = nn.Identity()  # type: ignore
-    # Build schedule (1F1B = ScheduleGPipe with interleaved=True for advanced; here GPipe).
-    schedule = ScheduleGPipe(model, n_microbatches=n_microbatches)
+    # 1F1B (one forward / one backward) — better memory than GPipe at >1 stage.
+    schedule = Schedule1F1B(model, n_microbatches=n_microbatches)
     return model, schedule

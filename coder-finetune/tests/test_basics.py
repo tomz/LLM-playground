@@ -1,7 +1,7 @@
 import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-import data
+import cf_data as data
 from eval.run_humaneval import extract_code, build_program
 
 

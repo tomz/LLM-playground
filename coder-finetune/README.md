@@ -15,7 +15,7 @@ Uses HuggingFace `transformers` + `peft` + `trl`; no custom training loop.
 ```
 coder-finetune/
 ├── configs/        # YAML per recipe
-├── data/           # dataset loaders (HF datasets + your own repo + synthetic)
+├── cf_data/        # dataset loaders (HF datasets + your own repo + synthetic)
 ├── train.py        # SFT / LoRA / QLoRA via TRL SFTTrainer
 ├── eval/           # HumanEval+ runner with Docker sandbox
 ├── infer/          # merge LoRA, export for vLLM

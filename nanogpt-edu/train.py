@@ -1,5 +1,9 @@
-"""Training loop. Single-GPU or CPU. Cosine LR, AMP, grad clip, ckpt."""
-import argparse, importlib.util, math, os, time
+"""Training loop. Single-GPU / MPS / CPU. Cosine LR, AMP, grad clip, ckpt.
+
+Saves both `ckpt.pt` (latest, for resume) and `ckpt_best.pt` (best val).
+Logs JSONL to <out_dir>/train.jsonl alongside stdout.
+"""
+import argparse, contextlib, importlib.util, json, math, os, time
 import torch
 from data import ShardDataset, load_meta
 from model import GPT, GPTConfig
@@ -20,6 +24,22 @@ def pick_device(want: str) -> str:
     if torch.backends.mps.is_available():
         return "mps"
     return "cpu"
+
+
+def make_autocast(device: str, dtype: torch.dtype):
+    """Build an autocast context appropriate for the device.
+
+    - cuda: native autocast for bf16/fp16/fp32.
+    - mps:  native autocast (PyTorch 2.4+ supports bf16/fp16 on Apple silicon).
+    - cpu:  bf16 autocast if requested, else nullcontext.
+    """
+    if device.startswith("cuda"):
+        return torch.amp.autocast(device_type="cuda", dtype=dtype)
+    if device == "mps":
+        return torch.amp.autocast(device_type="mps", dtype=dtype)
+    if dtype == torch.bfloat16:
+        return torch.amp.autocast(device_type="cpu", dtype=torch.bfloat16)
+    return contextlib.nullcontext()
 
 
 def cosine_lr(it: int, warmup: int, decay: int, lr: float, min_lr: float) -> float:
@@ -47,6 +67,23 @@ def evaluate(model, datasets, cfg, ctx) -> dict:
     return out
 
 
+class JsonlLogger:
+    def __init__(self, path: str | None):
+        self.fh = open(path, "a") if path else None
+        self.t0 = time.time()
+
+    def log(self, **kw):
+        if not self.fh:
+            return
+        kw["wall"] = round(time.time() - self.t0, 3)
+        self.fh.write(json.dumps(kw) + "\n")
+        self.fh.flush()
+
+    def close(self):
+        if self.fh:
+            self.fh.close()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
@@ -59,9 +96,7 @@ def main():
     device = pick_device(cfg["device"])
     is_cuda = device.startswith("cuda")
     dtype = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}[cfg["dtype"]]
-    ctx = torch.amp.autocast(device_type="cuda", dtype=dtype) if is_cuda else torch.amp.autocast(
-        device_type="cpu", dtype=torch.bfloat16, enabled=(cfg["dtype"] == "bfloat16")
-    )
+    ctx = make_autocast(device, dtype)
 
     meta = load_meta(cfg["data_dir"])
     cfg["vocab_size"] = meta["vocab_size"]
@@ -75,29 +110,56 @@ def main():
         dropout=cfg["dropout"], rope_base=cfg["rope_base"],
     )
     model = GPT(mcfg).to(device)
-    print(f"model: {sum(p.numel() for p in model.parameters())/1e6:.2f}M params")
+    print(f"model: {model.num_params(non_embedding=False)/1e6:.2f}M params "
+          f"({model.num_params(non_embedding=True)/1e6:.2f}M non-emb)")
     if cfg.get("compile") and hasattr(torch, "compile"):
         model = torch.compile(model)
 
-    # AdamW with no WD on biases/norms/embeddings
+    # AdamW with no WD on biases / norms / 1-D params (embeddings included via tying).
     decay, no_decay = [], []
-    for n, p in model.named_parameters():
-        (no_decay if (p.dim() < 2 or n.endswith("weight") and "norm" in n.lower()) else decay).append(p)
+    for _, p in model.named_parameters():
+        (no_decay if p.dim() < 2 else decay).append(p)
     optim = torch.optim.AdamW(
         [{"params": decay, "weight_decay": cfg["weight_decay"]},
          {"params": no_decay, "weight_decay": 0.0}],
         lr=cfg["lr"], betas=cfg["betas"], fused=is_cuda,
     )
-    scaler = torch.amp.GradScaler("cuda", enabled=(dtype == torch.float16))
+    scaler = torch.amp.GradScaler("cuda", enabled=(dtype == torch.float16 and is_cuda))
 
     start_iter = 0
+    best_val = float("inf")
     ckpt_path = os.path.join(cfg["out_dir"], "ckpt.pt")
+    best_path = os.path.join(cfg["out_dir"], "ckpt_best.pt")
     if args.resume and os.path.exists(ckpt_path):
-        sd = torch.load(ckpt_path, map_location=device)
-        model.load_state_dict(sd["model"]); optim.load_state_dict(sd["optim"])
+        sd = torch.load(ckpt_path, map_location=device, weights_only=False)
+        model.load_state_dict(sd["model"])
+        optim.load_state_dict(sd["optim"])
+        if "scaler" in sd and sd["scaler"] is not None:
+            scaler.load_state_dict(sd["scaler"])
+        if "rng_state" in sd:
+            torch.set_rng_state(sd["rng_state"])
+        if is_cuda and sd.get("cuda_rng_state") is not None:
+            torch.cuda.set_rng_state(sd["cuda_rng_state"])
         start_iter = sd["iter"] + 1
-        print(f"resumed from iter {start_iter}")
+        best_val = sd.get("best_val", best_val)
+        print(f"resumed from iter {start_iter} (best_val={best_val:.4f})")
 
+    logger = JsonlLogger(os.path.join(cfg["out_dir"], "train.jsonl"))
+
+    def save(path: str, it: int):
+        tmp = path + ".tmp"
+        torch.save({
+            "model": model.state_dict(),
+            "optim": optim.state_dict(),
+            "scaler": scaler.state_dict() if scaler.is_enabled() else None,
+            "iter": it, "cfg": cfg, "meta": meta,
+            "best_val": best_val,
+            "rng_state": torch.get_rng_state(),
+            "cuda_rng_state": torch.cuda.get_rng_state() if is_cuda else None,
+        }, tmp)
+        os.replace(tmp, path)
+
+    grad_accum = cfg["grad_accum"]
     t0 = time.time()
     for it in range(start_iter, cfg["max_iters"]):
         lr = cosine_lr(it, cfg["warmup_iters"], cfg["lr_decay_iters"], cfg["lr"], cfg["min_lr"])
@@ -105,31 +167,42 @@ def main():
             g["lr"] = lr
 
         optim.zero_grad(set_to_none=True)
-        for _ in range(cfg["grad_accum"]):
+        loss_sum = 0.0
+        for _ in range(grad_accum):
             x, y = train_ds.get_batch(cfg["batch_size"])
             with ctx:
                 _, loss = model(x, y)
-                loss = loss / cfg["grad_accum"]
+                loss = loss / grad_accum
             scaler.scale(loss).backward()
+            loss_sum += loss.detach().float().item()
         if cfg["grad_clip"]:
             scaler.unscale_(optim)
             torch.nn.utils.clip_grad_norm_(model.parameters(), cfg["grad_clip"])
         scaler.step(optim); scaler.update()
 
         if it % cfg["log_interval"] == 0:
-            dt = time.time() - t0; t0 = time.time()
-            print(f"iter {it:6d} | loss {loss.item()*cfg['grad_accum']:.4f} | lr {lr:.2e} | {dt*1000/cfg['log_interval']:.1f} ms/it")
+            dt = (time.time() - t0) / max(1, cfg["log_interval"]); t0 = time.time()
+            # Each micro-batch loss was already divided by grad_accum, so the sum
+            # is the per-step average loss across all micro-batches.
+            avg_loss = loss_sum
+            row = dict(iter=it, loss=avg_loss, lr=lr, ms=dt * 1000)
+            print(f"iter {it:6d} | loss {avg_loss:.4f} | lr {lr:.2e} | {row['ms']:.1f} ms/it")
+            logger.log(**row)
         if it > 0 and it % cfg["eval_interval"] == 0:
             ev = evaluate(model, {"train": train_ds, "val": val_ds}, cfg, ctx)
             print(f"           eval | train {ev['train']:.4f} | val {ev['val']:.4f}")
+            logger.log(iter=it, eval_train=ev["train"], eval_val=ev["val"])
+            if ev["val"] < best_val:
+                best_val = ev["val"]
+                save(best_path, it)
+                print(f"           best val {best_val:.4f} → saved {best_path}")
         if it > 0 and it % cfg["ckpt_interval"] == 0:
-            torch.save({"model": model.state_dict(), "optim": optim.state_dict(),
-                        "iter": it, "cfg": cfg, "meta": meta}, ckpt_path)
+            save(ckpt_path, it)
             print(f"           saved ckpt -> {ckpt_path}")
 
-    torch.save({"model": model.state_dict(), "optim": optim.state_dict(),
-                "iter": cfg["max_iters"] - 1, "cfg": cfg, "meta": meta}, ckpt_path)
-    print(f"done. final ckpt -> {ckpt_path}")
+    save(ckpt_path, cfg["max_iters"] - 1)
+    logger.close()
+    print(f"done. final ckpt -> {ckpt_path}  best val {best_val:.4f} -> {best_path}")
 
 
 if __name__ == "__main__":

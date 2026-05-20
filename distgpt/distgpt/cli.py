@@ -22,7 +22,7 @@ def cmd_eval(args):
     cfg = _load(args.config)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = GPT(ModelConfig(**cfg["model"])).to(device)
-    sd = torch.load(args.ckpt, map_location=device)
+    sd = torch.load(args.ckpt, map_location=device, weights_only=False)
     model.load_state_dict(sd if not isinstance(sd, dict) or "model" not in sd else sd["model"])
     loader = StreamingLoader(args.data, cfg["data"]["seq_len"], cfg["train"]["micro_batch"],
                              rank=0, world_size=1, seed=0, device=device)

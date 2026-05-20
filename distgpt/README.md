@@ -4,7 +4,7 @@ Real code (not pseudocode) for training **1B–70B** parameter GPTs across **mul
 
 - **FSDP2** (PyTorch native) full sharding of params + grads + optimizer state
 - **Tensor Parallelism** via `torch.distributed.tensor` DTensor (column/row parallel linears)
-- **Pipeline Parallelism** via `torch.distributed.pipelining` (1F1B + interleaved schedules)
+- **Pipeline Parallelism** via `torch.distributed.pipelining` (1F1B schedule)
 - **Sequence Parallelism** for memory savings on long context
 - **Sharded distributed checkpointing** (DCP) — reshardable across topologies
 - **Activation checkpointing** (selective or full)

@@ -120,7 +120,7 @@ class GPT(nn.Module):
         # tie weights (saves params, common in small models)
         self.lm_head.weight = self.tok_emb.weight
         self.apply(self._init)
-        # cache RoPE on first forward
+        # cache RoPE on first forward; key includes (device, dtype, seq_len)
         self._rope_cache: tuple[torch.Tensor, torch.Tensor] | None = None
 
     def _init(self, m):
@@ -131,15 +131,26 @@ class GPT(nn.Module):
         elif isinstance(m, nn.Embedding):
             nn.init.normal_(m.weight, mean=0.0, std=0.02)
 
-    def num_params(self) -> int:
-        # tied head shares emb params; count once
-        return sum(p.numel() for p in self.parameters()) - self.tok_emb.weight.numel() * 0
+    def num_params(self, non_embedding: bool = True) -> int:
+        """Total parameter count. With tied embeddings the lm_head.weight is the
+        same Tensor as tok_emb.weight, so `parameters()` already counts it once.
+        `non_embedding=True` subtracts the (single) embedding table, matching
+        the convention used by GPT-2 / Chinchilla papers."""
+        n = sum(p.numel() for p in self.parameters())
+        if non_embedding:
+            n -= self.tok_emb.weight.numel()
+        return n
 
     def forward(self, idx, targets: torch.Tensor | None = None):
         B, T = idx.shape
         assert T <= self.cfg.block_size, f"seq {T} > block_size {self.cfg.block_size}"
         x = self.tok_emb(idx)
-        if self._rope_cache is None or self._rope_cache[0].shape[0] < T or self._rope_cache[0].device != x.device:
+        # Rebuild cache if device, dtype, or required seq_len has changed.
+        cache = self._rope_cache
+        if (cache is None
+                or cache[0].device != x.device
+                or cache[0].dtype != x.dtype
+                or cache[0].shape[0] < T):
             self._rope_cache = build_rope_cache(
                 self.cfg.block_size, self.cfg.head_dim, self.cfg.rope_base, x.device, x.dtype
             )

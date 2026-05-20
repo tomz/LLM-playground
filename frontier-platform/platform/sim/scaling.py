@@ -2,8 +2,15 @@
 
 L(N, D) = E + A / N**alpha + B / D**beta
 
-Default constants from Hoffmann et al. 2022 (Chinchilla):
+Default constants from Hoffmann et al. 2022 (Chinchilla, "Training
+Compute-Optimal Large Language Models", arXiv:2203.15556, Table 3):
     E=1.69, A=406.4, B=410.7, alpha=0.34, beta=0.28
+
+NOTE: subsequent reanalyses (Hoffmann errata; Besiroglu et al. 2024,
+"Chinchilla scaling: a replication attempt", arXiv:2404.10102) report
+slightly different α≈0.35, β≈0.35 with rescaled A/B. We keep the original
+2022 fit here so historical comparisons line up; if you re-derive
+constants, override this module's globals before calling.
 """
 from __future__ import annotations
 import math

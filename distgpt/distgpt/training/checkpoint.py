@@ -1,6 +1,11 @@
-"""Distributed checkpointing via DCP — sharded, async, reshardable."""
+"""Distributed checkpointing via DCP — sharded, async, reshardable.
+
+Each DP rank's loader cursor is recorded in `meta_rank{rank}.json`; the rank-0
+process additionally writes `meta.json` with the latest step and any extras.
+"""
 from __future__ import annotations
 import os
+import torch.distributed as dist
 import torch.distributed.checkpoint as dcp
 
 
@@ -21,13 +26,22 @@ class CheckpointManager:
             "optim": optimizer.state_dict(),
         }
         dcp.save(state, checkpoint_id=path)
-        # loader state + meta on rank 0 only (small json)
+        # Each rank writes its own loader-state file (cursor differs per DP rank).
         from ..utils.dist import is_master
+        rank = dist.get_rank() if dist.is_initialized() else 0
+        import json
+        with open(os.path.join(path, f"meta_rank{rank}.json"), "w") as f:
+            json.dump({"step": step, "loader": loader.state_dict()}, f)
         if is_master():
-            import json
             with open(os.path.join(path, "meta.json"), "w") as f:
-                json.dump({"step": step, "loader": loader.state_dict(), **(extra or {})}, f)
+                json.dump({"step": step, **(extra or {})}, f)
+        # Synchronize so GC can run safely on rank 0 only.
+        if dist.is_initialized():
+            dist.barrier()
+        if is_master():
             self._gc()
+        if dist.is_initialized():
+            dist.barrier()
         return path
 
     def load(self, model, optimizer, loader, step: int | str = "latest") -> int:
@@ -40,8 +54,12 @@ class CheckpointManager:
         dcp.load(state, checkpoint_id=path)
         model.load_state_dict(state["model"])
         optimizer.load_state_dict(state["optim"])
+        rank = dist.get_rank() if dist.is_initialized() else 0
         import json
-        with open(os.path.join(path, "meta.json")) as f:
+        rank_meta = os.path.join(path, f"meta_rank{rank}.json")
+        # Fall back to legacy single meta.json (older checkpoints).
+        meta_path = rank_meta if os.path.exists(rank_meta) else os.path.join(path, "meta.json")
+        with open(meta_path) as f:
             meta = json.load(f)
         loader.load_state_dict(meta["loader"])
         return int(meta["step"]) + 1

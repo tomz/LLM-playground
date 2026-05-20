@@ -14,7 +14,7 @@ def main():
     args = ap.parse_args()
 
     device = ("cuda" if torch.cuda.is_available() else "cpu") if args.device == "auto" else args.device
-    sd = torch.load(args.ckpt, map_location=device)
+    sd = torch.load(args.ckpt, map_location=device, weights_only=False)
     cfg = sd["cfg"]
     model = GPT(GPTConfig(**cfg["model"])).to(device).eval()
     state = {k.replace("_orig_mod.", ""): v for k, v in sd["model"].items()}

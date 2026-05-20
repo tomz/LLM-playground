@@ -164,6 +164,18 @@ cd <subproject> && pytest
 Tests run without installing the package — they use a `sys.path` shim so
 you can iterate without a reinstall.
 
+To run **everything** (pytest in each subproject + ruff at the root) in one
+shot:
+
+```bash
+python3 tools/orchestrate.py            # tests + lint
+python3 tools/orchestrate.py --tests    # tests only
+python3 tools/orchestrate.py --lint     # lint only
+python3 tools/orchestrate.py -p midgpt  # one project
+```
+
+CI mirrors this matrix in `.github/workflows/tests.yml`.
+
 ## Repository layout
 
 ```
@@ -173,6 +185,9 @@ LLM-playground/
 ├── distgpt/             # 1B–70B, multi-node FSDP2 + TP + PP
 ├── coder-finetune/      # 0.5B–7B, SFT / LoRA / QLoRA on HF
 ├── frontier-platform/   # 1B–500B+, architecture blueprint + design docs
+├── tools/orchestrate.py # one-shot test+lint runner across all subprojects
+├── pyproject.toml       # shared ruff config (no shared build)
+├── .github/workflows/   # CI matrix: pytest each subproject + repo-wide ruff
 ├── JAAICODE.md          # AI-assistant project instructions
 └── README.md            # this file
 ```

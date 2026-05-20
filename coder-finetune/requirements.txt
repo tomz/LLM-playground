@@ -1,10 +1,11 @@
-# Hard-pinned because the HF stack moves fast and breaking changes are common.
+# Hard-pinned upper bounds because the HF stack moves fast and breaking
+# changes are common between minors. Adjust as needed for your env.
 torch>=2.4
-transformers>=4.45
-peft>=0.13
-trl>=0.11
-datasets>=3.0
-accelerate>=1.0
+transformers>=4.45,<5.0
+peft>=0.13,<0.20
+trl>=0.11,<0.20
+datasets>=3.0,<4.0
+accelerate>=1.0,<2.0
 bitsandbytes>=0.44       # only needed for QLoRA
 pyyaml
 tqdm

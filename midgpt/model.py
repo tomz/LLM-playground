@@ -109,7 +109,11 @@ class GPT(nn.Module):
                 n -= self.lm_head.weight.numel()
         return n
 
-    def forward(self, idx, targets=None):
+    def forward(self, idx, targets=None, return_full_logits: bool = False):
+        """Forward pass. By default returns last-position logits when no targets
+        (saves memory at inference); pass `return_full_logits=True` to get the
+        full [B, T, V] tensor (needed by HellaSwag / per-token scoring).
+        """
         B, T = idx.shape
         assert T <= self.cfg.block_size
         pos = torch.arange(T, device=idx.device)
@@ -121,16 +125,16 @@ class GPT(nn.Module):
                 x = blk(x)
         x = self.ln_f(x)
         if targets is None:
-            # only compute logits on the last position to save mem at inference
-            logits = self.lm_head(x[:, [-1], :])
-            return logits, None
+            if return_full_logits:
+                return self.lm_head(x), None
+            return self.lm_head(x[:, [-1], :]), None
         logits = self.lm_head(x)
         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-100)
         return logits, loss
 
     def configure_optimizer(self, weight_decay: float, lr: float, betas, fused: bool):
         decay, no_decay = [], []
-        for n, p in self.named_parameters():
+        for _, p in self.named_parameters():
             if not p.requires_grad:
                 continue
             (decay if p.dim() >= 2 else no_decay).append(p)

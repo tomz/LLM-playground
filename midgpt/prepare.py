@@ -18,7 +18,9 @@ def tokenize_doc(enc, text: str, eot: int) -> np.ndarray:
 
 
 def write_shards(token_iter, out_dir: str, split: str, shard_tokens: int = SHARD_TOKENS):
-    os.makedirs(out_dir, exist_ok=True)
+    """Write shards to <out_dir>/<split>/shard_NNNNNN.bin."""
+    split_dir = os.path.join(out_dir, split)
+    os.makedirs(split_dir, exist_ok=True)
     buf = np.empty(shard_tokens, dtype=np.uint16)
     pos, shard_idx = 0, 0
     pbar = tqdm(desc=f"{split}")
@@ -30,11 +32,11 @@ def write_shards(token_iter, out_dir: str, split: str, shard_tokens: int = SHARD
             buf[pos : pos + take] = arr[i : i + take]
             pos += take; i += take
             if pos == shard_tokens:
-                path = os.path.join(out_dir, f"{split}_{shard_idx:06d}.bin")
+                path = os.path.join(split_dir, f"shard_{shard_idx:06d}.bin")
                 buf.tofile(path); shard_idx += 1; pos = 0
         pbar.update(n)
     if pos:
-        path = os.path.join(out_dir, f"{split}_{shard_idx:06d}.bin")
+        path = os.path.join(split_dir, f"shard_{shard_idx:06d}.bin")
         buf[:pos].tofile(path)
     pbar.close()
 

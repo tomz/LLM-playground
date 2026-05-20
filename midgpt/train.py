@@ -78,10 +78,10 @@ def main():
     gen.manual_seed(cfg["seed"] + rank * 1000003)
 
     shard_dir = os.path.join("data", cfg["dataset"])
-    train_ds = ShardDataset(shard_dir, cfg["model"]["block_size"], device, rank, world)
-    # NOTE: prepare.py writes train_*.bin and val_*.bin into the same dir;
-    # for simplicity we sample val from the same shard set. Production: separate dirs.
-    val_ds = ShardDataset(shard_dir, cfg["model"]["block_size"], device, rank, world)
+    train_ds = ShardDataset(shard_dir, cfg["model"]["block_size"], device,
+                            rank=rank, world_size=world, split="train")
+    val_ds = ShardDataset(shard_dir, cfg["model"]["block_size"], device,
+                          rank=rank, world_size=world, split="val")
 
     mcfg = GPTConfig(**cfg["model"])
     model = GPT(mcfg, grad_checkpoint=cfg["grad_checkpoint"]).to(device)
@@ -91,10 +91,7 @@ def main():
     if cfg.get("compile"):
         model = torch.compile(model)
 
-    optim = (model.module if use_ddp else model).configure_optimizer(
-        cfg["optim"]["weight_decay"], cfg["optim"]["lr"],
-        tuple(cfg["optim"]["betas"]), fused=is_cuda,
-    ) if False else model.configure_optimizer(
+    optim = model.configure_optimizer(
         cfg["optim"]["weight_decay"], cfg["optim"]["lr"],
         tuple(cfg["optim"]["betas"]), fused=is_cuda,
     )
@@ -106,13 +103,25 @@ def main():
     inner = model.module if use_ddp else model
 
     start_iter = 0
+    best_val = float("inf")
     ckpt_path = os.path.join(cfg["out_dir"], "ckpt.pt")
+    best_path = os.path.join(cfg["out_dir"], "ckpt_best.pt")
     if args.resume and os.path.exists(ckpt_path):
-        sd = torch.load(ckpt_path, map_location=device)
-        inner.load_state_dict(sd["model"]); optim.load_state_dict(sd["optim"])
+        sd = torch.load(ckpt_path, map_location=device, weights_only=False)
+        inner.load_state_dict(sd["model"])
+        optim.load_state_dict(sd["optim"])
+        if "scaler" in sd and sd["scaler"] is not None:
+            scaler.load_state_dict(sd["scaler"])
+        if "rng_state" in sd:
+            torch.set_rng_state(sd["rng_state"])
+        if is_cuda and sd.get("cuda_rng_state") is not None:
+            torch.cuda.set_rng_state(sd["cuda_rng_state"])
+        if "gen_state" in sd and sd["gen_state"] is not None:
+            gen.set_state(sd["gen_state"])
         start_iter = sd["iter"] + 1
+        best_val = sd.get("best_val", best_val)
         if is_master:
-            print(f"resumed @ iter {start_iter}")
+            print(f"resumed @ iter {start_iter} (best_val={best_val:.4f})")
 
     logger = JsonlLogger(os.path.join(cfg["out_dir"], "log.jsonl")) if (is_master and cfg["log"]["jsonl"]) else JsonlLogger(None)
     wb = None
@@ -128,6 +137,16 @@ def main():
     block = cfg["model"]["block_size"]
     tokens_per_step = micro_bs * accum * world * block
 
+    def _save(path: str, it: int):
+        save_ckpt(path, dict(
+            model=inner.state_dict(), optim=optim.state_dict(),
+            scaler=scaler.state_dict() if scaler.is_enabled() else None,
+            iter=it, cfg=cfg, best_val=best_val,
+            rng_state=torch.get_rng_state(),
+            cuda_rng_state=torch.cuda.get_rng_state() if is_cuda else None,
+            gen_state=gen.get_state(),
+        ))
+
     t0 = time.time()
     for it in range(start_iter, cfg["optim"]["max_iters"]):
         lr = cosine_lr(it, cfg["optim"]["warmup_iters"], cfg["optim"]["lr_decay_iters"],
@@ -136,6 +155,7 @@ def main():
             g["lr"] = lr
 
         optim.zero_grad(set_to_none=True)
+        loss_acc = 0.0
         for micro in range(accum):
             # only sync grads on last micro-step
             sync_ctx = model.no_sync() if (use_ddp and micro < accum - 1) else contextlib.nullcontext()
@@ -145,15 +165,25 @@ def main():
                     _, loss = model(x, y)
                     loss = loss / accum
                 scaler.scale(loss).backward()
+                loss_acc += loss.detach().float().item()
         if cfg["optim"]["grad_clip"]:
             scaler.unscale_(optim)
             torch.nn.utils.clip_grad_norm_(inner.parameters(), cfg["optim"]["grad_clip"])
         scaler.step(optim); scaler.update()
 
+        # Each micro-batch loss was already divided by accum, so loss_acc is
+        # already the per-step average. Optionally all-reduce across DP for an
+        # unbiased value before logging.
+        step_loss = loss_acc
+        if use_ddp:
+            t = torch.tensor(step_loss, device=device)
+            dist.all_reduce(t, op=dist.ReduceOp.SUM)
+            step_loss = (t / world).item()
+
         if is_master and it % log_int == 0:
             dt = (time.time() - t0) / max(1, log_int); t0 = time.time()
             tps = tokens_per_step / dt
-            row = dict(iter=it, loss=loss.item() * accum, lr=lr, ms=dt * 1000, tok_per_s=tps)
+            row = dict(iter=it, loss=step_loss, lr=lr, ms=dt * 1000, tok_per_s=tps)
             print(f"iter {it:6d} | loss {row['loss']:.4f} | lr {lr:.2e} | {row['ms']:.0f} ms | {tps/1e3:.1f}k tok/s")
             logger.log(**row)
             if wb: wb.log(row, step=it)
@@ -163,22 +193,20 @@ def main():
             print(f"           eval | val {ev['val']:.4f} | ppl {torch.tensor(ev['val']).exp().item():.2f}")
             logger.log(iter=it, **{f"eval_{k}": v for k, v in ev.items()})
             if wb: wb.log({f"eval/{k}": v for k, v in ev.items()}, step=it)
+            if ev["val"] < best_val:
+                best_val = ev["val"]
+                _save(best_path, it)
+                print(f"           best val {best_val:.4f} → saved {best_path}")
 
         if is_master and it > 0 and it % ckpt_int == 0:
-            save_ckpt(ckpt_path, dict(
-                model=inner.state_dict(), optim=optim.state_dict(),
-                iter=it, cfg=cfg,
-            ))
+            _save(ckpt_path, it)
             print(f"           saved ckpt -> {ckpt_path}")
 
     if is_master:
-        save_ckpt(ckpt_path, dict(
-            model=inner.state_dict(), optim=optim.state_dict(),
-            iter=cfg["optim"]["max_iters"] - 1, cfg=cfg,
-        ))
+        _save(ckpt_path, cfg["optim"]["max_iters"] - 1)
         logger.close()
         if wb: wb.finish()
-        print(f"done -> {ckpt_path}")
+        print(f"done -> {ckpt_path}  best val {best_val:.4f} -> {best_path}")
 
     if use_ddp:
         dist.destroy_process_group()

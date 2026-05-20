@@ -1,0 +1,54 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [nanogpt-edu, midgpt, distgpt, frontier-platform, coder-finetune]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install torch (CPU) + project deps
+        run: |
+          set -e
+          cd ${{ matrix.project }}
+          python -m pip install -U pip
+          # Install CPU-only torch first to keep the GH Actions image small.
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch numpy
+          # Project-specific deps (best-effort; some HF-stack pins are heavy).
+          if [ -f requirements.txt ]; then
+            python -m pip install -r requirements.txt || echo "WARN: some deps missing; tests may skip"
+          fi
+          if [ -f pyproject.toml ]; then
+            python -m pip install -e . || true
+          fi
+          # Common test/runtime deps.
+          python -m pip install pytest pyyaml tiktoken datasets matplotlib
+
+      - name: Run tests
+        run: |
+          cd ${{ matrix.project }}
+          python -m pytest -q --maxfail=3 --timeout=180 || \
+            { echo "tests in ${{ matrix.project }} failed"; exit 1; }
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install ruff
+      - run: ruff check .

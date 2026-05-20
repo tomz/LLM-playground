@@ -1,1 +1,8 @@
 JAAICODE.md
+
+# Local virtualenvs (each subproject symlinks .venv → nanogpt-edu/.venv)
+.venv*/
+**/.venv*/
+**/.ruff_cache/
+**/.pytest_cache/
+**/__pycache__/

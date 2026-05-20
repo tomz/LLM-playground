@@ -14,7 +14,7 @@ def main():
     args = ap.parse_args()
 
     device = ("cuda" if torch.cuda.is_available() else "cpu") if args.device == "auto" else args.device
-    sd = torch.load(args.ckpt, map_location=device)
+    sd = torch.load(args.ckpt, map_location=device, weights_only=False)
     cfg, meta = sd["cfg"], sd["meta"]
     mcfg = GPTConfig(
         vocab_size=cfg["vocab_size"], block_size=cfg["block_size"],
