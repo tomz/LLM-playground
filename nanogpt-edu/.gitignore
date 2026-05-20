@@ -1,12 +1,25 @@
 __pycache__/
 *.pyc
 .venv/
-out/
 data/*.bin
 data/*.txt
 
-# But: keep committed training logs + plots so README image links work.
-!out/**/train.log
-!out/**/loss.png
-!out/**/loss.svg
+# out/ is ignored by default, but specific plot/log paths are re-included
+# below so README image links + reproducible artefacts stay in git.
+out/*
 !out/compare.png
+!out/smoke/
+!out/tiny/
+!out/small/
+out/smoke/*
+out/tiny/*
+out/small/*
+!out/smoke/train.log
+!out/smoke/loss.png
+!out/smoke/loss.svg
+!out/tiny/train.log
+!out/tiny/loss.png
+!out/tiny/loss.svg
+!out/small/train.log
+!out/small/loss.png
+!out/small/loss.svg
