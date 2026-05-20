@@ -21,6 +21,11 @@ class PretrainSpec:
     target_mfu: float = 0.50
     spike_prob_per_1k_steps: float = 0.02
     log_every: int = 100
+    # If set, use this measured seconds/step directly (skips the
+    # peak_tflops * target_mfu calculation). Lets a real-GPU probe
+    # calibrate the simulator's wall-clock to actual local hardware.
+    measured_seconds_per_step: float | None = None
+    measured_source: str | None = None  # free-form label for the event log
 
 
 def simulate_pretrain(
@@ -36,10 +41,18 @@ def simulate_pretrain(
     # throughput
     achieved_tflops = cluster.peak_tflops * spec.target_mfu
     flops_per_step = compute_flops(spec.n_params, spec.global_batch_tokens)
-    seconds_per_step = flops_per_step / (achieved_tflops * 1e12)
+    modeled_seconds_per_step = flops_per_step / (achieved_tflops * 1e12)
+    if spec.measured_seconds_per_step is not None:
+        seconds_per_step = spec.measured_seconds_per_step
+        throughput_source = spec.measured_source or "measured"
+    else:
+        seconds_per_step = modeled_seconds_per_step
+        throughput_source = "modeled"
     bus.emit("pretrain.start",
              n_params=spec.n_params, total_tokens=spec.total_tokens,
              total_steps=total_steps, seconds_per_step=seconds_per_step,
+             modeled_seconds_per_step=modeled_seconds_per_step,
+             throughput_source=throughput_source,
              cluster_gpus=cluster.total_gpus, mfu=spec.target_mfu,
              estimated_hours=seconds_per_step * total_steps / 3600)
 

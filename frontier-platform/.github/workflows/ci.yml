@@ -1,0 +1,76 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  sim-cpu:
+    name: simulator (CPU, pure-Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: pytest (pure-Python sim + plot suite)
+        run: |
+          python -m pip install --upgrade pip pytest
+          python -m pytest tests/test_simulation.py tests/test_plot_sim.py -q
+      - name: end-to-end smoke (1B preset, no torch)
+        run: |
+          python scripts/simulate.py --size 1b --out-dir out/sim/ci_1b
+          test -s out/sim/ci_1b/summary.json
+          test -s out/sim/ci_1b/events.jsonl
+      - name: plot loss curve (SVG path — no matplotlib needed)
+        run: |
+          python scripts/plot_sim.py out/sim/ci_1b --no-png --quiet
+          test -s out/sim/ci_1b/loss.svg
+      - name: upload sim artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sim-cpu-1b
+          path: out/sim/ci_1b/
+
+  sim-real-gpu:
+    name: simulator (CUDA calibration)
+    # Self-hosted runner with a CUDA GPU. Skips silently on forks/PRs from
+    # accounts that don't have access to the GPU runner pool.
+    runs-on: [self-hosted, gpu]
+    # Don't fail the workflow if no GPU runner is online.
+    continue-on-error: true
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install torch (cu121)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cu121 torch
+          python -m pip install pytest matplotlib
+      - name: GPU probe + real-train tests
+        run: python -m pytest tests/test_gpu_probe.py -q
+      - name: end-to-end smoke with --real-gpu calibration (1B preset)
+        run: |
+          python scripts/simulate.py --size 1b --real-gpu --real-steps 4 \
+            --out-dir out/sim/ci_real_1b
+          test -s out/sim/ci_real_1b/summary.json
+          python -c "
+          import json
+          s = json.load(open('out/sim/ci_real_1b/summary.json'))
+          assert s['real_gpu']['calibration'] is not None, 'no calibration written'
+          assert s['real_gpu']['calibration']['achieved_tflops'] > 0
+          print('calibration OK:', s['real_gpu']['calibration']['device'],
+                s['real_gpu']['calibration']['achieved_tflops'], 'TFLOP/s')
+          "
+      - name: plot loss curve (PNG via matplotlib)
+        run: python scripts/plot_sim.py out/sim/ci_real_1b --quiet
+      - name: upload real-GPU artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sim-real-gpu-1b
+          path: out/sim/ci_real_1b/

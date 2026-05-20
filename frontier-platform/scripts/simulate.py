@@ -18,6 +18,10 @@ from platform.sim.cluster import Cluster
 from platform.sim.alignment_sim import AlignmentSpec
 from platform.sim.serving_sim import ServingTier
 from platform.sim.orchestrator import ProgramSpec, run_program
+from platform.sim.gpu_probe import (
+    have_cuda, probe_all, register_in_gpu_specs, format_probe_report,
+)
+from platform.sim.real_train import measure_real_throughput, format_real_train_report
 
 
 PRESETS = {
@@ -29,14 +33,19 @@ PRESETS = {
 }
 
 
-def build(args) -> ProgramSpec:
+def build(args, real_calibration=None) -> ProgramSpec:
     n_params, tokens, seq, gbt, default_gpus = PRESETS[args.size]
     gpus = args.gpus or default_gpus
     gpus_per_node = 8
     nodes = max(1, gpus // gpus_per_node)
+    gpu_type = args.gpu_type
+    # If the user passed --real-gpu and we measured something, optionally
+    # pretend the simulated cluster is built from that local SKU.
+    if args.use_local_gpu_type and real_calibration is not None:
+        gpu_type = real_calibration["gpu_type_key"]
     pretrain_cluster = Cluster(name=f"{args.size}_pretrain", n_nodes=nodes,
-                               gpus_per_node=gpus_per_node, gpu_type=args.gpu_type)
-    eval_cluster = Cluster(name=f"{args.size}_eval", n_nodes=8, gpu_type=args.gpu_type)
+                               gpus_per_node=gpus_per_node, gpu_type=gpu_type)
+    eval_cluster = Cluster(name=f"{args.size}_eval", n_nodes=8, gpu_type=gpu_type)
 
     alignment = AlignmentSpec(
         sft_examples=args.sft_examples,
@@ -64,6 +73,10 @@ def build(args) -> ProgramSpec:
         alignment=alignment, serving_tiers=serving_tiers, serving_qps=qps,
         out_dir=args.out_dir or f"out/sim/{args.size}",
         seed=args.seed,
+        measured_tflops_per_gpu=(
+            real_calibration["per_gpu_tflops"] if real_calibration else None
+        ),
+        measured_source=(real_calibration["source"] if real_calibration else None),
     )
 
 
@@ -108,15 +121,58 @@ def main():
     ap.add_argument("--pref-pairs", type=int, default=200_000)
     ap.add_argument("--out-dir", default=None)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--real-gpu", action="store_true",
+                    help="probe local CUDA GPUs and calibrate the simulator "
+                         "from a few real training steps")
+    ap.add_argument("--real-gpu-index", type=int, default=0,
+                    help="which local CUDA device to use for the calibration run")
+    ap.add_argument("--use-local-gpu-type", action="store_true",
+                    help="replace --gpu-type with the locally-measured SKU for pricing")
+    ap.add_argument("--real-steps", type=int, default=6,
+                    help="number of timed steps in the calibration run")
     args = ap.parse_args()
 
-    spec = build(args)
+    real_calibration = None
+    probes = []
+    real_result = None
+    if args.real_gpu:
+        if not have_cuda():
+            print(" --real-gpu requested but no CUDA device is visible; "
+                  "falling back to pure simulation.")
+        else:
+            probes = probe_all()
+            register_in_gpu_specs(probes)
+            real_result = measure_real_throughput(
+                device_index=args.real_gpu_index,
+                measure_steps=args.real_steps,
+            )
+            if real_result is not None:
+                # Per-GPU achieved TFLOP/s is the calibration knob (roughly
+                # model-size invariant, unlike raw tok/s).
+                per_gpu_tflops = real_result.achieved_tflops
+                # find the synthetic GPU_SPECS key for the device we used
+                probe = probes[args.real_gpu_index] if args.real_gpu_index < len(probes) else None
+                gpu_type_key = probe.synthetic_gpu_key if probe else args.gpu_type
+                real_calibration = {
+                    "per_gpu_tflops": per_gpu_tflops,
+                    "source": f"{real_result.device} {real_result.dtype}",
+                    "gpu_type_key": gpu_type_key,
+                }
+
+    spec = build(args, real_calibration=real_calibration)
     result = run_program(spec)
     report(result, spec)
 
+    if probes:
+        print(format_probe_report(probes))
+        print()
+    if real_result is not None:
+        print(format_real_train_report(real_result))
+        print()
+
     summary = {
         "size": args.size, "gpus": spec.pretrain_cluster.total_gpus,
-        "gpu_type": args.gpu_type,
+        "gpu_type": spec.pretrain_cluster.gpu_type,
         "clock_days": result["clock_days"],
         "total_dollars": result["cost"].total,
         "cost_by_phase": result["cost"].by_phase,
@@ -124,6 +180,10 @@ def main():
         "final_loss": result["pretrain"]["final_loss"],
         "eval": result["eval"], "safety": result["safety"],
         "serving": result["serving"],
+        "real_gpu": {
+            "probes": [p.as_dict() for p in probes],
+            "calibration": (real_result.as_dict() if real_result else None),
+        },
     }
     with open(os.path.join(spec.out_dir, "summary.json"), "w") as f:
         json.dump(summary, f, indent=2)

@@ -8,17 +8,49 @@ for _m in [k for k in list(sys.modules) if k == "platform" or k.startswith("plat
     del sys.modules[_m]
 _orig_path = list(sys.path)
 sys.path[:] = [p for p in sys.path if p not in ("", ".", _REPO)]
-import torch  # noqa: F401  (binds torch to stdlib platform)
+try:
+    import torch  # noqa: F401  (binds torch to stdlib platform)
+    _HAVE_TORCH = True
+except ModuleNotFoundError:
+    _HAVE_TORCH = False
 sys.path[:] = [_REPO] + _orig_path
 for _m in [k for k in list(sys.modules) if k == "platform" or k.startswith("platform.")]:
     del sys.modules[_m]
 
 import pytest
 
-from platform.data.synthetic import write_corpus
-from platform.data.acquire import LocalFilesSource
-from platform.data.shard import tokenize_and_shard
-from platform.tokenizer.bytes import BytesTokenizer
+# The data/tokenizer fixtures below don't need torch, but the model fixtures
+# do. Stub them out with skips if torch is unavailable so the pure-Python
+# test suite (e.g. tests/test_simulation.py) still collects and runs.
+if not _HAVE_TORCH:
+    @pytest.fixture
+    def tmp_corpus_dir(tmp_path):
+        pytest.skip("torch not installed")
+
+    @pytest.fixture
+    def tiny_tokenizer():
+        pytest.skip("torch not installed")
+
+    @pytest.fixture
+    def tiny_shards(tmp_path):
+        pytest.skip("torch not installed")
+
+    @pytest.fixture
+    def tiny_model_cfg():
+        pytest.skip("torch not installed")
+
+    @pytest.fixture
+    def tiny_model():
+        pytest.skip("torch not installed")
+
+    @pytest.fixture
+    def gpu_or_skip():
+        pytest.skip("torch not installed")
+else:
+    from platform.data.synthetic import write_corpus
+    from platform.data.acquire import LocalFilesSource
+    from platform.data.shard import tokenize_and_shard
+    from platform.tokenizer.bytes import BytesTokenizer
 
 
 @pytest.fixture

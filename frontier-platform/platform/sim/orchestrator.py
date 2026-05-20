@@ -28,6 +28,12 @@ class ProgramSpec:
     serving_qps: dict[str, float]
     out_dir: str = "out/sim"
     seed: int = 0
+    # Optional throughput override from a real-GPU probe. We measure
+    # achieved TFLOP/s on the local device (roughly invariant to model
+    # size, unlike raw tok/s) and re-derive seconds_per_step at the
+    # simulated model+cluster scale.
+    measured_tflops_per_gpu: float | None = None
+    measured_source: str | None = None
 
 
 def run_program(spec: ProgramSpec) -> dict:
@@ -45,10 +51,30 @@ def run_program(spec: ProgramSpec) -> dict:
     data = simulate_data_pipeline(spec.total_tokens, clock, cost, bus)
     tok = simulate_tokenizer_training(sample_gb=200.0, vocab_size=100_352,
                                       clock=clock, cost=cost, bus=bus)
+    measured_sec_per_step = None
+    if spec.measured_tflops_per_gpu:
+        # Project measured per-GPU TFLOP/s to the whole simulated cluster,
+        # then convert to seconds-per-step using the model's FLOPs/step.
+        # (FLOP/token ~ 6N; measured TFLOP/s is roughly model-size invariant
+        # for compute-bound regimes, which is the regime we care about.)
+        from .scaling import compute_flops
+        cluster_tflops = (
+            spec.measured_tflops_per_gpu * spec.pretrain_cluster.total_gpus
+        )
+        flops_per_step = compute_flops(spec.n_params, spec.global_batch_tokens)
+        measured_sec_per_step = flops_per_step / (cluster_tflops * 1e12)
+        bus.emit("pretrain.calibrated",
+                 per_gpu_tflops=spec.measured_tflops_per_gpu,
+                 cluster_tflops=cluster_tflops,
+                 flops_per_step=flops_per_step,
+                 measured_seconds_per_step=measured_sec_per_step,
+                 source=spec.measured_source or "measured")
     pre = simulate_pretrain(
         PretrainSpec(
             n_params=spec.n_params, total_tokens=spec.total_tokens,
             seq_len=spec.seq_len, global_batch_tokens=spec.global_batch_tokens,
+            measured_seconds_per_step=measured_sec_per_step,
+            measured_source=spec.measured_source,
         ),
         spec.pretrain_cluster, clock, cost, bus, seed=spec.seed,
     )
