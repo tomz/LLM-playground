@@ -1,0 +1,43 @@
+# Tuned for Apple Silicon M-series with ~24 GB unified memory.
+# 12-layer / 768-dim GPT-2-small at block 512, micro_batch 4, grad_accum 16
+# = 32k tokens/step. 2000 iters ≈ 64M tokens, ~2-3 hours on an M5.
+# At smoke baseline of 2.1k tok/s this is ~9 hours; with the larger
+# context (block 256 -> 512) and batch (2 -> 4) MPS gets closer to
+# its bandwidth peak so we expect 3-5k tok/s on the longer sequences.
+out_dir: out/gpt2_124m_mps
+dataset: wikitext103
+tokenizer: gpt2
+seed: 1337
+dtype: bfloat16
+compile: false           # torch.compile + MPS is shaky as of torch 2.12
+grad_checkpoint: true    # essential for 24 GB unified ceiling
+log: {jsonl: true, wandb_project: null}
+
+model:
+  vocab_size: 50304
+  block_size: 512
+  n_layer: 12
+  n_head: 12
+  d_model: 768
+  d_ffn: 3072
+  dropout: 0.0
+  bias: false
+  tie_embeddings: true
+
+optim:
+  lr: 6.0e-4
+  min_lr: 6.0e-5
+  betas: [0.9, 0.95]
+  weight_decay: 0.1
+  grad_clip: 1.0
+  warmup_iters: 100
+  lr_decay_iters: 2000
+  max_iters: 2000
+
+train:
+  micro_batch: 4
+  grad_accum: 16
+  eval_interval: 200
+  eval_iters: 50
+  log_interval: 10
+  ckpt_interval: 500

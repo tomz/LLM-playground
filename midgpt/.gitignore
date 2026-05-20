@@ -1,6 +1,13 @@
 __pycache__/
 *.pyc
 .venv/
-out/
 data/*/
 wandb/
+
+# out/ is ignored by default; re-include specific MPS smoke artifacts so the
+# README image link + reproducible log stay in git.
+out/*
+!out/smoke_124m/
+out/smoke_124m/*
+!out/smoke_124m/loss.png
+!out/smoke_124m_train.log

@@ -66,6 +66,35 @@ midgpt/
 └── tests/
 ```
 
+## Apple Silicon (MPS) support
+
+`train.py` auto-detects MPS (Metal Performance Shaders) on macOS and runs in
+native bf16 with `GradScaler` disabled (Metal doesn't need it for bf16). Tested
+on an Apple M1 Pro (24 GB unified, macOS 26.3.1, PyTorch 2.12) — the 124M
+config fits at micro-batch 4, sequence length 1024 with grad checkpointing.
+
+A 200-iter smoke run on WikiText-103:
+
+![midgpt MPS smoke run](out/smoke_124m/loss.png)
+
+|              |              |
+|--------------|--------------|
+| device       | MPS bf16     |
+| iters        | 200          |
+| wall-clock   | ~1.5 min     |
+| step time    | ~485 ms/it (median) |
+| throughput   | ~2.1k tok/s  |
+| train loss   | 10.96 → 6.99 |
+| best val ppl | 1031         |
+
+> ⚠️ Caveat — running a heavier 500-iter config (micro_batch=4, grad_accum=16,
+> block_size=512 → 32× more compute per iter than the smoke run) triggered
+> what looked like an MPS Metal-driver stall after ~30 iters: the process
+> stayed alive but stopped advancing (`STAT=U`, ~8% CPU, 25 s of CPU time
+> across 25 min wall-clock). The smoke config above completes cleanly — if
+> you hit the same hang, reduce `micro_batch`/`grad_accum` and/or
+> `block_size`, or set `grad_checkpoint: false`.
+
 ## What's still omitted (see `distributed-trainer`)
 
 FSDP / tensor parallelism / pipeline parallelism / multi-node orchestration / RLHF.

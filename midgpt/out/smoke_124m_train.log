@@ -1,0 +1,27 @@
+world_size=1  device=mps  dtype=torch.bfloat16
+model: 123.59M non-emb params
+iter      0 | loss 10.9564 | lr 3.00e-05 | 230 ms | 4.5k tok/s
+iter     10 | loss 9.0669 | lr 3.30e-04 | 473 ms | 2.2k tok/s
+iter     20 | loss 7.8272 | lr 6.00e-04 | 4983 ms | 0.2k tok/s
+iter     30 | loss 7.6487 | lr 5.96e-04 | 485 ms | 2.1k tok/s
+iter     40 | loss 7.6000 | lr 5.84e-04 | 485 ms | 2.1k tok/s
+iter     50 | loss 7.2214 | lr 5.64e-04 | 484 ms | 2.1k tok/s
+           eval | val 7.3271 | ppl 1520.94
+iter     60 | loss 7.4476 | lr 5.37e-04 | 530 ms | 1.9k tok/s
+iter     70 | loss 7.2216 | lr 5.04e-04 | 488 ms | 2.1k tok/s
+iter     80 | loss 7.4143 | lr 4.65e-04 | 485 ms | 2.1k tok/s
+iter     90 | loss 6.9433 | lr 4.22e-04 | 485 ms | 2.1k tok/s
+iter    100 | loss 6.9653 | lr 3.77e-04 | 485 ms | 2.1k tok/s
+           eval | val 7.0448 | ppl 1146.94
+           saved ckpt -> out/smoke_124m/ckpt.pt
+iter    110 | loss 6.6476 | lr 3.30e-04 | 4162 ms | 0.2k tok/s
+iter    120 | loss 6.6724 | lr 2.83e-04 | 485 ms | 2.1k tok/s
+iter    130 | loss 6.8689 | lr 2.38e-04 | 485 ms | 2.1k tok/s
+iter    140 | loss 7.0186 | lr 1.95e-04 | 485 ms | 2.1k tok/s
+iter    150 | loss 6.9569 | lr 1.56e-04 | 485 ms | 2.1k tok/s
+           eval | val 6.9386 | ppl 1031.33
+iter    160 | loss 6.8911 | lr 1.23e-04 | 513 ms | 2.0k tok/s
+iter    170 | loss 6.2665 | lr 9.62e-05 | 485 ms | 2.1k tok/s
+iter    180 | loss 6.9862 | lr 7.63e-05 | 485 ms | 2.1k tok/s
+iter    190 | loss 6.9919 | lr 6.41e-05 | 484 ms | 2.1k tok/s
+done -> out/smoke_124m/ckpt.pt
