@@ -35,7 +35,7 @@ jobs:
             python -m pip install -e . || true
           fi
           # Common test/runtime deps.
-          python -m pip install pytest pyyaml tiktoken datasets matplotlib
+          python -m pip install pytest pytest-timeout pyyaml tiktoken datasets matplotlib
 
       - name: Run tests
         run: |
