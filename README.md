@@ -9,6 +9,71 @@ a laptop CPU, up to an architecture-only blueprint for a frontier-scale
 Each subproject is **independent**: its own README, its own dependencies,
 its own tests. Pick the one that matches the scale you care about.
 
+## Results gallery
+
+Two projects in this repo come with **published training plots and headline
+numbers** — one from real training on a single consumer GPU, one from a
+discrete-event simulator that scales the same physics to a frontier
+cluster.
+
+### `nanogpt-edu/` — real training on an RTX 3050
+
+Three runs of a real PyTorch training loop on a single RTX 3050 (8 GB,
+bf16) against char-level Tiny Shakespeare (1 MB). The whole sweep,
+including a 25 M parameter model overfitting hard for 2 h, was run on a
+desktop GPU at home — no cluster, no API.
+
+| Run     | Params  | Iters         | ms/it | Wall    | Final train | **Best val** | Final val |
+|---------|--------:|--------------:|------:|--------:|------------:|-------------:|----------:|
+| `smoke` |  0.86 M | 275 / 300     |  14.0 |   ~5 s  | 1.90        | **1.99**     | 1.99      |
+| `tiny`  | 10.65 M | 4,990 / 5,000 | 203.4 | ~17 min | 0.07        | **1.53**     | 4.34      |
+| `small` | 25.73 M | 9,600 / 15,000| 798.4 | ~2 h 15 | 0.04        | **1.87**     | 5.21      |
+
+The classic "best val arrives in the first ~1000 iters and then val
+climbs monotonically while train collapses to zero" story — visible in
+the published plot:
+
+![nanogpt-edu cross-run comparison](nanogpt-edu/out/compare.png)
+
+Per-run 3-panel plots (loss + LR + step time) and the parser that
+generated them live at [`nanogpt-edu/out/`](./nanogpt-edu/out/) and
+[`nanogpt-edu/tools/plot_nanogpt.py`](./nanogpt-edu/tools/plot_nanogpt.py).
+Full discussion in
+[`nanogpt-edu/README.md`](./nanogpt-edu/README.md#actual-training-results-1-rtx-3050-8-gb).
+
+### `frontier-platform/` — simulated 1B → 400B program
+
+Discrete-event simulator (pure Python, no torch) that runs the full
+program end-to-end: Chinchilla-style scaling laws, MFU → throughput →
+wall time, Poisson GPU failures, rolling $ accounting, eval-score
+prediction, safety thresholds, serving cost models. Optional
+`--real-gpu` flag probes local CUDA devices and recalibrates
+`seconds_per_step` from a few real training steps so the simulated wall
+clock and $ figures match the silicon you actually own.
+
+| Run          | Cluster      | Wall    | Final loss | MMLU  | Arena ELO | **Total $**  | Throughput model |
+|--------------|-------------:|--------:|-----------:|------:|----------:|-------------:|:-----------------|
+| `1b`         |    64× H100  |   3.7 d |   2.21     | 50.6% |    1515   | $0.93 M      | 50% MFU × spec   |
+| `7b`         |   512× H100  |   4.8 d |   2.02     | 62.7% |    1711   | $1.02 M      | 50% MFU × spec   |
+| `70b`        | 4,096× H100  |  13.2 d |   1.88     | 76.8% |    1985   | $3.31 M      | 50% MFU × spec   |
+| `400b`       |16,384× H100  |  54.0 d |   1.81     | 84.2% |    2142   | **$42.42 M** | 50% MFU × spec   |
+| `7b_realgpu` |   512× H100  | **430.7 d** | 2.03   | 62.7% |    1711   | **$11.48 M** | RTX 3050 bf16 (measured) |
+
+The 7B-vs-7B-realgpu comparison is the punchline: same simulated
+cluster, but calibrating against an actually-measured 4.2 TFLOP/s per
+RTX 3050 (vs H100's 989 TFLOP/s spec) blows wall-clock from 5 days to
+14 months and cost from $1 M to $11.5 M — eval scores are identical
+because scaling laws don't care how fast the GPUs are.
+
+![frontier-platform size sweep](frontier-platform/out/sim/compare_sizes.png)
+
+![spec-sheet vs real-GPU calibration](frontier-platform/out/sim/compare_7b_modeled_vs_real.png)
+
+All five runs ship with per-run 3-panel plots (loss + cumulative $ +
+cumulative failures), JSON summaries, and a reproducible CLI. See
+[`frontier-platform/README.md`](./frontier-platform/README.md#simulator-results-scriptssimulatepy)
+for the full story.
+
 ## The five projects
 
 | Project | Scale | What it teaches | Hardware |
