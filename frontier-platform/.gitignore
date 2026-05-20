@@ -4,4 +4,37 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 .venv
-out/
+
+# Everything under out/ is ignored by default; only specific plot /
+# summary paths are re-included below so README image links work
+# and headline results stay in git history.
+out/*
+!out/sim/
+out/sim/*
+!out/sim/compare_sizes.png
+!out/sim/compare_7b_modeled_vs_real.png
+!out/sim/1b/
+!out/sim/7b/
+!out/sim/70b/
+!out/sim/400b/
+!out/sim/7b_realgpu/
+out/sim/1b/*
+out/sim/7b/*
+out/sim/70b/*
+out/sim/400b/*
+out/sim/7b_realgpu/*
+!out/sim/1b/loss.png
+!out/sim/1b/loss.svg
+!out/sim/1b/summary.json
+!out/sim/7b/loss.png
+!out/sim/7b/loss.svg
+!out/sim/7b/summary.json
+!out/sim/70b/loss.png
+!out/sim/70b/loss.svg
+!out/sim/70b/summary.json
+!out/sim/400b/loss.png
+!out/sim/400b/loss.svg
+!out/sim/400b/summary.json
+!out/sim/7b_realgpu/loss.png
+!out/sim/7b_realgpu/loss.svg
+!out/sim/7b_realgpu/summary.json

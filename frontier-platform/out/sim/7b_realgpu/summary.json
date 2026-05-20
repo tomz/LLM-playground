@@ -2,12 +2,12 @@
   "size": "7b",
   "gpus": 512,
   "gpu_type": "H100",
-  "clock_days": 4.793787569287871,
-  "total_dollars": 1016376.4446283624,
+  "clock_days": 430.7275373179372,
+  "total_dollars": 11484124.278451877,
   "cost_by_phase": {
     "data": 315.96017043263316,
     "tokenizer": 92.16,
-    "pretrain": 90326.92955848025,
+    "pretrain": 10558074.763381995,
     "sft.compute": 154.15795977980002,
     "sft.labels": 125000.0,
     "rlhf.labels": 800000.0,
@@ -17,11 +17,11 @@
   "cost_by_resource": {
     "cpu_nodes": 240.84713902712147,
     "storage_egress": 167.27303140551166,
-    "_dt_acc": 0.0,
-    "gpu_H100": 90968.32445792975,
+    "_dt_acc": 28800.0,
+    "gpu_H100": 10558716.158281446,
     "human_labels": 925000.0
   },
-  "final_loss": 2.0174177011322176,
+  "final_loss": 2.027523385611038,
   "eval": {
     "mmlu": 0.6272743955172635,
     "humaneval": 0.4103461029074896,
@@ -77,7 +77,38 @@
     }
   },
   "real_gpu": {
-    "probes": [],
-    "calibration": null
+    "probes": [
+      {
+        "index": 0,
+        "name": "NVIDIA GeForce RTX 3050",
+        "compute_capability": [
+          8,
+          6
+        ],
+        "total_mem_gb": 7.656005859375,
+        "tflops": {
+          "fp32": 5.751738353572418,
+          "fp16": 18.10946960300383,
+          "bf16": 18.03549161811242
+        },
+        "hbm_bandwidth_gb_s": 206.97485404082522,
+        "spec_tflops_bf16": 18.0,
+        "implied_mfu": 1.0
+      }
+    ],
+    "calibration": {
+      "device": "NVIDIA GeForce RTX 3050",
+      "dtype": "bf16",
+      "n_params": 6031616,
+      "batch": 4,
+      "seq_len": 512,
+      "steps_measured": 6,
+      "ms_per_step": 17.505679667616885,
+      "tokens_per_sec": 116990.60184384159,
+      "achieved_tflops": 4.233854315585667,
+      "peak_mem_gb": 0.34009552001953125,
+      "loss_first": 8.366979598999023,
+      "loss_last": 8.36436653137207
+    }
   }
 }

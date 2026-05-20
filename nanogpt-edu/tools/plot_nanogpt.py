@@ -199,10 +199,10 @@ def plot_run(run: Run, out_dir: str,
     except ModuleNotFoundError:
         return written
 
-    fig = plt.figure(figsize=(10, 8.8))
+    fig = plt.figure(figsize=(10, 9.2))
     gs = fig.add_gridspec(
         3, 1, height_ratios=[2.4, 1.0, 1.0], hspace=0.42,
-        left=0.09, right=0.96, top=0.90, bottom=0.07,
+        left=0.09, right=0.96, top=0.88, bottom=0.07,
     )
     ax_loss = fig.add_subplot(gs[0])
     ax_lr = fig.add_subplot(gs[1], sharex=ax_loss)
@@ -261,12 +261,12 @@ def plot_run(run: Run, out_dir: str,
     best_val = min(run.eval_val) if run.eval_val else float("nan")
     final_val = run.eval_val[-1] if run.eval_val else float("nan")
     title = f"nanogpt-edu  •  {run.name}  •  {run.params_m:.2f} M parameters"
-    fig.suptitle(title, fontsize=14, fontweight="bold", y=0.975)
+    fig.suptitle(title, fontsize=14, fontweight="bold", y=0.965)
     sub_bits = [f"{len(run.iters):,} iterations logged",
                 f"final train {final_train:.3f}",
                 f"best val {best_val:.3f}",
                 f"final val {final_val:.3f}"]
-    fig.text(0.5, 0.937, "   ·   ".join(sub_bits),
+    fig.text(0.5, 0.918, "   ·   ".join(sub_bits),
              ha="center", fontsize=10, color=TEXT_MUTED)
 
     footer_bits = [b for b in [hardware, dataset] if b]

@@ -21,7 +21,7 @@
     "gpu_H100": 2379951.9874171293,
     "human_labels": 925000.0
   },
-  "final_loss": 1.8937565332827082,
+  "final_loss": 1.8821229705946503,
   "eval": {
     "mmlu": 0.7677732219893134,
     "humaneval": 0.6389375144527467,
@@ -76,5 +76,9 @@
       "cost_per_mtok": 47.40740740740741,
       "ttft_ms": 600
     }
+  },
+  "real_gpu": {
+    "probes": [],
+    "calibration": null
   }
 }

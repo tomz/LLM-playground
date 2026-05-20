@@ -1,27 +1,27 @@
 {
   "size": "400b",
   "gpus": 16384,
-  "gpu_type": "B200",
-  "clock_days": 24.36923134798867,
-  "total_dollars": 41874851.016833454,
+  "gpu_type": "H100",
+  "clock_days": 53.991690155421985,
+  "total_dollars": 42422351.01081382,
   "cost_by_phase": {
     "data": 2369.701278244748,
     "tokenizer": 92.16,
-    "pretrain": 40924057.59999965,
-    "sft.compute": 9102.222222222223,
+    "pretrain": 41471624.49882217,
+    "sft.compute": 9203.460285361194,
     "sft.labels": 125000.0,
     "rlhf.labels": 800000.0,
-    "rlhf.compute": 13653.333333333334,
-    "eval": 576.0
+    "rlhf.compute": 13805.190428041793,
+    "eval": 256.0
   },
   "cost_by_resource": {
     "cpu_nodes": 1207.313542703411,
     "storage_egress": 1254.5477355413373,
-    "_dt_acc": 45120.0,
-    "gpu_B200": 40947389.15555521,
+    "_dt_acc": 112800.0,
+    "gpu_H100": 41494889.14953557,
     "human_labels": 925000.0
   },
-  "final_loss": 1.821955223202736,
+  "final_loss": 1.8130941632363817,
   "eval": {
     "mmlu": 0.8416294115315582,
     "humaneval": 0.7683274659296669,
@@ -58,25 +58,29 @@
       "qps": 30.0,
       "replicas": 12,
       "gpus": 12,
-      "daily_dollars": 1296.0,
-      "cost_per_mtok": 0.5,
+      "daily_dollars": 576.0,
+      "cost_per_mtok": 0.2222222222222222,
       "ttft_ms": 100
     },
     "pro": {
       "qps": 8.0,
       "replicas": 5,
       "gpus": 40,
-      "daily_dollars": 4320.0,
-      "cost_per_mtok": 6.25,
+      "daily_dollars": 1920.0,
+      "cost_per_mtok": 2.7777777777777777,
       "ttft_ms": 250
     },
     "max": {
       "qps": 1.5,
       "replicas": 2,
       "gpus": 128,
-      "daily_dollars": 13824.0,
-      "cost_per_mtok": 106.66666666666667,
+      "daily_dollars": 6144.0,
+      "cost_per_mtok": 47.40740740740741,
       "ttft_ms": 600
     }
+  },
+  "real_gpu": {
+    "probes": [],
+    "calibration": null
   }
 }
