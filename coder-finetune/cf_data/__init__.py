@@ -63,9 +63,11 @@ def load_builtin(repeat: int = 50):
     return Dataset.from_list(rows)
 
 
-def load_hf(name: str, max_examples: int | None = None):
+def load_hf(name: str, max_examples: int | None = None, lang_filter: str | None = None):
     from datasets import load_dataset
     ds = load_dataset(name, split="train")
+    if lang_filter and "lang" in ds.column_names:
+        ds = ds.filter(lambda ex: ex["lang"] == lang_filter)
     if max_examples:
         ds = ds.select(range(min(max_examples, len(ds))))
     return _normalize(ds, name)
@@ -105,7 +107,7 @@ def load(cfg: dict):
     if src == "builtin":
         return load_builtin()
     if src == "hf":
-        return load_hf(cfg["hf_name"], cfg.get("max_examples"))
+        return load_hf(cfg["hf_name"], cfg.get("max_examples"), cfg.get("lang_filter"))
     if src == "jsonl":
         return load_jsonl(cfg["jsonl_path"], cfg.get("max_examples"))
     raise ValueError(f"unknown dataset source: {src}")

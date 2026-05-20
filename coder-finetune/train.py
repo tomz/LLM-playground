@@ -62,6 +62,17 @@ def build_model_and_tokenizer(cfg: dict):
             task_type="CAUSAL_LM",
         )
         model = get_peft_model(model, peft_cfg)
+        # Plain LoRA + gradient-checkpointing gotcha: the input embedding
+        # output has requires_grad=False, which breaks the autograd graph at
+        # checkpoint boundaries. Calling enable_input_require_grads() turns on
+        # a forward hook that flips that bit. prepare_model_for_kbit_training
+        # already does this for QLoRA, so only do it for plain LoRA.
+        if method == "lora" and cfg.get("train", {}).get("gradient_checkpointing", True):
+            if hasattr(model, "enable_input_require_grads"):
+                model.enable_input_require_grads()
+        # use_cache=True is incompatible with gradient checkpointing.
+        if hasattr(model, "config"):
+            model.config.use_cache = False
         model.print_trainable_parameters()
 
     return model, tok

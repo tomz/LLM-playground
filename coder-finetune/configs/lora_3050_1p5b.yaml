@@ -1,0 +1,56 @@
+# 3050 limit-pushing recipe — 1.5B Qwen-Coder LoRA on Magicoder-OSS-Instruct-Python.
+#
+# Hardware target: RTX 3050 8 GB. The 0.5B/builtin recipe (lora_3050.yaml)
+# proves the plumbing works; this one proves the 3050 is enough for a real
+# 1.5B fine-tune on real data with realistic sequence lengths.
+#
+# Memory budget (measured): bf16 weights (2.79 GB) + optimizer state (~70 MB
+# for r=16 LoRA) + bf16 activations at T=1024, B=1, grad_ckpt=on (~1.5 GB
+# peak with selective ckpt). Headroom for spikes.
+#
+out_dir: out/lora_3050_1p5b
+seed: 1337
+
+model:
+  name: Qwen/Qwen2.5-Coder-1.5B
+  dtype: bfloat16
+  attn_impl: sdpa
+  trust_remote_code: false
+
+method: lora
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  bias: none
+  target_modules: ['q_proj', 'k_proj', 'v_proj', 'o_proj',
+                   'gate_proj', 'up_proj', 'down_proj']
+
+dataset:
+  source: hf
+  hf_name: ise-uiuc/Magicoder-OSS-Instruct-75K
+  lang_filter: python      # 38,284 of 75,197 examples
+  max_examples: 2000       # ~25 minutes wall-clock at 250 steps; bump to 10k
+                           # for ~2 hours and a more solid result
+  format: chatml
+
+train:
+  max_seq_len: 1024
+  batch_size: 1
+  grad_accum: 8            # effective batch = 8
+  epochs: 1
+  lr: 2.0e-4
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  grad_clip: 1.0
+  log_every: 10
+  save_every: 100
+  packing: false           # packing=true would double throughput; keeping off
+                           # for clarity in this example
+  gradient_checkpointing: true   # required at 1.5B + T=1024 on 8 GB
+
+eval:
+  enable: false
+  n_problems: 50
+  n_samples_per_problem: 1
