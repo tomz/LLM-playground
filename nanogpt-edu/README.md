@@ -27,6 +27,63 @@ python sample.py --ckpt out/ckpt.pt --prompt "ROMEO:"
 | `small.py`    | ~30M   | 8      | 512     | ~20 min                   |
 | `medium.py`   | ~110M  | 12     | 768     | ~2 h                      |
 
+## Actual training results (1× RTX 3050, 8 GB)
+
+Char-level Tiny Shakespeare (1 MB). Training stdout logs are committed
+under `out/<run>/train.log`; PNG/SVG plots are written by
+`python tools/plot_nanogpt.py out/<run>/train.log`.
+
+| Run       | Params  | Iters done   | ms/it (3050) | Wall    | Final train | **Best val** | Final val |
+|-----------|--------:|-------------:|-------------:|--------:|------------:|-------------:|----------:|
+| `smoke`   |  0.86 M | 275 / 300    |  14.0        |  ~5 s   | 1.90        | **1.99**     | 1.99      |
+| `tiny`    | 10.65 M | 4,990 / 5,000|  203.4       | ~17 min | 0.07        | **1.53**     | 4.34      |
+| `small`   | 25.73 M | 9,600 / 15,000 (killed @ 64 %) |  798.4 | ~2 h 15 | 0.04        | **1.87**     | 5.21      |
+
+Things the plots make obvious:
+
+1. **Step time scales roughly with `d_model²·block_size`** on the 3050:
+   14 → 203 → 798 ms (d_model 128 → 384 → 512, block 128 → 256 → 512).
+2. **Tiny Shakespeare overfits hard on any non-trivial model.** Both
+   `tiny` and `small` hit their best val between iter ~500–800 (right
+   after warmup), then val rises monotonically while train collapses
+   toward zero. **The useful checkpoint is *not* the last one.**
+3. **Bigger model is worse on val** at this dataset scale (best val 1.87
+   for `small` vs 1.53 for `tiny`) — classic overcapacity for a 1 MB
+   corpus. To make the larger config actually shine, scale tokens with
+   params (i.e. use a larger dataset) or add dropout/early stopping.
+4. **Cosine schedule looks textbook** in panel 2 — short warmup, smooth
+   decay to `min_lr`.
+
+### Per-run plots
+
+Each PNG is 3-panel: train+val loss / cosine LR / step time.
+
+| smoke | tiny | small |
+|---|---|---|
+| ![smoke](out/smoke/loss.png) | ![tiny](out/tiny/loss.png) | ![small](out/small/loss.png) |
+
+### Cross-run comparison
+
+Linear-x and log-x val-loss overlays for all three runs:
+
+![compare](out/compare.png)
+
+### Reproducing
+
+```bash
+mkdir -p out/{smoke,tiny,small}
+python train.py --config configs/smoke.py 2>&1 | tee out/smoke/train.log
+python train.py --config configs/tiny.py  2>&1 | tee out/tiny/train.log
+python train.py --config configs/small.py 2>&1 | tee out/small/train.log
+
+# Plot one run, or all + a comparison overlay:
+python tools/plot_nanogpt.py out/tiny/train.log
+python tools/plot_nanogpt.py out/*/train.log --compare out/compare.png
+```
+
+`tools/plot_nanogpt.py` uses matplotlib for PNGs if available and always
+writes a zero-dependency SVG fallback.
+
 ## What this teaches
 
 1. How attention, RoPE, RMSNorm, SwiGLU, and the residual stream fit together.
