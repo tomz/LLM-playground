@@ -11,10 +11,10 @@ its own tests. Pick the one that matches the scale you care about.
 
 ## Results gallery
 
-Two projects in this repo come with **published training plots and headline
-numbers** — one from real training on a single consumer GPU, one from a
-discrete-event simulator that scales the same physics to a frontier
-cluster.
+Three projects in this repo come with **published training plots and
+headline numbers** from real single-GPU runs (one 3050, two 5060 Ti),
+plus one project with a discrete-event simulator that scales the same
+physics to a frontier cluster.
 
 ### `nanogpt-edu/` — real training on an RTX 3050
 
@@ -92,6 +92,42 @@ Recipe:
 [`midgpt/configs/gpt2_350m_fweb_5060ti.yaml`](midgpt/configs/gpt2_350m_fweb_5060ti.yaml).
 Walkthrough + sample completions + calibration table:
 [`midgpt/examples/5060ti_350m_fineweb.md`](midgpt/examples/5060ti_350m_fineweb.md).
+
+### `distgpt/` — 416M Llama-arch (RoPE+SwiGLU+GQA) on RTX 5060 Ti
+
+Single-GPU shake-out of distgpt's full multi-node training stack (the
+collectives no-op at world_size=1, but every other code path —
+DeviceMesh, FSDP2 wrapping policy, streaming dataloader with mid-epoch
+resume, DCP sharded checkpointer, SpikeMonitor + RewindController,
+AdamW + cosine + per-group WD — is on the critical path).
+
+| Metric           | Value |
+|------------------|------:|
+| Model            | 416 M Llama-arch (24 L × 1024 d × 16 H, **GQA 4:1**, tied embeddings, RoPE + RMSNorm + SwiGLU) |
+| Dataset          | FineWeb-Edu `sample-10BT`, 1 B-token slice (shared with `midgpt/`) |
+| Tokens trained   | **98 M** (~0.24× Chinchilla for 416 M) |
+| Wall-clock       | **1 h 12 min** (3 000 steps × 32 768 tok / step) |
+| Throughput       | **11.7 k tok/s** sustained, ~98 % GPU util |
+| Peak VRAM        | **12.0 GB allocated / 12.1 GB reserved** (of 16 GB) |
+| Train loss       | 11.02 → **4.58** |
+| **Best val ppl** | **60.7** (loss 4.105) at step 2 800 |
+
+![distgpt 416M training curves](distgpt/out/gpt_416m_fweb_5060ti/loss.png)
+
+The point of the run isn't to beat `midgpt/` (it doesn't — fewer tokens,
+no GQA-speedup at this scale, FSDP wrapping overhead) but to **prove the
+distributed-training plumbing actually trains a model**: a sharded DCP
+checkpoint resumes cleanly, the streaming loader's `LoaderState` survives
+restart, the spike monitor stays out of the way on a noisy small-batch
+run. The writeup documents two real bugs the run surfaced — a
+SpikeMonitor rewind-loop that wasted 6 hours retraining the same 100
+steps in a regression loop, and why two ranks on one consumer 5060 Ti
+doesn't work under NCCL 2.28 — and the fixes that landed alongside.
+
+Recipe:
+[`distgpt/configs/gpt_416m_fweb_5060ti.yaml`](distgpt/configs/gpt_416m_fweb_5060ti.yaml).
+Walkthrough + bug post-mortems + 2-rank-on-one-GPU notes:
+[`distgpt/examples/5060ti_416m_fineweb.md`](distgpt/examples/5060ti_416m_fineweb.md).
 
 ### `frontier-platform/` — simulated 1B → 400B program
 
