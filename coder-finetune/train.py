@@ -147,6 +147,13 @@ def main():
     print(f"[train] saved -> {save_path}")
     print(f"[train] to evaluate: python eval/run_humaneval.py --model {save_path}")
 
+    if torch.cuda.is_available():
+        # Report what the run actually cost. Useful for the worked-example
+        # docs and for capacity planning on the next-bigger model.
+        alloc = torch.cuda.max_memory_allocated() // (1024 * 1024)
+        resv = torch.cuda.max_memory_reserved() // (1024 * 1024)
+        print(f"[vram] peak_alloc={alloc} MiB  peak_reserved={resv} MiB")
+
 
 if __name__ == "__main__":
     main()

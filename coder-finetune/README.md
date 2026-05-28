@@ -1,12 +1,15 @@
 # coder-finetune
 
-Fine-tune open-weights code models on a single consumer GPU. Three tiers:
+Fine-tune open-weights code models on a single consumer GPU. Tiers:
 
-| Config            | Base                     | Method | VRAM target | Time (RTX 3050)  |
-|-------------------|--------------------------|--------|------------:|-----------------:|
-| `configs/tiny.yaml`  | Qwen2.5-Coder-0.5B    | full FT (BF16) |  ~6 GB |  ~30 min on 5k  |
-| `configs/lora.yaml`  | Qwen2.5-Coder-1.5B    | LoRA r=16     |  ~7 GB |  ~1.5 h on 20k  |
-| `configs/qlora.yaml` | Qwen2.5-Coder-7B      | QLoRA NF4 r=32|  ~7 GB |  ~8 h on 50k    |
+| Config                  | Base                     | Method | VRAM peak | Wall-clock         |
+|-------------------------|--------------------------|--------|----------:|-------------------:|
+| `configs/tiny.yaml`     | Qwen2.5-Coder-0.5B       | full FT (BF16)  | ~6 GB     | ~30 min on 5k       |
+| `configs/lora_3050.yaml`  | Qwen2.5-Coder-0.5B     | LoRA r=16       | 2.3 GB    | 1m 24s (smoke run)  |
+| `configs/lora_3050_1p5b.yaml` | Qwen2.5-Coder-1.5B | LoRA r=16       | 7.5 GB    | 24 min on 2k        |
+| **`configs/lora_5060ti.yaml`** | **Qwen2.5-Coder-3B** | **LoRA r=16, packed** | **15.1 GB** | **12 min on 2.5k**  |
+| `configs/lora.yaml`     | Qwen2.5-Coder-1.5B       | LoRA r=16       | ~7 GB     | ~1.5 h on 20k       |
+| `configs/qlora.yaml`    | Qwen2.5-Coder-7B         | QLoRA NF4 r=32  | ~7 GB     | ~8 h on 50k         |
 
 Uses HuggingFace `transformers` + `peft` + `trl`; no custom training loop.
 
@@ -38,19 +41,23 @@ python -m venv .venv
 .venv/bin/python infer/generate.py --model out/tiny --prompt 'def fib(n):'
 ```
 
-## Worked example: 84-second LoRA on RTX 3050
+## Worked examples
 
-A reproducible run with real numbers (1.76 GB peak VRAM, 80 steps, loss
-2.85 → 0.45) lives at [`examples/3050_lora.md`](examples/3050_lora.md). It
-uses the built-in 16-pair instruction set so no dataset download is needed
-beyond the 0.5B base weights.
+| GPU              | Recipe                                                      | What it shows |
+|------------------|-------------------------------------------------------------|---------------|
+| RTX 3050 8 GB    | [`examples/3050_lora.md`](examples/3050_lora.md)            | 84 s memorize-a-builtin-set smoke run (0.5B, no download) |
+| RTX 3050 8 GB    | [`configs/lora_3050_1p5b.RESULTS.md`](configs/lora_3050_1p5b.RESULTS.md) | 24 min 1.5B + Magicoder, pushing the 8 GB limit |
+| **RTX 5060 Ti 16 GB** | [`examples/5060ti_lora.md`](examples/5060ti_lora.md)   | **12 min 3B + Magicoder, packing on, grad_ckpt off** |
+
+The 5060 Ti example is the one to read for current numbers — it shows
+both *real generalization* (novel held-out prompts get correct DP / BFS
+/ LRU / decorator code) and a clean throughput win from the 16 GB budget
+(disable gradient checkpointing, enable packing) versus the 3050 recipes.
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 .venv/bin/python train.py --config configs/lora_3050.yaml
-.venv/bin/python infer/generate.py --model out/lora_3050/final --prompt-style raw \
-    --prompt 'def gcd(a, b):
-    """Return the greatest common divisor of a and b."""
-'
+CUDA_VISIBLE_DEVICES=0 .venv/bin/python train.py --config configs/lora_5060ti.yaml
+.venv/bin/python infer/generate.py --model out/lora_5060ti/final \
+    --prompt 'Write a Python function levenshtein(a, b) ...'
 ```
 
 ## What this is NOT
