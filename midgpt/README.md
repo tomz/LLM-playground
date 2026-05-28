@@ -24,8 +24,10 @@ pip install -r requirements.txt
 
 # 1. Tokenize a dataset (writes shards to data/<name>/)
 python prepare.py --dataset wikitext103             # ~500 MB tokens, ~10 min
-# or
-python prepare.py --dataset openwebtext --num-proc 16  # ~9B tokens, hours
+# or — stream a 1B-token slice of FineWeb-Edu (~2 GB on disk, ~9 min)
+python prepare.py --dataset fineweb-edu --streaming --max-tokens 1000000000
+# or — full OpenWebText (~9B tokens, hours)
+python prepare.py --dataset openwebtext --num-proc 16
 
 # 2. Train (single GPU)
 python train.py --config configs/gpt2_124m.yaml
@@ -42,14 +44,40 @@ python sample.py --ckpt out/gpt2_124m/ckpt.pt --prompt "Once upon a time"
 
 ## Configs
 
-| File                  | Params | Layers | d_model | Tokens (target) | 1× H100 | 8× H100 |
-|-----------------------|-------:|-------:|--------:|----------------:|--------:|--------:|
-| `gpt2_124m.yaml`      | 124M   | 12     | 768     | 10B             | ~30 h   | ~4 h    |
-| `gpt2_350m.yaml`      | 350M   | 24     | 1024    | 20B             | ~5 d    | ~16 h   |
-| `gpt2_774m.yaml`      | 774M   | 36     | 1280    | 40B             | —       | ~4 d    |
-| `gpt2_1558m.yaml`     | 1.5B   | 48     | 1600    | 60B             | OOM     | ~10 d   |
+| File                          | Params | Layers | d_model | Tokens trained | GPU         | Wall  | Best val ppl |
+|-------------------------------|-------:|-------:|--------:|---------------:|-------------|------:|-------------:|
+| `smoke_124m.yaml`             | 124M   | 12     | 768     | ~0.2M (smoke)  | M1 Pro MPS  | 1.5 min | 1031        |
+| **`gpt2_350m_fweb_5060ti.yaml`** | **354M** | **24** | **1024** | **131M**       | **RTX 5060 Ti 16 GB** | **2 h 27 min** | **58.2** |
+| `gpt2_124m.yaml`              | 124M   | 12     | 768     | 10B (target)   | 1×H100      | ~30 h | —            |
+| `gpt2_350m.yaml`              | 350M   | 24     | 1024    | 20B (target)   | 8×H100      | ~16 h | —            |
+| `gpt2_774m.yaml`              | 774M   | 36     | 1280    | 40B (target)   | 8×H100      | ~4 d  | —            |
+| `gpt2_1558m.yaml`             | 1.5B   | 48     | 1600    | 60B (target)   | 8×H100      | ~10 d | —            |
 
-("~" = napkin estimate at ~50% MFU, BF16, ZeRO-1 via DDP+grad-accum.)
+The 5060 Ti row is a *real measured run* (see
+[`examples/5060ti_350m_fineweb.md`](examples/5060ti_350m_fineweb.md));
+the others are napkin estimates at ~50 % MFU.
+
+## Worked example: 350M GPT-2 on FineWeb-Edu, 2.5 h on RTX 5060 Ti
+
+A full pretraining run from random init, with a clean loss curve and
+real sample completions:
+[`examples/5060ti_350m_fineweb.md`](examples/5060ti_350m_fineweb.md).
+
+| | |
+|---|---|
+| Model         | GPT-2 354M (24L × 1024d × 16H) |
+| Dataset       | FineWeb-Edu `sample-10BT`, 1 B-token slice (streamed) |
+| Wall-clock    | **2 h 27 min** (4 000 iters, 32 768 tok/step) |
+| Throughput    | **14.9 k tok/s** sustained, 99 % GPU util |
+| Peak VRAM     | **12.8 GB** / 16 GB |
+| Best val      | **ppl 58.2** (loss 4.064) |
+
+![350M training curves](out/gpt2_350m_fweb_5060ti/loss.png)
+
+Textbook loss shape: fast drop in the first ~400 iters as the model
+learns the vocab + bigrams, then a long slow descent to ~4.0 as it
+actually starts modelling text. Val tracks train to within 0.05 — the
+model is undertrained-by-design (0.37× Chinchilla), not overfit.
 
 ## Layout
 

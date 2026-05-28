@@ -50,6 +50,49 @@ generated them live at [`nanogpt-edu/out/`](./nanogpt-edu/out/) and
 Full discussion in
 [`nanogpt-edu/README.md`](./nanogpt-edu/README.md#actual-training-results-1-rtx-3050-8-gb).
 
+### `midgpt/` — 350M GPT-2 pretraining on RTX 5060 Ti
+
+A real from-scratch pretraining run of a **354 M-parameter GPT-2** on a
+1 B-token slice of `HuggingFaceFW/fineweb-edu`, on a single **RTX 5060 Ti
+16 GB (Blackwell, sm_120)**. Same code as the MPS smoke run; just scaled
+up to a real GPU and a real corpus.
+
+| Metric           | Value |
+|------------------|------:|
+| Model            | GPT-2 354 M (24 L × 1024 d × 16 H, tied embeddings) |
+| Dataset          | FineWeb-Edu `sample-10BT`, 1 B-token slice (streamed) |
+| Tokens trained   | **131 M** (~0.37× Chinchilla) |
+| Wall-clock       | **2 h 27 min** (4 000 iters × 32 768 tok / step) |
+| Throughput       | **14.9 k tok/s** sustained, 99 % GPU util |
+| Peak VRAM        | **11.9 GB allocated / 12.8 GB reserved** (of 16 GB) |
+| Train loss       | 11.00 → **3.97** |
+| **Best val ppl** | **58.2** (loss 4.064) at iter 3 800 |
+
+![midgpt 350M training curves](midgpt/out/gpt2_350m_fweb_5060ti/loss.png)
+
+Three panels: train loss (raw + EMA) and validation, cosine LR
+schedule, step time. The classic undertrained-Chinchilla shape — a fast
+~400-iter drop as the model picks up the vocab and frequent bigrams,
+then a long slow descent as it actually starts modelling text. Val
+tracks train to within 0.05, no overfitting, plenty of capacity left.
+
+Sample (T=0.7, k=50):
+
+> *Photosynthesis is an important component of plant cell metabolism. It
+> is important for the action of plants. The cell's cell activity is
+> responsible for the formation of the micro-organisms…*
+
+Fluent English, vaguely on-topic, locally coherent within ~20 tokens —
+exactly what a 354 M model trained on 131 M tokens is supposed to sound
+like. The plumbing is correct; the model is just undertrained. Real
+GPT-2-345M (the OpenAI release) reaches val ppl ~26 on ~380× more
+compute.
+
+Recipe:
+[`midgpt/configs/gpt2_350m_fweb_5060ti.yaml`](midgpt/configs/gpt2_350m_fweb_5060ti.yaml).
+Walkthrough + sample completions + calibration table:
+[`midgpt/examples/5060ti_350m_fineweb.md`](midgpt/examples/5060ti_350m_fineweb.md).
+
 ### `frontier-platform/` — simulated 1B → 400B program
 
 Discrete-event simulator (pure Python, no torch) that runs the full

@@ -1,0 +1,49 @@
+# 350M GPT-2 trained on a 1B-token FineWeb-Edu slice. Tuned for
+# RTX 5060 Ti 16 GB (Blackwell sm_120, native bf16).
+#
+# Throughput (measured on calib_5060ti_350m.yaml, micro_batch=4, no grad_ckpt,
+# block=1024): ~14.9k tok/s, ~2.2 s/step at eff batch 32 sequences
+# (32,768 tokens/step). Peak VRAM ~12.8 GB.
+#
+# 4000 iters × 32,768 tok = 131M training tokens (~13% of the 1B-token corpus,
+# 0.37x Chinchilla for a 350M model). Wall-clock target: ~2 h 30 min.
+#
+out_dir: out/gpt2_350m_fweb_5060ti
+dataset: fineweb-edu
+tokenizer: gpt2
+seed: 1337
+dtype: bfloat16
+compile: false           # torch.compile + sdpa attention sometimes hits
+                         # Blackwell-only kernel paths that recompile per
+                         # micro-step; leaving off for a clean run
+grad_checkpoint: false   # 16 GB lets us skip the ~30% recompute penalty
+log: {jsonl: true, wandb_project: null}
+
+model:
+  vocab_size: 50304
+  block_size: 1024
+  n_layer: 24
+  n_head: 16
+  d_model: 1024
+  d_ffn: 4096
+  dropout: 0.0
+  bias: false
+  tie_embeddings: true
+
+optim:
+  lr: 3.0e-4
+  min_lr: 3.0e-5
+  betas: [0.9, 0.95]
+  weight_decay: 0.1
+  grad_clip: 1.0
+  warmup_iters: 200       # 5% of max_iters
+  lr_decay_iters: 4000    # full cosine over the whole run
+  max_iters: 4000
+
+train:
+  micro_batch: 4
+  grad_accum: 8           # eff batch = 32 sequences = 32,768 tok/step
+  eval_interval: 200      # 20 eval points across the run
+  eval_iters: 50          # 50 × 4 × 1024 = ~200k val tokens per eval
+  log_interval: 10
+  ckpt_interval: 500

@@ -207,6 +207,10 @@ def main():
         logger.close()
         if wb: wb.finish()
         print(f"done -> {ckpt_path}  best val {best_val:.4f} -> {best_path}")
+        if is_cuda:
+            alloc = torch.cuda.max_memory_allocated(local_rank) // (1024 * 1024)
+            resv = torch.cuda.max_memory_reserved(local_rank) // (1024 * 1024)
+            print(f"[vram] peak_alloc={alloc} MiB  peak_reserved={resv} MiB")
 
     if use_ddp:
         dist.destroy_process_group()
