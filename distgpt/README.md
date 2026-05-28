@@ -75,6 +75,25 @@ torchrun --standalone --nproc_per_node 8 -m distgpt.cli train \
 sbatch scripts/slurm_70b.sbatch
 ```
 
+## Worked example — 416 M Llama-arch on a single RTX 5060 Ti
+
+For a single-GPU shake-out of the full stack (model + 3D mesh + streaming
+loader + DCP checkpointing + spike monitor + AdamW/cosine), there's a
+real reproducible run in [`examples/5060ti_416m_fineweb.md`](examples/5060ti_416m_fineweb.md):
+
+- 416 M params · Llama-arch (RoPE + RMSNorm + SwiGLU + GQA 4:1)
+- FineWeb-Edu 1 B-token slice · seq 1024 · effective batch 32 768 tokens
+- **1 h 12 min** wall-clock · **11.7 k tok/s** · **12.0 GB** peak VRAM
+- **Val ppl 60.7** at step 2 800 (98 M tokens trained, ~0.24× Chinchilla)
+
+![distgpt 416M training curves](out/gpt_416m_fweb_5060ti/loss.png)
+
+Config: [`configs/gpt_416m_fweb_5060ti.yaml`](configs/gpt_416m_fweb_5060ti.yaml).
+The writeup also documents two real bugs this run surfaced (a
+SpikeMonitor rewind-loop on noisy small-batch gradients, and why running
+two ranks on one consumer GPU doesn't work under NCCL 2.28) and the
+fixes that landed in the same commit.
+
 ## What's *not* in scope
 
 - Custom CUDA kernels (we lean on PyTorch SDPA + Transformer Engine if installed)

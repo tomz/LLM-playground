@@ -31,7 +31,8 @@ DTYPES = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch
 
 def train(cfg: dict, data_dir_override: str | None = None) -> None:
     rank, local_rank, world = dist_init()
-    device = f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu"
+    colocate = os.environ.get("DISTGPT_COLOCATE_RANKS") == "1"
+    device = ("cuda:0" if colocate else f"cuda:{local_rank}") if torch.cuda.is_available() else "cpu"
     is_cuda = device.startswith("cuda")
     dtype = DTYPES[cfg["dtype"]]
     if is_master():
@@ -189,5 +190,9 @@ def train(cfg: dict, data_dir_override: str | None = None) -> None:
     if is_master():
         ckpt.save(model, optim, loader, total)
         print("[done]")
+        if is_cuda:
+            alloc = torch.cuda.max_memory_allocated(0) // (1024 * 1024)
+            resv = torch.cuda.max_memory_reserved(0) // (1024 * 1024)
+            print(f"[vram] peak_alloc={alloc} MiB  peak_reserved={resv} MiB")
     logger.close()
     dist_destroy()
