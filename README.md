@@ -83,53 +83,74 @@ cumulative failures), JSON summaries, and a reproducible CLI. See
 [`frontier-platform/README.md`](./frontier-platform/README.md#simulator-results-scriptssimulatepy)
 for the full story.
 
-### `coder-finetune/` — LoRA on RTX 3050, two recipes
+### `coder-finetune/` — LoRA on a single consumer GPU, three recipes
 
-Two reproducible recipes for the same 8 GB consumer card. The first
-proves the plumbing on a tiny model + tiny dataset; the second pushes
-the card to its practical limit on a real 1.5 B-parameter model and a
-real 38 k-row dataset.
+Three reproducible recipes that walk the consumer-GPU ladder, sharing
+the same `transformers` + `peft` + `trl` plumbing and only differing in
+model size / dataset / memory recipe. All three are 1-epoch LoRA r=16
+runs against `Qwen/Qwen2.5-Coder-*`.
 
-#### 0.5 B model, built-in 16-pair set — 84 seconds
+| Recipe | GPU | Base | Dataset | Packing | Grad-ckpt | Wall | Peak VRAM | Loss end |
+|---|---|---|---|:-:|:-:|---:|---:|---:|
+| `lora_3050.yaml`      | RTX 3050 8 GB    | 0.5B | builtin 320 (memorize) | ✗ | ✗ | **1m 24s** | 2.3 GB | 0.45 |
+| `lora_3050_1p5b.yaml` | RTX 3050 8 GB    | 1.5B | Magicoder-Py 2k        | ✗ | ✓ | 24m 05s    | 7.5 GB | 0.58 |
+| **`lora_5060ti.yaml`**| **RTX 5060 Ti 16 GB** | **3B** | **Magicoder-Py 2.5k** | **✓** | **✗** | **11m 59s** | **15.1 GB** | **0.55** |
 
-[`coder-finetune/examples/3050_lora.md`](coder-finetune/examples/3050_lora.md)
-walks through a LoRA fine-tune of `Qwen/Qwen2.5-Coder-0.5B`:
+The 5060 Ti recipe is the one to read: 2× the model in **half** the
+wall-clock of the 1.5B-on-3050 push recipe, because the 16 GB budget lets
+you (a) disable gradient checkpointing and (b) enable packing.
+
+![cross-recipe loss comparison](coder-finetune/examples/compare_recipes.png)
+
+Left: training progress (% of 1 epoch). The 0.5B/builtin run drops to 0.45
+because it's *memorizing* 320 short pairs — a smoke test. The two Magicoder
+runs land at 0.55–0.58 (real generalization on held-out prompts; see the
+5060 Ti example for Levenshtein DP, BFS, LRU cache, and a retry decorator
+all generated correctly at T=0.2). Right: same losses on a log wall-clock
+axis — the 5060 Ti curve sits to the left of the 1.5B-on-3050 curve at
+every loss level despite training a 2× larger model.
+
+#### 5060 Ti / 3B recipe — 12 minutes, 13.9 GB peak
+
+[`coder-finetune/examples/5060ti_lora.md`](coder-finetune/examples/5060ti_lora.md)
+walks through the headline run: `Qwen/Qwen2.5-Coder-3B` LoRA r=16 on 2,500
+Python rows of `ise-uiuc/Magicoder-OSS-Instruct-75K` at seq_len=1024,
+**packed**, gradient checkpointing **off**:
 
 | Metric              | Value |
 |---------------------|------:|
-| Wall-clock          | **83.8 s** (1 epoch, 80 optimizer steps) |
-| Peak VRAM allocated | **1.76 GB** |
-| Trainable params    | 8.8 M (1.75 % of base) |
-| Train loss          | 2.85 → **0.45** |
-| Adapter checkpoint  | 35 MB |
+| Wall-clock          | **11 min 59 s** (1 epoch, 161 packed steps) |
+| Peak VRAM allocated | **13.87 GB** |
+| Peak VRAM reserved  | **15.10 GB** (of 16 GB) |
+| Trainable params    | 29.9 M (0.96 % of 3.09 B) |
+| Train loss          | 0.80 → **0.55** |
+| Mean-token-acc      | 0.82 → **0.85** |
+| Tokens trained      | 1.28 M |
 
-Recipe: [`configs/lora_3050.yaml`](coder-finetune/configs/lora_3050.yaml).
+![3B LoRA on 5060 Ti — training curves](coder-finetune/configs/lora_5060ti.training.png)
 
-#### 1.5 B model, Magicoder-OSS-Instruct-Python — 24 minutes
+#### 1.5B / RTX 3050 recipe — 24 minutes, 7.5 GB peak
 
-[`coder-finetune/configs/lora_3050.RESULTS.md`](coder-finetune/configs/lora_3050_1p5b.RESULTS.md)
-documents the limit-pushing run: `Qwen/Qwen2.5-Coder-1.5B` LoRA r=16 on
-2,000 Python rows of `ise-uiuc/Magicoder-OSS-Instruct-75K` at
-`max_seq_len=1024`, gradient checkpointing on, bf16:
-
-| Metric              | Value |
-|---------------------|------:|
-| Wall-clock          | **24 min 5 s** (250 steps × eff-batch 8) |
-| Peak VRAM allocated | **5.12 GB** |
-| Peak VRAM reserved  | **7.50 GB** (of 8 GB) |
-| Trainable params    | 18.46 M (1.18 % of 1.56 B) |
-| Train loss          | 0.88 → **0.58** |
-| Mean-token-acc      | 0.79 → **0.85** |
+[`coder-finetune/configs/lora_3050_1p5b.RESULTS.md`](coder-finetune/configs/lora_3050_1p5b.RESULTS.md)
+documents the 8-GB limit-pusher: same Magicoder dataset, 2,000 rows,
+seq_len=1024, grad-ckpt on (the 3050 has ~500 MB headroom left at that
+point — without it the recipe OOMs at step 1).
 
 ![1.5B LoRA on 3050 — training curves](coder-finetune/configs/lora_3050_1p5b.training.png)
 
-Recipe: [`configs/lora_3050_1p5b.yaml`](coder-finetune/configs/lora_3050_1p5b.yaml).
-Plotter: [`scripts/plot_training.py`](coder-finetune/scripts/plot_training.py)
-(reusable for any TRL `trainer_state.json`).
+#### 0.5B / RTX 3050 recipe — 84 seconds, 2.3 GB peak
 
-The headline takeaway: on an 8 GB consumer card, you have ~500 MB of
-headroom left at 1.5 B / seq 1024 — enough to fine-tune real models on
-real data, not just toy demos.
+[`coder-finetune/examples/3050_lora.md`](coder-finetune/examples/3050_lora.md)
+is the smoke run: `Qwen/Qwen2.5-Coder-0.5B` against a 16-pair built-in
+instruction set (× repeat = 320 examples). No HF dataset download required.
+Loss collapses from 2.85 to 0.45 in 80 steps because it's memorizing — the
+point is to validate the whole plumbing end-to-end before reaching for a
+real dataset.
+
+Plotter: [`scripts/plot_training.py`](coder-finetune/scripts/plot_training.py)
+(single-run) and
+[`scripts/plot_compare_recipes.py`](coder-finetune/scripts/plot_compare_recipes.py)
+(cross-recipe) — both reusable for any TRL `trainer_state.json`.
 
 ## The five projects
 
