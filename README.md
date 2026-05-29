@@ -9,6 +9,15 @@ a laptop CPU, up to an architecture-only blueprint for a frontier-scale
 Each subproject is **independent**: its own README, its own dependencies,
 its own tests. Pick the one that matches the scale you care about.
 
+## SOTA Watch — monthly LLM & AGI digest
+
+[`docs/`](./docs/README.md) publishes a **monthly** state-of-the-art digest
+covering LLM/AGI training, fine-tuning, and inference — ranked by ROI and
+filtered for what's actually harvestable into these projects on consumer
+hardware. Latest edition:
+[**2026-05**](./docs/2026-05-sota-llm-agi.md) (Muon, Multi-Token Prediction,
+Liger Kernel, DoRA/rsLoRA/NEFTune, FineWeb-Edu/DCLM data scaling).
+
 ## Results gallery
 
 Three projects in this repo come with **published training plots and
@@ -333,6 +342,7 @@ LLM-playground/
 ├── distgpt/             # 1B–70B, multi-node FSDP2 + TP + PP
 ├── coder-finetune/      # 0.5B–7B, SFT / LoRA / QLoRA on HF
 ├── frontier-platform/   # 1B–500B+, architecture blueprint + design docs
+├── docs/                # SOTA Watch — monthly LLM & AGI research digest
 ├── tools/orchestrate.py # one-shot test+lint runner across all subprojects
 ├── pyproject.toml       # shared ruff config (no shared build)
 ├── .github/workflows/   # CI matrix: pytest each subproject + repo-wide ruff
