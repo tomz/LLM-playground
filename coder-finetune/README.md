@@ -13,6 +13,24 @@ Fine-tune open-weights code models on a single consumer GPU. Tiers:
 
 Uses HuggingFace `transformers` + `peft` + `trl`; no custom training loop.
 
+## Speed & quality knobs (opt-in, config-driven)
+
+Recent SOTA add-ons that plug into the existing TRL/PEFT stack. All default
+**off** for clean A/B comparisons; the `lora_5060ti.yaml` recipe turns them on.
+
+| Knob | Where | Effect | Cost |
+|------|-------|--------|------|
+| **Liger Kernel** | `train.use_liger_kernel: true` | Fused Triton RMSNorm/RoPE/SwiGLU + FusedLinearCrossEntropy. ~20% faster, up to ~60% less memory. The fused linear-CE is a big deal over Qwen's ~150K vocab (never materializes full logits). *Exact*, not approximate. | needs `pip install liger-kernel` + Triton GPU |
+| **DoRA** | `lora.use_dora: true` | Weight-decomposed LoRA — better quality at low rank (our r=16). | ~10–20% slower step |
+| **rsLoRA** | `lora.use_rslora: true` | `alpha/sqrt(r)` scaling so higher ranks actually help. | free |
+| **NEFTune** | `train.neftune_noise_alpha: 5` | Embedding-noise regularizer; better instruction-following. | free, train-only |
+| **Unsloth** | `model.use_unsloth: true` | ~2× faster / ~70% less memory fast-path via custom kernels. Replaces the loader; great for the 7B QLoRA recipe. | heavier dep; `pip install unsloth` |
+
+```bash
+# 5060 Ti recipe now ships with Liger + DoRA + rsLoRA + NEFTune enabled:
+CUDA_VISIBLE_DEVICES=0 .venv/bin/python train.py --config configs/lora_5060ti.yaml
+```
+
 ## Layout
 
 ```

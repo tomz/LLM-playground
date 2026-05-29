@@ -9,6 +9,12 @@ accelerate>=1.0,<2.0
 bitsandbytes>=0.44       # only needed for QLoRA
 pyyaml
 tqdm
+# Optional throughput / quality add-ons (config-gated, off by default):
+#   liger-kernel  — fused Triton kernels; set train.use_liger_kernel: true
+#   unsloth       — 2x faster LoRA/QLoRA fast-path; set model.use_unsloth: true
+# Install only if you enable them; they pull heavier Triton/CUDA deps.
+# liger-kernel>=0.4
+# unsloth>=2024.8
 # eval
 evaluate
 # Optional: vllm for fast inference (requires 12GB+ VRAM for 7B, fine for 0.5B/1.5B)

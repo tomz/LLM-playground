@@ -17,6 +17,15 @@ class GPTConfig:
     d_ffn: int = 1024
     dropout: float = 0.0
     rope_base: float = 10000.0
+    # --- modded-nanogpt-style speedrun knobs (all default-off for parity) ---
+    qk_norm: bool = False        # RMSNorm on Q and K before attention; stabilises
+                                 # training and lets you push LR higher.
+    zero_init_proj: bool = False  # zero-init the residual-write matrices (attn
+                                 # o_proj + ffn down-proj) so each block starts
+                                 # as identity → stable warmup at higher LR.
+    tie_embeddings: bool = True  # share tok_emb with lm_head. The speedrun found
+                                 # *untying* helps loss once you have the tokens
+                                 # to support the extra params; set False to A/B.
 
     @property
     def head_dim(self) -> int:
@@ -62,6 +71,10 @@ class GQAttention(nn.Module):
         self.v_proj = nn.Linear(cfg.d_model, cfg.n_kv_head * cfg.head_dim, bias=False)
         self.o_proj = nn.Linear(cfg.d_model, cfg.d_model, bias=False)
         self.dropout = cfg.dropout
+        # QK-Norm: per-head RMSNorm over head_dim, applied to Q and K *after*
+        # projection but *before* RoPE. Keeps attention-logit scale in check.
+        self.q_norm = RMSNorm(cfg.head_dim) if cfg.qk_norm else None
+        self.k_norm = RMSNorm(cfg.head_dim) if cfg.qk_norm else None
 
     def forward(self, x, cos, sin):
         B, T, _ = x.shape
@@ -69,6 +82,9 @@ class GQAttention(nn.Module):
         q = self.q_proj(x).view(B, T, H, D).transpose(1, 2)   # [B,H,T,D]
         k = self.k_proj(x).view(B, T, Hk, D).transpose(1, 2)
         v = self.v_proj(x).view(B, T, Hk, D).transpose(1, 2)
+        if self.q_norm is not None:
+            q = self.q_norm(q)
+            k = self.k_norm(k)
         q = apply_rope(q, cos, sin)
         k = apply_rope(k, cos, sin)
         if Hk != H:
@@ -117,9 +133,19 @@ class GPT(nn.Module):
         self.blocks = nn.ModuleList([Block(cfg) for _ in range(cfg.n_layer)])
         self.final_norm = RMSNorm(cfg.d_model)
         self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
-        # tie weights (saves params, common in small models)
-        self.lm_head.weight = self.tok_emb.weight
+        # tie weights (saves params, common in small models). Untying can help
+        # loss at scale once you have tokens to support the extra params — the
+        # modded-nanogpt speedrun unties; see GPTConfig.tie_embeddings.
+        if cfg.tie_embeddings:
+            self.lm_head.weight = self.tok_emb.weight
         self.apply(self._init)
+        # Zero-init the residual-write projections (attn o_proj + ffn down-proj)
+        # so every block starts as the identity map. muP-like; stabilises the
+        # early/high-LR phase. Done *after* apply(_init) so it isn't clobbered.
+        if cfg.zero_init_proj:
+            for blk in self.blocks:
+                nn.init.zeros_(blk.attn.o_proj.weight)
+                nn.init.zeros_(blk.ffn.w2.weight)
         # cache RoPE on first forward; key includes (device, dtype, seq_len)
         self._rope_cache: tuple[torch.Tensor, torch.Tensor] | None = None
 

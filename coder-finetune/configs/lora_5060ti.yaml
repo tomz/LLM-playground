@@ -35,6 +35,10 @@ lora:
   bias: none
   target_modules: ['q_proj', 'k_proj', 'v_proj', 'o_proj',
                    'gate_proj', 'up_proj', 'down_proj']
+  # SOTA adapter knobs (default off elsewhere for clean A/B; on here because
+  # the 16 GB card has the headroom to absorb DoRA's ~15% step-time overhead).
+  use_dora: true          # weight-decomposed LoRA — better quality at r=16
+  use_rslora: true        # alpha/sqrt(r) scaling — lets the rank actually count
 
 dataset:
   source: hf
@@ -58,6 +62,11 @@ train:
   packing: true            # the big win on a 16 GB card — ~2.5× tokens/step
                            # for the same memory budget
   gradient_checkpointing: false   # 3B + r=16 LoRA + bs=2 fits without it
+  # Liger Kernel: ~20% faster + big memory cut from FusedLinearCrossEntropy
+  # over Qwen's ~150K vocab. Needs `pip install liger-kernel`.
+  use_liger_kernel: true
+  # NEFTune: embedding-noise regularizer, free quality bump for SFT.
+  neftune_noise_alpha: 5
 
 eval:
   enable: false

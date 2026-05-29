@@ -106,6 +106,51 @@ python tools/plot_nanogpt.py out/{tiny,tiny_clean}/train.log \
 `tools/plot_nanogpt.py` uses matplotlib for PNGs if available and always
 writes a zero-dependency SVG fallback.
 
+## Going faster — the modded-nanogpt speedrun knobs
+
+The base configs are deliberately vanilla. Several techniques from Keller
+Jordan's [modded-nanogpt speedrun](https://github.com/KellerJordan/modded-nanogpt)
+(which trains GPT-2 to the llm.c target ~15× faster) are now available as
+opt-in config flags — small, readable, and pedagogically interesting:
+
+| Knob | Config key | What it does |
+|------|-----------|--------------|
+| **Muon optimizer** | `optimizer='muon'` (+`muon_lr`) | Orthogonalizes the SGD-momentum update for 2D hidden weights via a 5-step Newton-Schulz iteration; embeddings/lm_head/norms stay on AdamW. ~1.35× sample-efficiency on FineWeb. See `muon.py`. |
+| **QK-Norm** | `qk_norm=True` | Per-head RMSNorm on Q and K before RoPE — stabilizes attention logits, lets you push LR higher. |
+| **Zero-init projections** | `zero_init_proj=True` | Zero-inits the residual-write matrices (attn `o_proj`, ffn `w2`) so each block starts as identity — stable high-LR warmup (muP-like). |
+| **Untied embeddings** | `tie_embeddings=False` | Gives `lm_head` its own weight; helps loss once you have the tokens to support the extra params. |
+
+A ready-made head-to-head config is `configs/tiny_muon.py` — same 10.65M
+architecture as `tiny_clean.py`, same iters/budget, all four knobs on:
+
+```bash
+python train.py --config configs/tiny_clean.py  # AdamW baseline
+python train.py --config configs/tiny_muon.py   # Muon + speedrun knobs
+python tools/plot_nanogpt.py out/{tiny_clean,tiny_muon}/train.log --compare out/muon_vs_adamw.png
+```
+
+> On 1 MB of TinyShakespeare the **data** is the bottleneck, not the optimizer,
+> so the gap is modest. To see Muon shine, scale the tokens (next section).
+
+## Scaling the data — FineWeb-Edu (fixes the overfit story)
+
+The README results above show every non-trivial model overfitting 1 MB of
+Shakespeare, with the *bigger* model doing *worse* on val. That's a data-scale
+artifact, not a model flaw (Chinchilla: scale tokens with params). Swap in a
+slice of [FineWeb-Edu](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu)
+(GPT-2 BPE tokenized, same shard format) and the inversion disappears:
+
+```bash
+pip install tiktoken datasets
+python prepare_fineweb.py --tokens 100_000_000 --out-dir data_fineweb
+python train.py --config configs/small_fineweb.py   # Muon + real data
+python sample.py --ckpt out/small_fineweb/ckpt_best.pt --prompt "The mitochondria"
+```
+
+`prepare_fineweb.py` streams the dataset and writes `train.bin`/`val.bin`/
+`meta.pkl` exactly like `prepare_shakespeare.py`; `sample.py` auto-detects the
+BPE tokenizer from `meta["tokenizer"]`.
+
 ## What this teaches
 
 1. How attention, RoPE, RMSNorm, SwiGLU, and the residual stream fit together.
@@ -116,4 +161,10 @@ writes a zero-dependency SVG fallback.
 
 ## What it deliberately omits
 
-FlashAttention, FSDP, gradient accumulation tricks, MoE, RLHF — see the `mid-scale-trainer` and `distributed-trainer` projects.
+FSDP, MoE, RLHF — see the `mid-scale-trainer` and `distributed-trainer`
+projects. FlashAttention is used implicitly via PyTorch SDPA. Many of the
+modded-nanogpt speedrun's heavier tricks (FlexAttention long-short windows,
+FP8 matmul, U-net skip connections, value embeddings) are also omitted to keep
+the core legible — the four cheapest/most-instructive ones (Muon, QK-norm,
+zero-init, untied head) are available as opt-in flags; see above. FP8 in
+particular needs Hopper+ and is useless on consumer Ampere/Blackwell cards.

@@ -21,6 +21,53 @@ sys.path.insert(0, str(ROOT))
 DTYPES = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}
 
 
+def build_model_and_tokenizer_unsloth(cfg: dict):
+    """Optional fast-path loader using Unsloth's custom autograd kernels.
+
+    Gated behind `model.use_unsloth: true` in the YAML. Unsloth claims ~2x
+    faster / ~70% less memory for single-GPU LoRA/QLoRA on exactly our model
+    family (Qwen2.5-Coder), via hand-written fused kernels. It REPLACES the
+    transformers loader + peft wrapping (it returns an already-PEFT'd model),
+    so we keep it on a separate code path rather than threading flags through
+    the standard one. The returned model/tokenizer plug straight into TRL's
+    SFTTrainer just like the vanilla path.
+
+    Trade-off vs the default path: heavier dependency, and it diverges from
+    the repo's "just the standard HF plumbing" teaching goal — hence opt-in.
+    Recommended mainly for the 7B QLoRA recipe where the wall-clock matters.
+    """
+    from unsloth import FastLanguageModel
+    name = cfg["model"]["name"]
+    dtype = DTYPES[cfg["model"]["dtype"]]
+    method = cfg["method"]
+    t = cfg.get("train", {})
+
+    model, tok = FastLanguageModel.from_pretrained(
+        model_name=name,
+        max_seq_length=t.get("max_seq_len", 1024),
+        dtype=dtype,
+        load_in_4bit=(method == "qlora"),
+        trust_remote_code=cfg["model"]["trust_remote_code"],
+    )
+    if tok.pad_token is None:
+        tok.pad_token = tok.eos_token
+
+    if method in ("lora", "qlora"):
+        lcfg = cfg["lora"]
+        model = FastLanguageModel.get_peft_model(
+            model,
+            r=lcfg["r"], lora_alpha=lcfg["alpha"], lora_dropout=lcfg["dropout"],
+            bias=lcfg["bias"], target_modules=lcfg["target_modules"],
+            use_dora=bool(lcfg.get("use_dora", False)),
+            use_rslora=bool(lcfg.get("use_rslora", False)),
+            # Unsloth's own checkpointing variant; "unsloth" is the memory-
+            # optimal setting, True/False also accepted.
+            use_gradient_checkpointing=t.get("gradient_checkpointing", "unsloth") or False,
+            random_state=cfg["seed"],
+        )
+    return model, tok
+
+
 def build_model_and_tokenizer(cfg: dict):
     from transformers import AutoModelForCausalLM, AutoTokenizer
     name = cfg["model"]["name"]
@@ -56,9 +103,24 @@ def build_model_and_tokenizer(cfg: dict):
             # checkpointing internally — don't double-set it via SFTConfig.
             model = prepare_model_for_kbit_training(model)
         lcfg = cfg["lora"]
+        # DoRA (weight-decomposed LoRA) and rsLoRA (rank-stabilized scaling)
+        # are both pure-PEFT quality knobs that cost ~nothing to flip on:
+        #   * use_dora=True   — decomposes each update into magnitude+direction;
+        #     consistently beats plain LoRA at low rank (our r=16) for a small
+        #     (~10-20%) step-time overhead. Not compatible with 4-bit QLoRA in
+        #     older peft, so we gate it off for qlora unless explicitly forced.
+        #   * use_rslora=True — scales adapters by alpha/sqrt(r) instead of
+        #     alpha/r, which stops higher ranks from being effectively down-
+        #     weighted into uselessness. Free; safe to leave on.
+        use_dora = bool(lcfg.get("use_dora", False))
+        use_rslora = bool(lcfg.get("use_rslora", False))
+        if use_dora and method == "qlora":
+            print("[lora] WARNING: DoRA + 4-bit QLoRA needs peft>=0.12 and is "
+                  "slower; proceed only if your stack supports it.")
         peft_cfg = LoraConfig(
             r=lcfg["r"], lora_alpha=lcfg["alpha"], lora_dropout=lcfg["dropout"],
             bias=lcfg["bias"], target_modules=lcfg["target_modules"],
+            use_dora=use_dora, use_rslora=use_rslora,
             task_type="CAUSAL_LM",
         )
         model = get_peft_model(model, peft_cfg)
@@ -86,7 +148,22 @@ def build_trainer(model, tok, train_ds, cfg: dict):
     # gets it from prepare_model_for_kbit_training, full FT of 0.5B doesn't
     # need it on a 3050.
     grad_ckpt = bool(t.get("gradient_checkpointing", method != "full"))
-    args = SFTConfig(
+
+    # --- Throughput / quality knobs (all optional, default off for parity) ---
+    # Liger Kernel: fused Triton RMSNorm/RoPE/SwiGLU + FusedLinearCrossEntropy.
+    # ~20% faster, up to ~60% less memory, *exact* (not an approximation). The
+    # fused-linear-CE alone is a big deal for Qwen2.5-Coder's ~150K vocab — it
+    # avoids materializing the full [batch*seq, vocab] logits tensor, which is
+    # the single largest activation in the forward pass. Buys longer context /
+    # bigger batch on the same card. Requires `pip install liger-kernel` and a
+    # Triton-capable GPU (no-op/raises on CPU, so we only flip it when asked).
+    use_liger = bool(t.get("use_liger_kernel", False))
+    # NEFTune: add uniform noise to embedding outputs during training only.
+    # Consistently improves instruction-following with zero inference cost.
+    # alpha ~5 is the published sweet spot; 0/None disables.
+    neftune_alpha = t.get("neftune_noise_alpha", None)
+
+    sft_kwargs = dict(
         output_dir=cfg["out_dir"],
         num_train_epochs=t["epochs"],
         per_device_train_batch_size=t["batch_size"],
@@ -107,6 +184,13 @@ def build_trainer(model, tok, train_ds, cfg: dict):
         report_to="none",
         seed=cfg["seed"],
     )
+    if use_liger:
+        sft_kwargs["use_liger_kernel"] = True
+        print("[train] Liger Kernel enabled (fused RMSNorm/RoPE/SwiGLU/CE)")
+    if neftune_alpha:
+        sft_kwargs["neftune_noise_alpha"] = float(neftune_alpha)
+        print(f"[train] NEFTune enabled (noise_alpha={neftune_alpha})")
+    args = SFTConfig(**sft_kwargs)
     return SFTTrainer(
         model=model,
         processing_class=tok,
@@ -135,7 +219,11 @@ def main():
     print(f"[load] {len(train_ds)} training examples")
 
     print(f"[load] model: {cfg['model']['name']} method={cfg['method']}")
-    model, tok = build_model_and_tokenizer(cfg)
+    if cfg["model"].get("use_unsloth", False):
+        print("[load] using Unsloth fast-path loader")
+        model, tok = build_model_and_tokenizer_unsloth(cfg)
+    else:
+        model, tok = build_model_and_tokenizer(cfg)
 
     trainer = build_trainer(model, tok, train_ds, cfg)
     print("[train] starting")

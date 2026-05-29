@@ -108,6 +108,9 @@ def main():
         n_layer=cfg["n_layer"], n_head=cfg["n_head"], n_kv_head=cfg["n_kv_head"],
         d_model=cfg["d_model"], d_ffn=cfg["d_ffn"],
         dropout=cfg["dropout"], rope_base=cfg["rope_base"],
+        qk_norm=cfg.get("qk_norm", False),
+        zero_init_proj=cfg.get("zero_init_proj", False),
+        tie_embeddings=cfg.get("tie_embeddings", True),
     )
     model = GPT(mcfg).to(device)
     print(f"model: {model.num_params(non_embedding=False)/1e6:.2f}M params "
@@ -116,14 +119,37 @@ def main():
         model = torch.compile(model)
 
     # AdamW with no WD on biases / norms / 1-D params (embeddings included via tying).
-    decay, no_decay = [], []
-    for _, p in model.named_parameters():
-        (no_decay if p.dim() < 2 else decay).append(p)
-    optim = torch.optim.AdamW(
-        [{"params": decay, "weight_decay": cfg["weight_decay"]},
-         {"params": no_decay, "weight_decay": 0.0}],
-        lr=cfg["lr"], betas=cfg["betas"], fused=is_cuda,
-    )
+    # Optimizer choice: "adamw" (default) or "muon". Muon orthogonalizes the
+    # update for 2D hidden weights (Newton-Schulz) and routes embeddings /
+    # lm_head / 1-D params to a small AdamW — ~1.35x sample-efficiency on the
+    # FineWeb speedrun. See muon.py.
+    optimizers = []
+    if cfg.get("optimizer", "adamw") == "muon":
+        from muon import Muon, split_muon_params
+        muon_params, adamw_params = split_muon_params(model)
+        muon_lr = cfg.get("muon_lr", 0.02)
+        muon = Muon(muon_params, lr=muon_lr, momentum=cfg.get("muon_momentum", 0.95))
+        # The non-Muon params still want AdamW at the configured `lr`.
+        aux = torch.optim.AdamW(adamw_params, lr=cfg["lr"], betas=cfg["betas"],
+                                weight_decay=cfg["weight_decay"], fused=is_cuda)
+        optimizers = [muon, aux]
+        print(f"optimizer: Muon ({len(muon_params)} 2D mats, lr={muon_lr}) "
+              f"+ AdamW ({len(adamw_params)} other, lr={cfg['lr']})")
+    else:
+        decay, no_decay = [], []
+        for _, p in model.named_parameters():
+            (no_decay if p.dim() < 2 else decay).append(p)
+        optimizers = [torch.optim.AdamW(
+            [{"params": decay, "weight_decay": cfg["weight_decay"]},
+             {"params": no_decay, "weight_decay": 0.0}],
+            lr=cfg["lr"], betas=cfg["betas"], fused=is_cuda,
+        )]
+    # Stamp each param group with its base LR so the cosine schedule can scale
+    # all optimizers (Muon + AdamW) by a single multiplier while preserving
+    # their different absolute learning rates.
+    for opt in optimizers:
+        for g in opt.param_groups:
+            g["initial_lr"] = g["lr"]
     scaler = torch.amp.GradScaler("cuda", enabled=(dtype == torch.float16 and is_cuda))
 
     start_iter = 0
@@ -133,7 +159,13 @@ def main():
     if args.resume and os.path.exists(ckpt_path):
         sd = torch.load(ckpt_path, map_location=device, weights_only=False)
         model.load_state_dict(sd["model"])
-        optim.load_state_dict(sd["optim"])
+        # Backward-compatible: old checkpoints stored a single "optim"; new ones
+        # store a list of optimizer state dicts under "optims".
+        if "optims" in sd:
+            for opt, osd in zip(optimizers, sd["optims"]):
+                opt.load_state_dict(osd)
+        elif "optim" in sd:
+            optimizers[0].load_state_dict(sd["optim"])
         if "scaler" in sd and sd["scaler"] is not None:
             scaler.load_state_dict(sd["scaler"])
         if "rng_state" in sd:
@@ -150,7 +182,7 @@ def main():
         tmp = path + ".tmp"
         torch.save({
             "model": model.state_dict(),
-            "optim": optim.state_dict(),
+            "optims": [opt.state_dict() for opt in optimizers],
             "scaler": scaler.state_dict() if scaler.is_enabled() else None,
             "iter": it, "cfg": cfg, "meta": meta,
             "best_val": best_val,
@@ -160,13 +192,20 @@ def main():
         os.replace(tmp, path)
 
     grad_accum = cfg["grad_accum"]
+    base_lr = cfg["lr"]
     t0 = time.time()
     for it in range(start_iter, cfg["max_iters"]):
         lr = cosine_lr(it, cfg["warmup_iters"], cfg["lr_decay_iters"], cfg["lr"], cfg["min_lr"])
-        for g in optim.param_groups:
-            g["lr"] = lr
+        # Scale every optimizer's groups by the same cosine multiplier, relative
+        # to each group's own base LR (so Muon's higher LR and AdamW's lower LR
+        # both decay on the same schedule).
+        mult = lr / base_lr if base_lr else 1.0
+        for opt in optimizers:
+            for g in opt.param_groups:
+                g["lr"] = g["initial_lr"] * mult
 
-        optim.zero_grad(set_to_none=True)
+        for opt in optimizers:
+            opt.zero_grad(set_to_none=True)
         loss_sum = 0.0
         for _ in range(grad_accum):
             x, y = train_ds.get_batch(cfg["batch_size"])
@@ -176,9 +215,12 @@ def main():
             scaler.scale(loss).backward()
             loss_sum += loss.detach().float().item()
         if cfg["grad_clip"]:
-            scaler.unscale_(optim)
+            for opt in optimizers:
+                scaler.unscale_(opt)
             torch.nn.utils.clip_grad_norm_(model.parameters(), cfg["grad_clip"])
-        scaler.step(optim); scaler.update()
+        for opt in optimizers:
+            scaler.step(opt)
+        scaler.update()
 
         if it % cfg["log_interval"] == 0:
             dt = (time.time() - t0) / max(1, cfg["log_interval"]); t0 = time.time()

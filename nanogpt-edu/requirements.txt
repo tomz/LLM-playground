@@ -1,3 +1,7 @@
 torch>=2.1
 numpy
 requests
+# Optional: FineWeb-Edu data prep (prepare_fineweb.py) needs BPE + HF datasets.
+# Only required if you train on real web text instead of TinyShakespeare.
+# tiktoken
+# datasets
