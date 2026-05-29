@@ -110,6 +110,12 @@ exception. Specific deltas:
 shared-expert routing and aux-loss-free balancing; rewrite the scaling/cost
 model around active parameters.
 
+> **Update:** the *simulator* now models MoE economics — `moe_active_params()`
+> in `platform/sim/scaling.py` plus `--moe-experts/--moe-top-k` flags route the
+> cost/throughput model through active (not total) parameters, so a 1T-total /
+> ~357B-active run prices like its active size. The *model code* default is
+> still dense; the cost reasoning is no longer dense-only.
+
 ---
 
 ## 3. No Multi-head Latent Attention / modern KV compression 🟧 ($ + R)
@@ -152,6 +158,13 @@ understanding and on multimodal agentic tasks.
 **To close:** this is a whole second platform. Minimum: vision encoder +
 projector, interleaved multimodal data pipeline, multimodal tokenizer contract,
 multimodal eval suite. (Audio/video are a further tier.)
+
+> **Update:** a *toy-functional* LLaVA-style adapter now exists in
+> `platform/model/vision.py` (`VisionEncoder` + `Projector` +
+> `VisionLanguageModel`, runs on CPU; see `docs/16-multimodality.md`). It proves
+> the image-token-prepend forward/loss path, but the encoder is randomly
+> initialized and the data/tokenizer/eval/serving multimodal paths are still
+> open. The *simulator* does not yet price multimodal training.
 
 ---
 
@@ -213,6 +226,12 @@ price in. The cost tables would shrink materially if FP8 economics were modeled.
 **To close:** make FP8 a first-class training-numerics design (not a footnote);
 re-baseline the simulator's cost/throughput with FP8 and MoE active-param FLOPs.
 
+> **Update:** the simulator now prices low precision — `precision_speedup()` in
+> `platform/sim/scaling.py` (bf16 1.0 / fp8 1.55 / nvfp4 2.2) plus a
+> `--precision` flag fold the throughput gain into pretraining wall-clock and
+> $. The *training code* doesn't yet implement FP8 numerics; the economics are
+> modeled.
+
 ---
 
 ## 8. Data: strong classical pipeline, missing the 2025 data thesis 🟧 (D + R)
@@ -272,21 +291,33 @@ doesn't.
 
 ---
 
-## 11. The simulator encodes 2024 economics 🟨 ($)
+## 11. The simulator encodes 2024 economics 🟨 ($) — *now largely addressed*
 
-`scripts/simulate.py` and the headline table are internally consistent and a nice
-artifact — but they model **dense** models at **bf16 spec-sheet MFU** and predict
+`scripts/simulate.py` and the headline table were internally consistent and a nice
+artifact — but they modeled **dense** models at **bf16 spec-sheet MFU** and predicted
 eval scores from **pretraining scaling laws only**. They therefore:
 
-- overstate cost vs. an MoE+FP8 frontier recipe (active-param FLOPs + FP8 would
+- overstated cost vs. an MoE+FP8 frontier recipe (active-param FLOPs + FP8 would
   cut the modeled $ substantially), and
-- can't represent the **post-training compute** that now rivals or exceeds
-  pretraining for reasoning models — there's no RLVR compute line, and eval
-  scores are throughput-independent pretraining extrapolations that wouldn't
+- couldn't represent the **post-training compute** that now rivals or exceeds
+  pretraining for reasoning models — there was no RLVR compute line, and eval
+  scores were throughput-independent pretraining extrapolations that wouldn't
   move even if you added reasoning RL.
 
 **To close:** add MoE active-param + FP8 to the throughput model; add an RLVR /
 post-training compute stage; let reasoning compute affect predicted eval scores.
+
+> **Update — done.** All three are now implemented in `platform/sim/`:
+> - **MoE active-param FLOPs** via `moe_active_params()` + `--moe-experts`.
+> - **FP8/NVFP4 throughput** via `precision_speedup()` + `--precision`.
+> - **A real RLVR/GRPO compute stage** — `reasoning_rl_sim.py` prices rollout +
+>   update GPU compute, sandboxed-verifier CPU, and cold-start labels, and its
+>   `reasoning_quality` multiplier *moves the predicted eval scores* (GSM8K and
+>   arena ELO) the way o1/R1 post-training does. New `1t`/`2t` presets and
+>   `GB200`/`B300` GPU rows let you price runs on hardware we don't own.
+>
+> See `docs/13-simulation.md` §3.2/§3.12 and the frontier recipe in §10. What
+> remains is calibration polish, not a missing capability.
 
 ---
 

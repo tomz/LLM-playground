@@ -11,11 +11,16 @@ GPU_MTBF_HOURS = 87600.0    # ~10 years
 NODE_RECOVERY_MIN = 8.0     # how long to swap in a hot spare + restart
 
 GPU_SPECS = {
-    # peak BF16 TFLOP/s, HBM GB, $/GPU-hr (rented)
+    # peak BF16 TFLOP/s (dense), HBM GB, $/GPU-hr (rented)
     "H100":  {"tflops": 989.0, "hbm": 80,  "price": 2.0},
     "H200":  {"tflops": 989.0, "hbm": 141, "price": 2.5},
     "B200":  {"tflops": 2250.0, "hbm": 192, "price": 4.5},
     "A100":  {"tflops": 312.0, "hbm": 80,  "price": 1.2},
+    # --- frontier-class hardware we don't physically have (simulated) ---
+    # GB200: per-GPU figures from a GB200 NVL72 rack (2 Blackwell dies/GPU).
+    "GB200": {"tflops": 2500.0, "hbm": 192, "price": 5.5},
+    # B300 / Blackwell Ultra successor (projected).
+    "B300":  {"tflops": 3300.0, "hbm": 288, "price": 7.0},
 }
 
 

@@ -10,8 +10,10 @@ from .data_sim import simulate_data_pipeline
 from .tokenizer_sim import simulate_tokenizer_training
 from .pretrain_sim import PretrainSpec, simulate_pretrain
 from .alignment_sim import AlignmentSpec, simulate_alignment
+from .reasoning_rl_sim import ReasoningRLSpec, simulate_reasoning_rl
 from .eval_sim import simulate_eval, simulate_safety
 from .serving_sim import ServingTier, simulate_serving
+from .scaling import moe_active_params, compute_flops
 
 
 @dataclass
@@ -28,12 +30,28 @@ class ProgramSpec:
     serving_qps: dict[str, float]
     out_dir: str = "out/sim"
     seed: int = 0
+    # --- sparse MoE: if moe_num_experts>1, training/inference FLOPs are driven
+    # by *active* params, not total params. This is the frontier default.
+    moe_num_experts: int = 0
+    moe_top_k: int = 2
+    moe_shared_experts: int = 1
+    # --- training numeric format: 'bf16' | 'fp8' | 'nvfp4'. Speeds up pretrain.
+    precision: str = "bf16"
+    # --- reasoning-RL (RLVR/GRPO) post-training phase
+    reasoning_rl: ReasoningRLSpec | None = None
     # Optional throughput override from a real-GPU probe. We measure
     # achieved TFLOP/s on the local device (roughly invariant to model
     # size, unlike raw tok/s) and re-derive seconds_per_step at the
     # simulated model+cluster scale.
     measured_tflops_per_gpu: float | None = None
     measured_source: str | None = None
+
+    @property
+    def active_params(self) -> float:
+        """Per-token active params (== n_params for dense models)."""
+        return moe_active_params(
+            self.n_params, self.moe_num_experts, self.moe_top_k, self.moe_shared_experts
+        )
 
 
 def run_program(spec: ProgramSpec) -> dict:
@@ -57,7 +75,6 @@ def run_program(spec: ProgramSpec) -> dict:
         # then convert to seconds-per-step using the model's FLOPs/step.
         # (FLOP/token ~ 6N; measured TFLOP/s is roughly model-size invariant
         # for compute-bound regimes, which is the regime we care about.)
-        from .scaling import compute_flops
         cluster_tflops = (
             spec.measured_tflops_per_gpu * spec.pretrain_cluster.total_gpus
         )
@@ -73,16 +90,32 @@ def run_program(spec: ProgramSpec) -> dict:
         PretrainSpec(
             n_params=spec.n_params, total_tokens=spec.total_tokens,
             seq_len=spec.seq_len, global_batch_tokens=spec.global_batch_tokens,
+            active_params=spec.active_params, precision=spec.precision,
             measured_seconds_per_step=measured_sec_per_step,
             measured_source=spec.measured_source,
         ),
         spec.pretrain_cluster, clock, cost, bus, seed=spec.seed,
     )
-    align = simulate_alignment(spec.alignment, spec.n_params,
+    align = simulate_alignment(spec.alignment, spec.active_params,
                                spec.pretrain_cluster, clock, cost, bus, seed=spec.seed)
+
+    # Base capability (pretraining-only) to feed the reasoning-RL lift model.
+    base_eval = simulate_eval(spec.n_params, spec.total_tokens,
+                              align["sft_quality"], align["rlhf_quality"],
+                              spec.eval_cluster, clock, cost, bus, seed=spec.seed,
+                              emit=False)
+    base_cap = (base_eval["mmlu"] + base_eval["humaneval"] + base_eval["gsm8k"]) / 3.0
+    pretrain_flops = compute_flops(spec.active_params, spec.total_tokens)
+    rl_spec = spec.reasoning_rl or ReasoningRLSpec(enabled=False)
+    rl = simulate_reasoning_rl(
+        rl_spec, spec.active_params, pretrain_flops, base_cap,
+        spec.pretrain_cluster, clock, cost, bus, seed=spec.seed,
+    )
+
     evals = simulate_eval(spec.n_params, spec.total_tokens,
                           align["sft_quality"], align["rlhf_quality"],
-                          spec.eval_cluster, clock, cost, bus, seed=spec.seed)
+                          spec.eval_cluster, clock, cost, bus, seed=spec.seed,
+                          reasoning_quality=rl["reasoning_quality"])
     safe = simulate_safety(evals, bus, seed=spec.seed)
     serve = simulate_serving(spec.serving_tiers, spec.serving_qps, bus)
 
@@ -95,6 +128,6 @@ def run_program(spec: ProgramSpec) -> dict:
         "clock_days": clock.days,
         "cost": cost,
         "data": data, "tokenizer": tok, "pretrain": pre,
-        "alignment": align, "eval": evals, "safety": safe,
+        "alignment": align, "reasoning_rl": rl, "eval": evals, "safety": safe,
         "serving": serve,
     }

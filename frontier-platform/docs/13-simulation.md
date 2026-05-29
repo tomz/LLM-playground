@@ -34,10 +34,11 @@ It does **not** train a real model. It produces realistic *aggregate* numbers fr
 │    run_program(ProgramSpec) → drives every subsystem in order         │
 └──────────────────────────────────────────────────────────────────────┘
                                    │
-        ┌──────────┬──────────┬────┴─────┬──────────┬──────────┐
-        ▼          ▼          ▼          ▼          ▼          ▼
-   data_sim    tokenizer  pretrain  alignment   eval_sim   serving
-                  _sim       _sim       _sim    +safety       _sim
+        ┌──────────┬──────────┬────┴─────┬───────────┬──────────┬──────────┐
+        ▼          ▼          ▼          ▼           ▼          ▼          ▼
+   data_sim    tokenizer  pretrain  alignment   reasoning   eval_sim   serving
+                  _sim       _sim       _sim      _rl_sim   +safety       _sim
+                                                 (optional)
 
       All subsystems share three singletons:
         Clock           — virtual time, advanced in seconds
@@ -108,23 +109,60 @@ Each is a logistic curve over `log10(FLOPs)`, calibrated so well-known checkpoin
 | `predict_mmlu`     | 0.25  | 0.90    | 1B/1T≈0.32, 7B/2T≈0.50, 70B/2T≈0.69, 400B/15T≈0.85 |
 | `predict_humaneval`| 0.05  | 0.90    | scales with code fraction in mix                |
 | `predict_gsm8k`    | 0.05  | 0.95    | scales with math fraction in mix                |
-| `predict_arena_elo`|  1000 |  ~2400  | weighted blend × SFT × RLHF quality multipliers |
+| `predict_arena_elo`|  1000 |  ~2400  | weighted blend × SFT × RLHF × reasoning quality multipliers |
 
 These are intentionally **not** physical — they're regressions to public scores. Their virtue is producing the right *relative* movements when you twist the knobs (more tokens → ~+x% MMLU, etc.).
+
+#### Frontier economics helpers (2025-class runs)
+
+Three extra helpers model paradigms that postdate the original dense/Chinchilla
+core. They let the simulator price runs on **hardware and recipes we don't
+physically have**:
+
+```python
+moe_active_params(total_params, n_experts, top_k, shared_experts=1) -> float
+    # active (per-token) params for a fine-grained sparse MoE. Treats the FFN
+    # as ~2/3 of weights and scales only that share by (top_k+shared)/(experts
+    # +shared). Dense models (n_experts<=1) pass through unchanged. The active
+    # count — not the total — drives the 6·N·D training/inference FLOPs.
+
+precision_speedup(precision) -> float
+    # bf16=1.0, fp8=1.55, nvfp4=2.2 — effective throughput vs bf16 after
+    # high-precision accumulation overhead (DeepSeek-V3 FP8, NVIDIA NVFP4).
+
+reasoning_rl_quality(base_cap, rollouts, steps) -> float (>=1.0)
+    # multiplier the eval phase applies on top of pretraining-only scores to
+    # model an o1/R1-style RLVR phase. Saturates in both rollouts (~1.5M scale)
+    # and optimizer steps (~3k scale), gated by base capability, max +30%.
+    # Crucially NOT tied to the pretraining FLOP budget — R1-style gains came
+    # from RL compute tiny next to pretraining.
+```
+
+A 1T-param MoE with 256 experts / top-8 routes through **356.7B active**
+params; combined with `fp8` (1.55×) this is what makes a frontier-scale run
+finish in simulated days rather than weeks.
 
 ### 3.3 `cluster.py` — GPU fleet & failure model
 
 ```python
 GPU_SPECS = {
-    "A100": {"tflops": 312,  "hbm": 80,  "price": 1.20},
-    "H100": {"tflops": 989,  "hbm": 80,  "price": 2.00},
-    "H200": {"tflops": 989,  "hbm": 141, "price": 2.50},
-    "B200": {"tflops": 2250, "hbm": 192, "price": 4.50},
+    "A100":  {"tflops": 312,  "hbm": 80,  "price": 1.20},
+    "H100":  {"tflops": 989,  "hbm": 80,  "price": 2.00},
+    "H200":  {"tflops": 989,  "hbm": 141, "price": 2.50},
+    "B200":  {"tflops": 2250, "hbm": 192, "price": 4.50},
+    # --- frontier-class hardware we don't physically own (simulated) ---
+    "GB200": {"tflops": 2500, "hbm": 192, "price": 5.50},  # NVL72 per-GPU
+    "B300":  {"tflops": 3300, "hbm": 288, "price": 7.00},  # Blackwell Ultra (projected)
 }
 
 GPU_MTBF_HOURS = 87_600    # ~10 years per GPU
 NODE_RECOVERY_MIN = 8.0    # spare swap + restart time
 ```
+
+The last two rows are the **"GPUs we don't have"**: they let you price a run on
+a GB200 NVL72 or a projected B300 fleet without owning the silicon. `tflops`
+is dense peak BF16; the low-precision speedups (`fp8`, `nvfp4`) stack on top via
+`precision_speedup` rather than being baked into the per-GPU figure.
 
 `Cluster.tick(dt, rng)` is called every pretraining log-window. It:
 
@@ -161,6 +199,7 @@ data.start     / data.done
 tokenizer.start/ tokenizer.done
 pretrain.start / pretrain.log / pretrain.spike / pretrain.done
 align.start    / align.sft.done / align.rlhf.done / align.done
+reasoning_rl.start / reasoning_rl.done / reasoning_rl.skipped
 eval.done
 safety.done
 serve.tier  (one per tier)
@@ -292,7 +331,48 @@ Given per-tier QPS, the simulator computes:
 
 The 24h cost projection in the report is what a finance team would use to model API margins.
 
-### 3.12 `orchestrator.py`
+### 3.12 `reasoning_rl_sim.py` — RLVR / GRPO post-training (2025 paradigm)
+
+The missing 2025 phase (DeepSeek-R1, o1): large-scale RL against **verifiable**
+rewards. Optional — disabled by default, enabled with `--reasoning-rl`.
+
+```python
+@dataclass
+class ReasoningRLSpec:
+    enabled: bool = False
+    prompts: int = 100_000           # verifiable math/code/STEM prompts
+    group_size: int = 8              # G rollouts per prompt (GRPO group)
+    steps: int = 1_000               # optimizer steps
+    avg_response_tokens: int = 4_000 # long-CoT rollouts are token-heavy
+    prompt_tokens: int = 512
+    epochs: int = 1
+    mfu: float = 0.35                # rollouts run at lower MFU than pretrain
+    verifier_cpu_seconds_per_rollout: float = 0.05
+    cpu_dollar_per_hour: float = 1.60
+    coldstart_examples: int = 5_000
+    label_dollar_per_coldstart: float = 6.0
+```
+
+Unlike SFT/DPO, the dominant cost is **generation**, not the gradient update:
+
+```
+rollouts        = prompts · group_size · epochs
+total_tokens    = rollouts · (prompt_tokens + avg_response_tokens)
+gen_flops       = 2 · N · total_tokens                 # forward-only rollouts
+update_flops    = 6 · N · (steps · group_size · avg_response_tokens)
+rl_flops        = gen_flops + update_flops
+```
+
+It charges three resources: `gpu_<type>` (rollouts+updates), `cpu_nodes` (the
+sandboxed verifier fleet, overlapped so it adds $ but no wall-clock), and
+`human_labels` (the small reasoning-SFT cold-start set). It returns a
+`reasoning_quality` (≥1.0) multiplier that `simulate_eval` applies on top of the
+pretraining-only scores — lifting GSM8K and arena ELO the way R1 post-training
+does. Emits `reasoning_rl.start/done` (or `reasoning_rl.skipped`), including
+`rl_vs_pretrain_compute` so you can see how tiny the RL FLOPs are next to
+pretraining.
+
+### 3.13 `orchestrator.py`
 
 `ProgramSpec` glues all the above. `run_program(spec)` returns a dict of every subsystem's output and writes:
 - `out/sim/<name>/events.jsonl` — every event in order
@@ -310,35 +390,75 @@ PRESETS = {
     "7b":   (6.7e9,  2.0e12, seq=4096, batch=4M,   default 512 GPUs),
     "70b":  (7.0e10, 5.0e12, seq=4096, batch=8M,   default 4096 GPUs),
     "400b": (4.0e11, 1.5e13, seq=4096, batch=16M,  default 16384 GPUs),
+    # Frontier-class targets we don't have the hardware to actually run:
+    "1t":   (1.0e12, 2.0e13, seq=8192, batch=32M,  default 32768 GPUs),  # 1T-total MoE
+    "2t":   (2.0e12, 3.0e13, seq=8192, batch=48M,  default 65536 GPUs),  # "GPT-5.x-class"
 }
 ```
+
+The `1t`/`2t` presets are the **"runs we can't afford"**: pair them with
+`--moe-experts` (so only a fraction is active), `--precision fp8`, and a
+`--gpu-type GB200`/`B300` fleet to price a credible 2025-class flagship.
 
 ### 4.2 Flags
 
 ```
---size {1b,7b,70b,400b}               default: 7b
+--size {1b,7b,70b,400b,1t,2t}         default: 7b
 --gpus N                              override default GPU count
---gpu-type {A100,H100,H200,B200}      default: H100
+--gpu-type {A100,H100,H200,B200,GB200,B300}  default: H100
 --rlhf {none,dpo,ppo}                 default: dpo
 --sft-examples N                      default: 250000
 --pref-pairs N                        default: 200000
+
+  Sparse MoE (frontier sparsity):
+--moe-experts N                       default: 0 (dense); e.g. 256
+--moe-top-k N                         default: 2; routed experts per token
+
+  Low-precision training:
+--precision {bf16,fp8,nvfp4}          default: bf16
+
+  Reasoning RL (RLVR/GRPO, o1/R1-style; off by default):
+--reasoning-rl                        enable the phase
+--rl-prompts N                        default: 100000
+--rl-group-size N                     default: 8
+--rl-steps N                          default: 1000
+--rl-response-tokens N                default: 4000
+
+  Real-GPU calibration (optional; needs a visible CUDA device + torch):
+--real-gpu                            probe local GPUs + time a few real steps
+--real-gpu-index N                    which local CUDA device (default: 0)
+--use-local-gpu-type                  price the sim with the measured local SKU
+--real-steps N                        timed steps in the calibration run (default: 6)
+
 --out-dir PATH                        default: out/sim/<size>
 --seed N                              default: 0
 ```
 
+`--moe-experts` makes the model **sparse**: total params stay at the preset size
+but only the active per-token count drives FLOPs, so a 1T MoE trains for the cost
+of its ~hundreds-of-billions active params. `--precision fp8` (or `nvfp4`)
+multiplies achieved throughput. `--reasoning-rl` appends the RLVR phase after
+alignment and lifts the reasoning/ELO scores. `--real-gpu` calibrates the
+simulator's per-GPU TFLOP/s from a handful of real timed steps on whatever CUDA
+device is present (it falls back to pure simulation if none is visible).
+
 ### 4.3 Output
 
-The CLI prints a 5-section report:
+The CLI prints a multi-section report:
 
-1. Header — model, tokens, cluster, wall-clock
+1. Header — model (dense or MoE active/total), tokens, precision, cluster, wall-clock
 2. **PRETRAIN** — steps, final loss, spikes, GPU failures
 3. **ALIGN** — SFT and RLHF quality multipliers
-4. **EVAL** — MMLU / HumanEval / GSM8K / Arena ELO
-5. **SAFETY** — verdict + per-category scores
-6. **SERVING** — per-tier replicas / GPUs / $/day / $/Mtok
-7. **COST** — TOTAL, by phase, by resource
+4. **REASON-RL** — (only with `--reasoning-rl`) reasoning_quality, RL FLOPs and % of pretrain, wall-hours, $
+5. **EVAL** — MMLU / HumanEval / GSM8K / Arena ELO
+6. **SAFETY** — verdict + per-category scores
+7. **SERVING** — per-tier replicas / GPUs / $/day / $/Mtok
+8. **COST** — TOTAL, by phase, by resource
 
-Plus two files: `events.jsonl` and `summary.json`.
+If `--real-gpu` is passed and a CUDA device is visible, a probe table and a
+real-throughput calibration block are appended. Plus two files: `events.jsonl`
+and `summary.json` (now also carrying `active_params`, `moe_experts`,
+`precision`, and the `reasoning_rl` block).
 
 ---
 
@@ -450,8 +570,8 @@ To model new hardware:
 - **No parallelism in the simulator itself.** Phases are strictly serial. In reality data prep and tokenizer training overlap with cluster bring-up. Adding overlap would change wall-clock by <10% and isn't worth the modeling complexity.
 - **No memory model.** We assume the user has chosen a parallelism plan that fits; we don't simulate OOM.
 - **Eval predictors are regressions, not derivations.** They will mis-predict outliers (a model with a great math curriculum will beat the GSM8K curve; a poorly-tuned model will miss the MMLU curve). They are useful for *relative* comparisons.
-- **No reasoning RL phase.** The 2024–2025 RL-on-verifier-reward paradigm (o1, R1) is not modeled *in the simulator*. A toy GRPO loop now exists in `platform/rl/` (see `docs/15-reasoning-rl-rlvr.md`); add a `simulate_reasoning_rl` phase to price its compute.
-- **No multimodality.** Vision/audio encoders, tokenization of pixels/audio, and joint pretraining costs are not in scope.
+- **Reasoning RL is now modeled (optional).** The 2024–2025 RL-on-verifier-reward paradigm (o1, R1) runs as the `reasoning_rl_sim` phase when you pass `--reasoning-rl`; it prices rollout/update GPU compute + verifier CPU + cold-start labels and lifts the reasoning/ELO scores. A toy GRPO loop backs it in `platform/rl/` (see `docs/15-reasoning-rl-rlvr.md`). The *capability* lift is a calibrated regression, not a derivation — see eval-predictor caveat above.
+- **Multimodality is still out of scope of the simulator.** A toy VLM adapter exists in `platform/model/vision.py` (see `docs/16-multimodality.md`), but vision/audio encoder pretraining, pixel/audio tokenization, and joint-training costs are not priced by the sim yet.
 
 These are good follow-ups if you want to extend the system.
 
@@ -471,15 +591,21 @@ platform/sim/
 ├── tokenizer_sim.py      ~25 LOC   BPE training
 ├── pretrain_sim.py       ~85 LOC   the loop
 ├── alignment_sim.py      ~75 LOC   SFT + RM + DPO/PPO
+├── reasoning_rl_sim.py   ~125 LOC  RLVR / GRPO post-training (optional)
 ├── eval_sim.py           ~85 LOC   eval + safety
 ├── serving_sim.py        ~50 LOC   tiered inference
-└── orchestrator.py       ~75 LOC   end-to-end glue
+└── orchestrator.py       ~90 LOC   end-to-end glue (MoE/precision/reasoning-RL)
+
+platform/model/
+└── vision.py            ~110 LOC   toy LLaVA-style VLM adapter (multimodality stub)
 
 scripts/
-└── simulate.py          ~130 LOC   CLI
+└── simulate.py          ~210 LOC   CLI
 
 tests/
-└── test_simulation.py    ~90 LOC   7 simulation tests
+├── test_simulation.py    ~90 LOC   7 simulation tests
+├── test_sim_frontier.py            MoE + FP8 + reasoning-RL + e2e tests
+└── test_vision.py                  VLM forward/loss on CPU
 ```
 
 Total: ~915 LOC of pure Python. Zero external dependencies beyond the standard library.
@@ -523,6 +649,40 @@ events = [json.loads(l) for l in open("out/sim/70b/events.jsonl")]
 losses = [(e["step"], e["loss"]) for e in events if e["kind"] == "pretrain.log"]
 xs, ys = zip(*losses)
 plt.plot(xs, ys); plt.xlabel("step"); plt.ylabel("loss"); plt.show()
+```
+
+**Price a 2025-class frontier run (sparse MoE + FP8 + reasoning RL on GPUs we don't have):**
+
+```bash
+# 1T total-param MoE, 256 experts top-8 (~357B active), FP8 on a GB200 fleet,
+# with an o1/R1-style RLVR phase bolted on after alignment.
+python scripts/simulate.py --size 1t \
+    --moe-experts 256 --moe-top-k 8 \
+    --precision fp8 \
+    --gpu-type GB200 --gpus 32768 \
+    --reasoning-rl --rl-prompts 200000 --rl-steps 2000 \
+    --out-dir out/sim/frontier_moe_fp8_rl
+```
+
+The report's ALIGN section gains a **REASON-RL** line, and EVAL shows the RLVR
+lift (in a representative run `reasoning_quality ≈ 1.085` pushes GSM8K to ~99%
+and arena ELO past ~2400, on a ~9-day simulated wall-clock). Inspect the RL
+economics with:
+
+```bash
+jq 'select(.kind=="reasoning_rl.done")' \
+    out/sim/frontier_moe_fp8_rl/events.jsonl
+# → rl_vs_pretrain_compute shows the RL FLOPs are a small fraction of pretraining
+```
+
+**Sweep precision / sparsity to see the throughput-vs-cost tradeoff:**
+
+```bash
+for p in bf16 fp8 nvfp4; do
+    python scripts/simulate.py --size 70b --precision $p \
+        --out-dir out/sim/70b_$p
+done
+jq '{precision, clock_days, total_dollars}' out/sim/70b_*/summary.json
 ```
 
 ---

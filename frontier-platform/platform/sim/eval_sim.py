@@ -20,18 +20,27 @@ def simulate_eval(
     cost: CostBook,
     bus: EventBus,
     seed: int = 0,
+    reasoning_quality: float = 1.0,
+    emit: bool = True,
 ) -> dict:
     rng = random.Random(seed)
     # Full release-eval suite ~ 2h on 64 H100s. Scale by GPU count.
+    # When emit=False we're computing a *base-capability probe* (no reasoning
+    # lift, no clock/cost charge) to feed the reasoning-RL model.
     base_h = 2.0 * 64 / max(1, eval_cluster.total_gpus)
-    clock.advance(base_h * 3600)
-    cost.charge("eval", f"gpu_{eval_cluster.gpu_type}",
-                eval_cluster.total_gpus * base_h * GPU_SPECS[eval_cluster.gpu_type]["price"])
+    if emit:
+        clock.advance(base_h * 3600)
+        cost.charge("eval", f"gpu_{eval_cluster.gpu_type}",
+                    eval_cluster.total_gpus * base_h * GPU_SPECS[eval_cluster.gpu_type]["price"])
 
     mmlu = predict_mmlu(n_params, n_tokens) * sft_q * (0.95 + 0.07 * rlhf_q)
     he = predict_humaneval(n_params, n_tokens) * sft_q
     gsm = predict_gsm8k(n_params, n_tokens) * sft_q
-    elo = predict_arena_elo(mmlu, he, gsm, sft_q, rlhf_q)
+    # Reasoning-RL lifts code/math/reasoning more than broad knowledge (MMLU).
+    he = min(1.0, he * (1.0 + (reasoning_quality - 1.0) * 1.5))
+    gsm = min(1.0, gsm * (1.0 + (reasoning_quality - 1.0) * 2.0))
+    mmlu = min(1.0, mmlu * (1.0 + (reasoning_quality - 1.0) * 0.5))
+    elo = predict_arena_elo(mmlu, he, gsm, sft_q, rlhf_q, reasoning_quality)
     # add small noise so multiple runs aren't identical
     nz = lambda x: max(0.0, min(1.0, x * (1 + rng.gauss(0, 0.01))))
     out = {
@@ -40,7 +49,8 @@ def simulate_eval(
         "gsm8k": nz(gsm),
         "arena_elo": elo + rng.gauss(0, 8),
     }
-    bus.emit("eval.done", **out, hours=base_h)
+    if emit:
+        bus.emit("eval.done", **out, hours=base_h, reasoning_quality=reasoning_quality)
     return out
 
 

@@ -1,10 +1,14 @@
 # 16 — Multimodality
 
-> **Status: design stub.** Gap #2 in `14-gap-analysis-vs-frontier.md`. The
-> blueprint is text+code only across data, tokenizer, model, and eval. The
-> 2025–2026 flagships (GPT-5.x, Claude Opus 4.x, Gemini 3.x) are **natively
-> multimodal**; a text-only model is by definition not a flagship. This is
-> effectively a second platform — this doc scopes the minimum viable version.
+> **Status: design stub + MM-1 skeleton.** Gap #2 in
+> `14-gap-analysis-vs-frontier.md`. A toy-functional LLaVA-style adapter now
+> exists in `platform/model/vision.py` (`VisionEncoder` + `Projector` +
+> `VisionLanguageModel`): it patchifies an image, runs a small ViT, projects
+> patches into the LM hidden space, and prepends them as image tokens, computing
+> loss on text positions only. It runs end-to-end on CPU with the tiny test
+> model (`tests/test_vision.py`), but the encoder is randomly initialized — a
+> real build loads pretrained SigLIP/ViT weights. Data, tokenizer, eval, and
+> serving multimodality are still open.
 
 ---
 
@@ -55,8 +59,10 @@ Multimodality is not one module; it perturbs the whole pipeline:
 
 ## Minimum viable MM-1 build
 
-1. Integrate a pretrained vision encoder (SigLIP/ViT) behind
-   `platform/model/vision.py` with a projector.
+1. ✅ **Done (toy):** vision encoder + projector + VLM forward in
+   `platform/model/vision.py` (`VisionEncoder`, `Projector`,
+   `VisionLanguageModel`). Image tokens are prepended to text embeddings; loss
+   is on text positions only. Swap the random encoder for pretrained SigLIP/ViT.
 2. Extend the tokenizer contract with image placeholder tokens.
 3. Add an interleaved image-text data path: `platform/data/multimodal.py`
    (acquire, perceptual-dedup, caption/OCR pairing, shard with image refs).

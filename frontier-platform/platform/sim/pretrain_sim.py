@@ -9,7 +9,7 @@ from .clock import Clock
 from .cluster import Cluster, GPU_SPECS
 from .economy import CostBook
 from .events import EventBus
-from .scaling import step_loss_curve, compute_flops
+from .scaling import step_loss_curve, compute_flops, precision_speedup
 
 
 @dataclass
@@ -21,6 +21,11 @@ class PretrainSpec:
     target_mfu: float = 0.50
     spike_prob_per_1k_steps: float = 0.02
     log_every: int = 100
+    # Active (per-token) params drive FLOPs. For dense models == n_params; for
+    # sparse MoE this is much smaller than n_params (the whole point of MoE).
+    active_params: float | None = None
+    # Training numeric format: 'bf16' | 'fp8' | 'nvfp4'. Speeds up throughput.
+    precision: str = "bf16"
     # If set, use this measured seconds/step directly (skips the
     # peak_tflops * target_mfu calculation). Lets a real-GPU probe
     # calibrate the simulator's wall-clock to actual local hardware.
@@ -38,9 +43,11 @@ def simulate_pretrain(
 ) -> dict:
     rng = random.Random(seed)
     total_steps = max(1, int(spec.total_tokens // spec.global_batch_tokens))
-    # throughput
-    achieved_tflops = cluster.peak_tflops * spec.target_mfu
-    flops_per_step = compute_flops(spec.n_params, spec.global_batch_tokens)
+    # throughput: active params drive FLOPs; precision multiplies achieved TFLOP/s
+    active = spec.active_params if spec.active_params is not None else spec.n_params
+    prec_mult = precision_speedup(spec.precision)
+    achieved_tflops = cluster.peak_tflops * spec.target_mfu * prec_mult
+    flops_per_step = compute_flops(active, spec.global_batch_tokens)
     modeled_seconds_per_step = flops_per_step / (achieved_tflops * 1e12)
     if spec.measured_seconds_per_step is not None:
         seconds_per_step = spec.measured_seconds_per_step
@@ -49,7 +56,9 @@ def simulate_pretrain(
         seconds_per_step = modeled_seconds_per_step
         throughput_source = "modeled"
     bus.emit("pretrain.start",
-             n_params=spec.n_params, total_tokens=spec.total_tokens,
+             n_params=spec.n_params, active_params=active,
+             precision=spec.precision, precision_speedup=prec_mult,
+             total_tokens=spec.total_tokens,
              total_steps=total_steps, seconds_per_step=seconds_per_step,
              modeled_seconds_per_step=modeled_seconds_per_step,
              throughput_source=throughput_source,

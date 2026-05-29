@@ -72,7 +72,71 @@ def predict_gsm8k(n_params: float, n_tokens: float, math_frac: float = 0.07) -> 
 
 
 def predict_arena_elo(mmlu: float, humaneval: float, gsm8k: float, sft_quality: float = 1.0,
-                      rlhf_quality: float = 1.0) -> float:
-    """Arena ELO over a 1000-baseline. Weighted blend."""
+                      rlhf_quality: float = 1.0, reasoning_quality: float = 1.0) -> float:
+    """Arena ELO over a 1000-baseline. Weighted blend.
+
+    ``reasoning_quality`` (>=1.0) is the multiplier produced by a reasoning-RL
+    (RLVR/GRPO) phase; it lifts ELO the way o1/R1-style post-training does on
+    top of a fixed base model.
+    """
     cap = 0.5 * mmlu + 0.25 * humaneval + 0.25 * gsm8k
-    return 1000.0 + 1400.0 * cap * sft_quality * rlhf_quality
+    return 1000.0 + 1400.0 * cap * sft_quality * rlhf_quality * reasoning_quality
+
+
+# --- MoE active-parameter economics ---------------------------------------
+
+def moe_active_params(total_params: float, n_experts: int, top_k: int,
+                      shared_experts: int = 1) -> float:
+    """Active (per-token) parameters for a fine-grained MoE.
+
+    A sparse MoE only routes each token through ``top_k`` of ``n_experts`` plus
+    any always-on ``shared_experts``. The non-expert weights (attention,
+    embeddings, norms) are always active. We approximate the expert share of
+    params as ~2/3 of the model (SwiGLU FFN dominates) and scale only that part.
+
+    Returns the *active* parameter count that drives training/inference FLOPs.
+    Dense models (n_experts<=1) return ``total_params`` unchanged.
+    """
+    if n_experts <= 1:
+        return total_params
+    expert_share = 2.0 / 3.0                      # FFN fraction of params
+    dense_share = 1.0 - expert_share
+    active_frac_of_experts = (top_k + shared_experts) / float(n_experts + shared_experts)
+    return total_params * (dense_share + expert_share * active_frac_of_experts)
+
+
+# --- Low-precision (FP8/NVFP4) training economics --------------------------
+
+# Achieved throughput multipliers vs bf16 for the same hardware, from public
+# reports (DeepSeek-V3 FP8 run; NVIDIA NVFP4). These are *effective* speedups
+# after accounting for the high-precision accumulation/master-weight overhead.
+PRECISION_SPEEDUP = {
+    "bf16": 1.0,
+    "fp8": 1.55,     # ~1.5-1.6x (DeepSeek-V3-class)
+    "nvfp4": 2.2,    # ~2x+ on Blackwell (NVIDIA NVFP4), aggressive
+}
+
+
+def precision_speedup(precision: str) -> float:
+    """Throughput multiplier vs bf16 for a training numeric format."""
+    return PRECISION_SPEEDUP.get(precision, 1.0)
+
+
+def reasoning_rl_quality(base_cap: float, rollouts: float, steps: float) -> float:
+    """Multiplier (>=1.0) on arena ELO / reasoning evals from an RLVR phase.
+
+    Models the empirical shape of DeepSeek-R1 / o1-style reasoning RL: the gain
+    comes from *enough* verified-rollout experience and optimizer steps, gated by
+    base capability (RLVR reinforces correct rollouts, so a stronger base both
+    produces more reward signal and gains more). Crucially the gain is NOT tied
+    to the pretraining FLOP budget — R1 got large reasoning gains from compute
+    that was tiny next to pretraining. Saturates so you can't RL past the ceiling.
+    """
+    if rollouts <= 0 or steps <= 0:
+        return 1.0
+    # Saturating in experience (rollouts) and in update steps.
+    exp_term = 1.0 - math.exp(-rollouts / 1.5e6)     # ~char. scale 1.5M rollouts
+    step_term = 1.0 - math.exp(-steps / 3.0e3)        # ~char. scale 3k steps
+    max_lift = 0.30
+    lift = max_lift * base_cap * exp_term * step_term
+    return 1.0 + lift

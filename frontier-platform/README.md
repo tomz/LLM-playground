@@ -32,15 +32,16 @@ frontier-platform/
 │   ├── 12-cost-and-scaling-laws.md
 │   ├── 13-simulation.md     # ← discrete-event simulator
 │   ├── 14-gap-analysis-vs-frontier.md  # ← where this blueprint trails GPT-5.x/Opus 4.x/Gemini 3.x
-│   ├── 15-reasoning-rl-rlvr.md          # ← RLVR/GRPO design stub (gap #1)
-│   └── 16-multimodality.md              # ← multimodal design stub (gap #2)
+│   ├── 15-reasoning-rl-rlvr.md          # ← RLVR/GRPO design stub (gap #1) + sim phase
+│   └── 16-multimodality.md              # ← multimodal design stub (gap #2) + toy VLM
 ├── platform/             # Skeleton Python packages
 │   ├── data/             # ingestion, dedup, filter, mix, shard
 │   ├── tokenizer/        # BPE training + serving
-│   ├── model/            # transformer, attention variants, MoE
+│   ├── model/            # transformer, attention variants, MoE, vision (toy VLM)
 │   ├── training/         # pretraining loop, optimizer, parallelism
 │   ├── alignment/        # SFT, reward model, PPO, DPO
 │   ├── rl/               # RLVR: verifiers + group rollout + GRPO (reasoning post-train)
+│   ├── sim/              # discrete-event program simulator (MoE/FP8/RLVR economics)
 │   ├── eval/             # benchmark harness
 │   ├── safety/           # classifiers + red-team harness
 │   ├── serving/          # inference server, KV-cache, batching
@@ -70,10 +71,12 @@ frontier-platform/
 | Pretraining      | ✅        | ✅            | smoke |
 | Alignment        | ✅        | ✅            | smoke |
 | RLVR / reasoning | ✅        | ✅ (toy)      | smoke |
+| Multimodality    | ✅ (stub) | ✅ (toy VLM)  | smoke |
 | Evaluation       | ✅        | ✅            | smoke |
 | Safety           | ✅        | ✅            | —     |
 | Serving          | ✅        | ✅            | smoke |
 | Infra            | ✅        | ✅            | —     |
+| Program simulator| ✅        | ✅ (MoE/FP8/RLVR) | smoke |
 
 ## What works today
 
@@ -86,6 +89,8 @@ frontier-platform/
 - ✅ Tier 2 — **serving**: in-process `TorchEngine` with streaming generate, router.
 - ✅ Tier 3 — **alignment**: SFT (assistant-token loss mask), BT reward model, DPO (sigmoid / IPO / KTO variants), PPO with GAE + KL-to-reference penalty + clipped objective + value head.
 - ✅ Tier 3 — **RLVR / reasoning** (`platform/rl/`, toy-functional): verifiable reward functions (math exact-answer, string/regex, length penalty; sandboxed code-test verifier stubbed), group rollout, and **GRPO** (value-network-free, group-relative advantages + KL-to-reference). See `docs/15-reasoning-rl-rlvr.md`.
+- ✅ Tier 3 — **multimodality** (`platform/model/vision.py`, toy-functional): LLaVA-style `VisionEncoder` + `Projector` + `VisionLanguageModel` that patchifies an image, runs a small ViT, and prepends projected image tokens to the LM (loss on text positions only). Runs on CPU; encoder is randomly initialized. See `docs/16-multimodality.md`.
+- ✅ **Program simulator** (`platform/sim/`, `scripts/simulate.py`): end-to-end discrete-event model of the whole program now prices **sparse MoE** (active-param FLOPs), **FP8/NVFP4** throughput, and an **RLVR/GRPO reasoning phase** whose compute *and* capability lift feed the eval predictors — plus `GB200`/`B300` GPU rows and `1t`/`2t` presets for hardware we don't own. See `docs/13-simulation.md`.
 - ✅ End-to-end **smoke pipeline** (`bash scripts/smoke_pipeline.sh`, < 10s CPU): corpus → shards → pretrain → SFT → RM → DPO → PPO → eval → generate.
 
 Still `NotImplementedError` (intentionally — out of scope for a single-machine blueprint):
@@ -94,13 +99,13 @@ Still `NotImplementedError` (intentionally — out of scope for a single-machine
 - FSDP2 / TP / PP backends (use `distgpt` for those).
 - vLLM / TRT-LLM / SGLang serving backends (lazy-import stubs).
 - Async RLVR rollout (vLLM/SGLang actor–learner) + sandboxed code execution — the toy GRPO loop in `platform/rl/` is synchronous and CPU-only; production hooks are stubbed. See `docs/15-reasoning-rl-rlvr.md`.
-- Multimodality (vision/audio/video) — design-only; see `docs/16-multimodality.md`.
+- Multimodality (audio/video; pretrained vision weights; multimodal data/eval) — only a toy randomly-initialized vision adapter exists (`platform/model/vision.py`); see `docs/16-multimodality.md`.
 
 ## Running tests
 
 ```bash
 cd frontier-platform
-.venv/bin/python -m pytest -q             # 94 tests, ~4 s on CPU (5 CUDA-only tests skip/fail off-GPU)
+.venv/bin/python -m pytest -q             # 97 pass / 6 skip on CPU (5 CUDA-only tests fail off-GPU)
 bash scripts/smoke_pipeline.sh            # full pipeline, ~6 s on CPU
 ```
 
@@ -117,6 +122,10 @@ training steps on local hardware.
 ```bash
 python scripts/simulate.py --size 7b                    # modeled (default)
 python scripts/simulate.py --size 7b --real-gpu          # calibrated to this box
+# 2025-class frontier recipe: 1T-total MoE (top-8, ~357B active), FP8, GB200 fleet,
+# plus an o1/R1-style RLVR phase that lifts GSM8K/ELO:
+python scripts/simulate.py --size 400b --moe-experts 256 --moe-top-k 8 \
+    --precision fp8 --gpu-type GB200 --gpus 32768 --reasoning-rl
 python scripts/plot_sim.py out/sim/7b                    # 3-panel PNG + SVG
 python scripts/plot_compare.py out/sim/{1b,7b,70b,400b} \
     --out out/sim/compare_sizes.png --title "size sweep"
