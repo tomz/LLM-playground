@@ -2,6 +2,11 @@
   SOTA Watch edition template.
   Copy to docs/YYYY-MM-sota-llm-agi.md, then fill in. Keep section order stable
   so editions diff cleanly month-over-month. Delete these HTML comments.
+
+  Framing rule: do NOT constrain content to any one machine's GPUs. For each
+  project, assume both a MINIMAL and an IDEAL hardware envelope are available
+  and recommend what is correct at that scale. "Harvest status" tracks whether
+  we've implemented it in-repo; hardware is a sizing note, never a blocker.
 -->
 # SOTA Watch — LLM & AGI · YYYY-MM
 
@@ -16,52 +21,54 @@
 
 - …
 
-## Hardware reality check
+## Hardware envelopes per project
 
-<!-- State the target hardware so readers know which techniques are live vs
-     deferred. Update if our fleet changes. -->
+<!-- For each project, state the MINIMAL box that runs a meaningful job and the
+     IDEAL box that unlocks the full technique set. These are aspirational
+     targets, not a description of any one workstation. -->
 
-| Card | Arch | VRAM | bf16 | FP8 | Notes |
-|------|------|-----:|:----:|:---:|-------|
-| RTX 3050 | Ampere sm_86 | 8 GB | ✓ | ✗ | smoke / small LoRA |
-| RTX 5060 Ti | Blackwell sm_120 | 16 GB | ✓ | (HW yes, SW immature) | main single-GPU workhorse |
+| Project | Scale | Minimal | Ideal | Unlocks at ideal |
+|---------|-------|---------|-------|------------------|
+| nanogpt-edu | 10M–100M | … | … | … |
+| midgpt | 124M–1.5B | … | … | … |
+| distgpt | 1B–70B | … | … | … |
+| coder-finetune | 0.5B–7B | … | … | … |
+| frontier-platform | 1B–500B+ | … | … | … |
 
-## Tier 1 — high-ROI, low-risk (recommend doing)
+## Tier 1 — high-ROI, broadly applicable
 
-<!-- Techniques worth adopting now. One subsection each, or a table. -->
+| Technique | What it does | Win | Cost / risk | Min HW | Source | Harvest | Project(s) |
+|-----------|--------------|-----|-------------|--------|--------|---------|-----------|
+| … | … | … | … | … | … | shipped/planned | … |
 
-| Technique | What it does | Win | Cost / risk | Source | Harvest | Project(s) |
-|-----------|--------------|-----|-------------|--------|---------|-----------|
-| … | … | … | … | … | shipped/planned | … |
+## Tier 2 — scale- or hardware-gated wins
 
-## Tier 2 — meaningful but heavier lifts
+<!-- Techniques that need a specific arch generation or model scale to pay off.
+     State the gate as a sizing fact (e.g. "FP8: Hopper+; pays off >1B"), not as
+     "we can't run it." -->
 
-| Technique | What it does | Win | Cost / risk | Source | Harvest | Project(s) |
-|-----------|--------------|-----|-------------|--------|---------|-----------|
-| … | … | … | … | … | planned/deferred | … |
+| Technique | What it does | Win | Gate (scale / arch) | Source | Harvest | Project(s) |
+|-----------|--------------|-----|---------------------|--------|---------|-----------|
+| … | … | … | … | … | planned/ideal | … |
 
 ## Tier 3 — research bets (track, don't build yet)
 
 - …
 
-## Watchlist / deferred (with gating condition)
+## Roadmap by project
 
-<!-- Carry this table forward every month. The "unblocks when" column is the
-     whole point: it turns "someday" into a trigger. -->
+<!-- Carry forward each month. What's the next correct technique to add to each
+     project, and at what hardware tier. This replaces the old "deferred"
+     table — everything is on a roadmap, sized by hardware, not blocked by it. -->
 
-| Technique | Why deferred | Unblocks when |
-|-----------|--------------|---------------|
-| … | … | … |
+| Project | Next harvest | Hardware tier | Notes |
+|---------|--------------|---------------|-------|
+| … | … | minimal/ideal | … |
 
 ## What shipped this month
-
-<!-- Concrete changelog with commit links, so the digest doubles as a record. -->
 
 - …
 
 ## Sources
-
-<!-- Numbered, with arXiv ids / repo links / our own run logs. Flag any claim
-     that relied on unverified or rate-limited search. -->
 
 1. …

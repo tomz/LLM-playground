@@ -20,24 +20,27 @@ diff month-over-month and so new findings slot into a predictable place.
 - **Published monthly**, named `YYYY-MM-sota-llm-agi.md`.
 - Every claim carries a **source** and, where possible, a **reproducible
   reference** (repo, paper arXiv id, or our own run).
-- Each technique is tagged with a **tier** (1 = high-ROI/low-risk → 3 =
-  research bet) and a **harvest status** against our projects
-  (`shipped` / `planned` / `deferred` / `skip`).
-- Hardware reality is stated up front: most of this repo runs on consumer
-  Ampere/Blackwell cards (RTX 3050 8 GB, RTX 5060 Ti 16 GB), so techniques
-  that only pay off on H100/B200 are explicitly flagged and deferred.
+- Each technique is tagged with a **tier** (1 = high-ROI/broad → 3 = research
+  bet) and a **harvest status** against our projects
+  (`shipped` / `planned` / `ideal`).
+- **Hardware is a sizing note, never a blocker.** Content is not constrained by
+  any one workstation's GPUs. For each project we assume both a **minimal** box
+  (runs a meaningful job) and an **ideal** box (unlocks the full technique set),
+  and recommend what is correct at that scale. Datacenter-only techniques
+  (FP8/NVFP4, FlashAttention-3, MoE, multi-node parallelism) are first-class,
+  flagged with the scale/arch at which they pay off.
 - To start next month's edition, copy [`TEMPLATE.md`](./TEMPLATE.md) to
-  `YYYY-MM-sota-llm-agi.md`, carry forward the "Watchlist / deferred" table,
-  and fill in what changed.
+  `YYYY-MM-sota-llm-agi.md`, carry forward the **Roadmap by project** table, and
+  fill in what changed.
 
 ## How to add a finding mid-month
 
 Editions are living documents until the month closes. To add a technique:
 
 1. Drop it in the correct **tier** table of the current edition.
-2. Fill the row: *technique · what it does · win · cost/risk · source · harvest
-   status · which project(s) it touches*.
+2. Fill the row: *technique · what it does · win · cost/gate · min HW · source ·
+   harvest status · which project(s) it touches*.
 3. If you implemented it, link the commit and update the harvest status to
    `shipped`.
-4. If it's only viable on hardware we don't have, move it to **Watchlist /
-   deferred** with the gating condition.
+4. If it only pays off at a larger scale/arch, mark it `ideal` and add it to the
+   **Roadmap by project** table with the hardware tier — sized, not blocked.
