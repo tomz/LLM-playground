@@ -38,6 +38,14 @@
   off: **FP8/NVFP4** (Hopper/Blackwell, >1B), **FlashAttention-3** (Hopper+),
   **Multi-head Latent Attention** (long-context + serving), **MoE** (≥3B
   active-equivalent), **3D/5D parallelism + overlapped comms** (multi-node).
+- **2025 post-training SOTA is reasoning-first:** DeepSeek-R1/Qwen3 made
+  RL-on-verifiable-rewards (RLVR) + GRPO-style online RL a first-class path,
+  while DPO/ORPO remain the cheap preference-alignment baseline for 0.5B–7B
+  `coder-finetune`.
+- **Serving is now part of the model recipe, not an afterthought:** PagedAttention
+  / vLLM, prefix caching, speculative decoding (MTP/EAGLE), SGLang structured
+  execution, and disaggregated prefill/decode should be tracked alongside
+  training throughput because they change which architectures are economical.
 
 ---
 
@@ -51,8 +59,8 @@ meaningful job; "ideal" unlocks the full technique set for that scale.
 | **nanogpt-edu** | 10M–100M | laptop CPU / 8 GB GPU | 1× H100 80 GB | bf16→FP8 head, long-ctx FlexAttention, fast full sweeps in minutes |
 | **midgpt** | 124M–1.5B | 1× 16 GB GPU | 8× H100 single node | FP8 matmul, FlashAttention-3, real Chinchilla-optimal token budgets |
 | **distgpt** | 1B–70B | 1 node × 8× A100 | 8–64 nodes × 8× H100/B200 + NVLink/InfiniBand | 3D/5D parallelism, FP8, comms/compute overlap, MoE expert parallelism |
-| **coder-finetune** | 0.5B–7B | 1× 8 GB GPU (QLoRA) | 1× 80 GB or 2–8× for full-FT | full-FT of 7B, long-context packing, fast multi-epoch SFT + DPO/ORPO |
-| **frontier-platform** | 1B–500B+ | design doc (no GPU) | 1k–16k× H100/B200 | the entire program: pretrain → SFT → RLHF → eval → serve at frontier scale |
+| **coder-finetune** | 0.5B–7B | 1× 8 GB GPU (QLoRA) | 1× 80 GB or 2–8× for full-FT | full-FT of 7B, long-context packing, fast multi-epoch SFT + DPO/ORPO/GRPO |
+| **frontier-platform** | 1B–500B+ | design doc (no GPU) | 1k–16k× H100/B200 | the entire program: pretrain → SFT → RLVR/RLHF → eval → vLLM/SGLang-style serve at frontier scale |
 
 ---
 
@@ -139,6 +147,50 @@ of them*.
 `midgpt`); bf16 by default, FP16 GradScaler path for older Tensor Core gens
 (present in `nanogpt-edu`). **Source:** [1]
 
+### 8. Reasoning post-training: RLVR + GRPO, then DPO/ORPO — **planned**
+
+DeepSeek-R1 reframed post-training around **reinforcement learning on
+verifiable rewards**: for math/code/STEM tasks, the reward can be computed by
+unit tests, exact answers, or validators instead of a learned reward model.
+DeepSeekMath introduced **GRPO**, a PPO variant that uses group-relative rewards
+to reduce PPO memory overhead; TRL now exposes `GRPOTrainer`, making small-scale
+replicas practical. For general preference alignment, **DPO** remains the
+simplest stable offline objective, while **ORPO** folds preference optimization
+into SFT without a separate reference model.
+
+- **Win:** reasoning capability can emerge from RL even without human-written
+  reasoning traces; smaller models can distill the resulting traces. DPO/ORPO
+  give cheap preference alignment for `coder-finetune` before full RL.
+- **Scope rule:** start with verifier-backed code/math tasks (HumanEval+, unit
+  tests, exact-answer math) before subjective chat rewards. Keep SFT → DPO/ORPO
+  as the default cheap path; add GRPO only when the reward is executable.
+- **Min HW:** single GPU for DPO/ORPO/QLoRA; GRPO is more generation-heavy but
+  works at 0.5B–7B with Accelerate/vLLM integration. **Ideal:** multi-GPU async
+  generation + training for frontier RLVR.
+- **Source:** [14], [15], [16], [17], [18]  ·  **Harvest:** planned →
+  `coder-finetune`; design-only → `frontier-platform`.
+
+### 9. Serving-aware training: vLLM/SGLang + prefix/speculative paths — **planned**
+
+The training stack should optimize for serving shape. PagedAttention/vLLM makes
+KV-cache memory near-paged instead of contiguous, raising throughput at fixed
+latency. Prefix caching and SGLang/RadixAttention exploit shared prompts in RAG,
+agent, and few-shot workloads. Speculative decoding (including EAGLE and MTP
+draft heads) turns extra train-time heads or small draft models into lower
+latency at inference.
+
+- **Win:** vLLM reports 2–4× serving throughput from PagedAttention; SGLang
+  reports up to 6.4× on structured multi-call programs; EAGLE reports 2.7–3.5×
+  latency speedups on LLaMA2-Chat-70B while preserving output distribution.
+- **Scope rule:** if a training feature changes KV-cache size (MLA/GQA/MQA),
+  draft quality (MTP), or prompt reuse (packing/document masks), record the
+  serving implication in the model card / design doc.
+- **Min HW:** any inference GPU for benchmarking small models. **Ideal:**
+  multi-GPU vLLM/SGLang with disaggregated prefill/decode for long prompts and
+  high-QPS serving.
+- **Source:** [19], [20], [21], [22], [23]  ·  **Harvest:** planned →
+  `midgpt`/`coder-finetune` exports; design-only → `frontier-platform`.
+
 ---
 
 ## Tier 2 — scale- or hardware-gated wins
@@ -150,6 +202,7 @@ blocked by any one machine.
 |-----------|--------------|-----|---------------------|--------|---------|-----------|
 | **FP8 / NVFP4 training** (torchao / TransformerEngine) | 8-/4-bit matmul w/ per-tensor scaling | ~1.5–1.6× throughput, ~2× memory; validated at 12B/10T tokens | Hopper/Blackwell Tensor Cores; pays off >1B | [10] | **ideal** | midgpt, distgpt, frontier |
 | **FlashAttention-3** | Hopper-optimized attention kernel | ~1.5× over SDPA on H100; warp-specialized + FP8 | Hopper+; long sequences | [11] | **ideal** | midgpt, distgpt |
+| **FlexAttention** | `torch.compile` lowers custom masks/biases to fused attention kernels | FlashAttention-like speed with custom masks; sparse masks can be faster than dense attention | PyTorch 2.5+; long context, packed docs, custom masks | [24] | **planned** | nanogpt-edu, midgpt |
 | **Multi-head Latent Attention (MLA)** | Low-rank KV compression | 5–10× smaller KV cache at near-equal quality | long-context training + any serving | [3] | **planned** | distgpt, serving |
 | **Mixture-of-Experts** (fine-grained + shared expert) | Sparse FFN, more params at ~constant FLOPs | large quality/$ win | ≥3B active-equiv; needs expert parallelism | [3] | **ideal** | distgpt, frontier |
 | **3D/5D parallelism + comms overlap** | FSDP2 + TP + PP + EP + SP, overlapped collectives | near-linear scaling to 1000s of GPUs | multi-node + fast interconnect | [12] | **partial** | distgpt, frontier |
@@ -164,7 +217,12 @@ blocked by any one machine.
   long-context throughput; recipe still thin outside originating papers.
 - **Diffusion / next-byte / tokenizer-free LMs:** promising, pre-product.
 - **Long-context position schemes** (YaRN / NTK-by-parts; NoPE in alternating
-  layers): adopt when training at block_size ≫ 1024.
+  layers): adopt when training at block_size ≫ 1024. Pair with FlexAttention
+  document masks and serving prefix-cache benchmarks rather than treating
+  position scaling as a standalone change.
+- **Hybrid thinking / non-thinking models** (Qwen3 style): expose an inference
+  budget knob that lets users trade latency for reasoning depth. Track for
+  `coder-finetune` and serving docs once we have reasoning datasets and evals.
 - **muP / hyperparameter transfer** at frontier scale: zero-shot HP transfer
   from small proxies — high value for `frontier-platform`'s scaling program.
 
@@ -176,11 +234,11 @@ Everything is on a roadmap, sized by hardware tier — nothing is "blocked."
 
 | Project | Next harvest | Tier | Notes |
 |---------|--------------|------|-------|
-| nanogpt-edu | full-module MTP; FlexAttention long-context | minimal→ideal | keep the core legible; advanced bits opt-in |
-| midgpt | Muon; Liger; FP8 matmul; FA-3 | minimal→ideal | FP8/FA-3 light up on 8× H100 |
+| nanogpt-edu | full-module MTP; FlexAttention long-context; serving benchmark for MTP draft heads | minimal→ideal | keep the core legible; advanced bits opt-in |
+| midgpt | Muon; Liger; FP8 matmul; FA-3; vLLM export path | minimal→ideal | FP8/FA-3 light up on 8× H100; serving benchmark closes the train→serve loop |
 | distgpt | Muon (distributed); FP8; MoE + expert parallelism; MLA | ideal | the 3D-parallel showcase; validate at multi-node |
-| coder-finetune | Spectrum; DPO/ORPO via Liger fused losses; full-FT 7B | minimal→ideal | full-FT 7B wants 1× 80 GB or 2–8× |
-| frontier-platform | FP8/NVFP4 economics; MoE $/quality; muP transfer in the sim | ideal | update the cost/throughput models with FP8 + MoE |
+| coder-finetune | Spectrum; DPO/ORPO; verifier-backed GRPO for code/math; full-FT 7B | minimal→ideal | start with HumanEval+/unit-test rewards before subjective preference RL |
+| frontier-platform | FP8/NVFP4 economics; MoE $/quality; RLVR pipeline; vLLM/SGLang serving models | ideal | update cost/throughput models with FP8 + MoE + prefill/decode economics |
 
 ---
 
@@ -222,9 +280,41 @@ Both repos: ruff-clean, end-to-end train/resume/sample smoke-verified.
 12. PyTorch, *FSDP2 / TorchTitan* — 3D parallelism + overlapped collectives for
     large-scale training.
 13. Unsloth — single-GPU LoRA/QLoRA kernels. <https://unsloth.ai>
+14. DeepSeek-AI, *DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via
+    Reinforcement Learning* — RLVR, emergent self-reflection/verification,
+    distillation to smaller models; arXiv 2501.12948.
+15. Shao et al., *DeepSeekMath: Pushing the Limits of Mathematical Reasoning in
+    Open Language Models* — 120B math tokens + GRPO; arXiv 2402.03300.
+16. Rafailov et al., *Direct Preference Optimization: Your Language Model is
+    Secretly a Reward Model* — stable offline preference optimization; arXiv
+    2305.18290.
+17. Hong et al., *ORPO: Monolithic Preference Optimization without Reference
+    Model* — reference-free preference-aligned SFT; arXiv 2403.07691.
+18. Hugging Face TRL, `GRPOTrainer` documentation — practical GRPO path with
+    reward functions and Accelerate launch.
+    <https://huggingface.co/docs/trl/main/grpo_trainer>
+19. Kwon et al., *Efficient Memory Management for Large Language Model Serving
+    with PagedAttention* — vLLM, near-zero KV-cache waste, 2–4× throughput;
+    arXiv 2309.06180.
+20. vLLM documentation, *Automatic Prefix Caching*.
+    <https://docs.vllm.ai/en/latest/features/automatic_prefix_caching.html>
+21. Li et al., *EAGLE: Speculative Sampling Requires Rethinking Feature
+    Uncertainty* — feature-level speculative decoding, 2.7–3.5× latency speedup
+    on LLaMA2-Chat-70B; arXiv 2401.15077.
+22. Zheng et al., *SGLang: Efficient Execution of Structured Language Model
+    Programs* — RadixAttention + compressed FSMs, up to 6.4× throughput; arXiv
+    2312.07104.
+23. Qwen Team, *Qwen3: Think Deeper, Act Faster* — open MoE/dense models,
+    hybrid thinking modes, 36T-token pretraining, four-stage post-training.
+    <https://qwenlm.github.io/blog/qwen3/>
+24. PyTorch Team, *FlexAttention: The Flexibility of PyTorch with the
+    Performance of FlashAttention* — custom attention masks/biases lowered via
+    `torch.compile` to fused kernels. <https://pytorch.org/blog/flexattention/>
 
 > **Methodology note.** Merges `distgpt/docs/sota_review.md` with a
-> primary-source pass on the modded-nanogpt / Muon / Liger material. Where live
-> search was rate-limited, primary sources (repos, blog, papers) were fetched
+> primary-source pass on the modded-nanogpt / Muon / Liger material, followed by
+> a fresh 2025–2026 pass over reasoning RL, preference optimization, Qwen3-style
+> thinking models, and serving systems. Where live search was rate-limited,
+> primary sources (repos, blog, papers, and framework docs) were fetched
 > directly. Hardware envelopes are aspirational sizing targets, not a constraint
 > from any one machine. Flag anything stale for the next edition.
