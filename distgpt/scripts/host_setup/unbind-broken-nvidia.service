@@ -1,0 +1,22 @@
+# systemd unit: unbind the broken 5060 Ti at boot so cuInit doesn't choke.
+# Install with:
+#   sudo cp scripts/host_setup/unbind-broken-nvidia.{sh,service} /etc/systemd/system/
+#   sudo chmod +x /etc/systemd/system/unbind-broken-nvidia.sh
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now unbind-broken-nvidia.service
+#
+# Edit the slot below if your broken GPU is at a different PCI address.
+[Unit]
+Description=Unbind a non-initialising NVIDIA GPU at boot
+After=multi-user.target
+Requires=multi-user.target
+# Run after the nvidia kernel module has fully attached devices.
+[Service]
+Type=oneshot
+ExecStart=/etc/systemd/system/unbind-broken-nvidia.sh 0000:05:00.0
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

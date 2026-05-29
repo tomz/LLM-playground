@@ -1,0 +1,50 @@
+# P100 single-GPU recipe — clone of gpt_416m_fweb_5060ti.yaml with fp16.
+# P100 (Pascal, cc6.0) has no BF16; otherwise has the same 16 GB as the 5060 Ti,
+# so we keep the same micro_batch / grad_accum / no activation checkpointing.
+# No tensor cores either, so step time will be ~10x slower than a 5060 Ti would be.
+#
+# Run with:
+#   .venv-pascal/bin/python -m distgpt.cli train --config configs/gpt_416m_fweb_p100.yaml
+
+run_id: gpt_416m_fweb_p100
+out_dir: out/gpt_416m_fweb_p100
+data: {dir: data/fineweb-edu, seq_len: 1024}
+seed: 1337
+dtype: float32      # Pascal has no BF16; fp16 NaNs without a GradScaler
+                    # (framework was bf16-only). fp32 is stable and the
+                    # P100's HBM2 makes it tolerable for a smoke test.
+log: {jsonl: true, wandb_project: null}
+
+model:
+  vocab_size: 50304
+  n_layer: 24
+  n_head: 16
+  n_kv_head: 4
+  d_model: 1024
+  d_ffn: 4096
+  max_seq_len: 1024
+  rope_base: 10000.0
+  tie_embeddings: true
+
+parallel:
+  dp: -1
+  tp: 1
+  pp: 1
+  zero: fsdp
+  activation_ckpt: none
+
+optim:
+  lr: 3.0e-4
+  min_lr: 3.0e-5
+  betas: [0.9, 0.95]
+  weight_decay: 0.1
+  grad_clip: 1.0
+  warmup_steps: 150
+  total_steps: 3000
+
+train:
+  micro_batch: 2          # fp32 doubles activation memory vs bf16
+  grad_accum: 16          # keep eff batch = 32 sequences
+  log_every: 5
+  eval_every: 100
+  ckpt_every: 500

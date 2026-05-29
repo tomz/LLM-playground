@@ -94,6 +94,26 @@ SpikeMonitor rewind-loop on noisy small-batch gradients, and why running
 two ranks on one consumer GPU doesn't work under NCCL 2.28) and the
 fixes that landed in the same commit.
 
+## Worked example — same model on a 2016 Tesla P100
+
+The same 416 M model trained on a **single Tesla P100-PCIE-16GB** (Pascal,
+sm_60, no Tensor Cores, no BF16). See [`examples/p100_416m_fineweb.md`](examples/p100_416m_fineweb.md):
+
+- Identical config to the 5060 Ti run, only `dtype` (bf16 → fp32) and
+  `micro_batch`/`grad_accum` (4/8 → 2/16) changed
+- **14 h 50 min** wall-clock · **1.85 k tok/s** · **12.7 GB** peak VRAM
+- **Val ppl 44.2** at step 2 300 (~12× slower than the 5060 Ti, but lower
+  held-out loss thanks to fp32 precision)
+
+![distgpt 416M on P100](out/gpt_416m_fweb_p100/loss.png)
+
+Config: [`configs/gpt_416m_fweb_p100.yaml`](configs/gpt_416m_fweb_p100.yaml).
+The writeup documents three more real issues this run surfaced
+(CUDA 13 dropped sm_60 from the default torch wheel, a
+half-broken Blackwell GPU in the same host poisoning `cuInit`, and why
+the framework's bf16-only design NaNs on Pascal fp16) plus the
+sidecar `.venv-pascal/` and PCI-unbind workarounds that got it running.
+
 ## What's *not* in scope
 
 - Custom CUDA kernels (we lean on PyTorch SDPA + Transformer Engine if installed)
