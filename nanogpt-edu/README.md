@@ -119,6 +119,7 @@ opt-in config flags — small, readable, and pedagogically interesting:
 | **QK-Norm** | `qk_norm=True` | Per-head RMSNorm on Q and K before RoPE — stabilizes attention logits, lets you push LR higher. |
 | **Zero-init projections** | `zero_init_proj=True` | Zero-inits the residual-write matrices (attn `o_proj`, ffn `w2`) so each block starts as identity — stable high-LR warmup (muP-like). |
 | **Untied embeddings** | `tie_embeddings=False` | Gives `lm_head` its own weight; helps loss once you have the tokens to support the extra params. |
+| **Multi-Token Prediction** | `mtp_tokens=2` (+`mtp_weight`) | Auxiliary heads predict tokens n+2/n+3 alongside n+1 (DeepSeek-V3 style). Denser gradient → better sample efficiency in early training. *Train-only* — `generate()` uses the main head, so zero inference cost. |
 
 A ready-made head-to-head config is `configs/tiny_muon.py` — same 10.65M
 architecture as `tiny_clean.py`, same iters/budget, all four knobs on:
@@ -128,6 +129,10 @@ python train.py --config configs/tiny_clean.py  # AdamW baseline
 python train.py --config configs/tiny_muon.py   # Muon + speedrun knobs
 python tools/plot_nanogpt.py out/{tiny_clean,tiny_muon}/train.log --compare out/muon_vs_adamw.png
 ```
+
+`configs/tiny_mtp.py` isolates Multi-Token Prediction (on the AdamW baseline)
+for a clean A/B against `tiny_clean.py`. The MTP aux loss is train-only, so the
+logged **val** loss stays directly comparable between the two runs.
 
 > On 1 MB of TinyShakespeare the **data** is the bottleneck, not the optimizer,
 > so the gap is modest. To see Muon shine, scale the tokens (next section).
@@ -149,7 +154,17 @@ python sample.py --ckpt out/small_fineweb/ckpt_best.pt --prompt "The mitochondri
 
 `prepare_fineweb.py` streams the dataset and writes `train.bin`/`val.bin`/
 `meta.pkl` exactly like `prepare_shakespeare.py`; `sample.py` auto-detects the
-BPE tokenizer from `meta["tokenizer"]`.
+BPE tokenizer from `meta["tokenizer"]`. Pass `--dataset dclm` for the
+DataComp-LM baseline (~10% better on MMLU at matched compute than FineWeb-Edu).
+
+> **Token budget (Chinchilla and beyond).** The default examples sit *far*
+> below compute-optimal: `tiny` trains a 10.65M model on ~1M tokens (~0.005×
+> Chinchilla's ~20 tok/param). Modern small models deliberately *over-train* —
+> Llama-3 / Qwen2.5 use 20–50× Chinchilla, i.e. hundreds of tokens per param.
+> Scaling tokens with params is the single highest-ROI knob here: with the
+> 100M-token FineWeb slice the `small`/`medium` configs stop overfitting and
+> the bigger-is-better ordering is restored. Bump `--tokens` (and `max_iters`)
+> before reaching for a fancier optimizer.
 
 ## What this teaches
 
@@ -165,6 +180,7 @@ FSDP, MoE, RLHF — see the `mid-scale-trainer` and `distributed-trainer`
 projects. FlashAttention is used implicitly via PyTorch SDPA. Many of the
 modded-nanogpt speedrun's heavier tricks (FlexAttention long-short windows,
 FP8 matmul, U-net skip connections, value embeddings) are also omitted to keep
-the core legible — the four cheapest/most-instructive ones (Muon, QK-norm,
-zero-init, untied head) are available as opt-in flags; see above. FP8 in
+the core legible — the cheapest/most-instructive ones (Muon, QK-norm,
+zero-init, untied head, and DeepSeek-V3-style Multi-Token Prediction) are
+available as opt-in flags; see above. FP8 in
 particular needs Hopper+ and is useless on consumer Ampere/Blackwell cards.

@@ -112,7 +112,10 @@ def split_muon_params(model):
     for name, p in model.named_parameters():
         if not p.requires_grad:
             continue
-        is_io = ("tok_emb" in name) or ("lm_head" in name)
+        # Embeddings, the lm_head, and the MTP output heads are input/output
+        # layers — keep them on AdamW per Muon's design (Muon is for hidden
+        # 2D weight matrices only).
+        is_io = ("tok_emb" in name) or ("lm_head" in name) or ("mtp_heads" in name)
         if p.ndim == 2 and not is_io:
             muon_params.append(p)
         else:

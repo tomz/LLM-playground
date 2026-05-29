@@ -26,6 +26,15 @@ class GPTConfig:
     tie_embeddings: bool = True  # share tok_emb with lm_head. The speedrun found
                                  # *untying* helps loss once you have the tokens
                                  # to support the extra params; set False to A/B.
+    # --- Multi-Token Prediction (DeepSeek-V3 style, simplified) ---
+    mtp_tokens: int = 0          # number of *extra* future tokens to predict
+                                 # (0 = off). Each adds one auxiliary head that
+                                 # predicts token n+2, n+3, ... from the same
+                                 # final hidden state. Denser gradient → better
+                                 # sample efficiency. Train-only: generate()
+                                 # uses the main head only, so zero infer cost.
+    mtp_weight: float = 0.3      # λ on the averaged auxiliary loss (DeepSeek-V3
+                                 # used 0.3).
 
     @property
     def head_dim(self) -> int:
@@ -138,6 +147,14 @@ class GPT(nn.Module):
         # modded-nanogpt speedrun unties; see GPTConfig.tie_embeddings.
         if cfg.tie_embeddings:
             self.lm_head.weight = self.tok_emb.weight
+        # Multi-Token Prediction heads: one extra Linear per future offset.
+        # Head j (0-indexed) predicts token at position i+2+j from h_i. These
+        # are auxiliary — discarded at inference — so we keep them simple linear
+        # projections off the same final hidden state rather than full DeepSeek
+        # MTP modules (which add a transformer block per depth).
+        self.mtp_heads = nn.ModuleList(
+            [nn.Linear(cfg.d_model, cfg.vocab_size, bias=False) for _ in range(cfg.mtp_tokens)]
+        )
         self.apply(self._init)
         # Zero-init the residual-write projections (attn o_proj + ffn down-proj)
         # so every block starts as the identity map. muP-like; stabilises the
@@ -188,6 +205,27 @@ class GPT(nn.Module):
         if targets is None:
             return logits, None
         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+        # Multi-Token Prediction auxiliary loss. `targets[:, t]` is the token
+        # one step after x[:, t]; MTP head j predicts the token (j+2) ahead,
+        # i.e. `targets` shifted left by (j+1). We drop the trailing positions
+        # that fall off the end of the sequence. Averaged over heads, scaled by
+        # mtp_weight, and added to the main next-token loss.
+        #
+        # Train-only: gated on self.training so evaluate() (model.eval()) reports
+        # the pure next-token CE — keeps val loss comparable to a non-MTP run.
+        if self.mtp_heads and self.training:
+            T = targets.size(1)
+            aux = 0.0
+            for j, head in enumerate(self.mtp_heads):
+                shift = j + 1
+                if T - shift <= 0:
+                    continue
+                pred = head(x[:, : T - shift, :])          # predict from h_t
+                tgt = targets[:, shift:]                    # token (j+2) ahead
+                aux = aux + F.cross_entropy(
+                    pred.reshape(-1, pred.size(-1)), tgt.reshape(-1)
+                )
+            loss = loss + self.cfg.mtp_weight * (aux / len(self.mtp_heads))
         return logits, loss
 
     @torch.no_grad()

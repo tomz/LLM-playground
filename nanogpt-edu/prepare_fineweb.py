@@ -14,8 +14,10 @@ decode with tiktoken instead of a char map.
 GPT-2 BPE vocab is 50257 < 65536, so uint16 still fits.
 
 Usage:
-    python prepare_fineweb.py                 # ~100M tokens (default)
+    python prepare_fineweb.py                 # ~100M FineWeb-Edu tokens
     python prepare_fineweb.py --tokens 300_000_000
+    python prepare_fineweb.py --dataset dclm  # DataComp-LM baseline (~10% better
+                                              # on MMLU at matched compute)
     python prepare_fineweb.py --out-dir data_fineweb
 
 Then point a config's data_dir at the chosen --out-dir and train.
@@ -30,12 +32,25 @@ def main():
     ap.add_argument("--tokens", type=int, default=100_000_000,
                     help="approx number of training tokens to collect")
     ap.add_argument("--out-dir", default=os.path.join(os.path.dirname(__file__), "data_fineweb"))
-    ap.add_argument("--dataset", default="HuggingFaceFW/fineweb-edu")
-    ap.add_argument("--name", default="sample-10BT",
-                    help="HF dataset config/subset name (a small sample by default)")
+    ap.add_argument("--dataset", default="fineweb-edu",
+                    help="'fineweb-edu' (default), 'dclm' (DataComp-LM baseline, "
+                         "~10%% better on MMLU at matched compute), or any HF "
+                         "dataset id with a 'text' column")
+    ap.add_argument("--name", default=None,
+                    help="HF dataset config/subset name; defaults to a small "
+                         "sample for the known aliases")
     ap.add_argument("--val-frac", type=float, default=0.005,
                     help="fraction of collected tokens held out for validation")
     args = ap.parse_args()
+
+    # Friendly aliases for the two recommended public sets. Both stream and
+    # expose a 'text' column, so the rest of the pipeline is identical.
+    ALIASES = {
+        "fineweb-edu": ("HuggingFaceFW/fineweb-edu", "sample-10BT"),
+        "dclm": ("mlfoundations/dclm-baseline-1.0", None),
+    }
+    dataset_id, default_name = ALIASES.get(args.dataset, (args.dataset, None))
+    name = args.name if args.name is not None else default_name
 
     import tiktoken
     from datasets import load_dataset
@@ -45,7 +60,7 @@ def main():
     eot = enc.eot_token  # 50256; separates documents
 
     # Stream so we never materialize the whole sample on disk/RAM.
-    ds = load_dataset(args.dataset, name=args.name, split="train", streaming=True)
+    ds = load_dataset(dataset_id, name=name, split="train", streaming=True)
 
     buf = np.empty(args.tokens + 1_000_000, dtype=np.uint16)
     n = 0

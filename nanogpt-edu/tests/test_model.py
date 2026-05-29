@@ -90,3 +90,45 @@ def test_newton_schulz_orthogonalizes():
     # O O^T should be close to identity on the smaller dimension
     s = torch.linalg.svdvals(O)
     assert (s.max() < 1.4) and (s.min() > 0.6)
+
+
+def test_mtp_adds_heads_and_train_loss_differs_from_eval():
+    """MTP creates auxiliary heads; the aux loss is train-only so eval (model
+    in .eval()) reports a *smaller* loss than train mode on the same batch."""
+    torch.manual_seed(0)
+    cfg = GPTConfig(vocab_size=30, block_size=16, n_layer=2, n_head=4, n_kv_head=2,
+                    d_model=64, d_ffn=128, mtp_tokens=2, mtp_weight=0.3)
+    m = GPT(cfg)
+    assert len(m.mtp_heads) == 2
+    x = torch.randint(0, 30, (2, 16)); y = torch.randint(0, 30, (2, 16))
+    m.train()
+    _, train_loss = m(x, y)
+    m.eval()
+    _, eval_loss = m(x, y)
+    # eval loss is pure next-token CE; train loss adds the positive aux term.
+    assert train_loss.item() > eval_loss.item()
+
+
+def test_mtp_off_by_default():
+    cfg = GPTConfig(vocab_size=30, block_size=16, n_layer=2, n_head=4, n_kv_head=2,
+                    d_model=64, d_ffn=128)
+    m = GPT(cfg)
+    assert len(m.mtp_heads) == 0
+    x = torch.randint(0, 30, (2, 16))
+    m.train(); _, l_train = m(x, x)
+    m.eval();  _, l_eval = m(x, x)
+    # with no MTP, train and eval losses match exactly (no dropout here)
+    assert abs(l_train.item() - l_eval.item()) < 1e-5
+
+
+def test_mtp_heads_routed_to_adamw_not_muon():
+    from muon import split_muon_params
+    cfg = GPTConfig(vocab_size=30, block_size=16, n_layer=2, n_head=4, n_kv_head=2,
+                    d_model=64, d_ffn=128, mtp_tokens=2, tie_embeddings=False)
+    m = GPT(cfg)
+    mp, ap = split_muon_params(m)
+    n_mtp_in_muon = sum(
+        1 for name, p in m.named_parameters()
+        if "mtp_heads" in name and any(p is q for q in mp)
+    )
+    assert n_mtp_in_muon == 0

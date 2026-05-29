@@ -25,6 +25,9 @@ def main():
         qk_norm=cfg.get("qk_norm", False),
         zero_init_proj=cfg.get("zero_init_proj", False),
         tie_embeddings=cfg.get("tie_embeddings", True),
+        # carry mtp_tokens so the auxiliary heads exist for state_dict load;
+        # they're unused at inference (generate() reads only the main head).
+        mtp_tokens=cfg.get("mtp_tokens", 0),
     )
     model = GPT(mcfg).to(device).eval()
     # tolerate torch.compile-wrapped state dicts

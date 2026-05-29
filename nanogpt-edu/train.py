@@ -111,6 +111,8 @@ def main():
         qk_norm=cfg.get("qk_norm", False),
         zero_init_proj=cfg.get("zero_init_proj", False),
         tie_embeddings=cfg.get("tie_embeddings", True),
+        mtp_tokens=cfg.get("mtp_tokens", 0),
+        mtp_weight=cfg.get("mtp_weight", 0.3),
     )
     model = GPT(mcfg).to(device)
     print(f"model: {model.num_params(non_embedding=False)/1e6:.2f}M params "
