@@ -450,7 +450,7 @@ To model new hardware:
 - **No parallelism in the simulator itself.** Phases are strictly serial. In reality data prep and tokenizer training overlap with cluster bring-up. Adding overlap would change wall-clock by <10% and isn't worth the modeling complexity.
 - **No memory model.** We assume the user has chosen a parallelism plan that fits; we don't simulate OOM.
 - **Eval predictors are regressions, not derivations.** They will mis-predict outliers (a model with a great math curriculum will beat the GSM8K curve; a poorly-tuned model will miss the MMLU curve). They are useful for *relative* comparisons.
-- **No reasoning RL phase.** The 2024–2025 RL-on-verifier-reward paradigm (o1, R1) is not modeled. Add it as a `simulate_reasoning_rl` phase.
+- **No reasoning RL phase.** The 2024–2025 RL-on-verifier-reward paradigm (o1, R1) is not modeled *in the simulator*. A toy GRPO loop now exists in `platform/rl/` (see `docs/15-reasoning-rl-rlvr.md`); add a `simulate_reasoning_rl` phase to price its compute.
 - **No multimodality.** Vision/audio encoders, tokenization of pixels/audio, and joint pretraining costs are not in scope.
 
 These are good follow-ups if you want to extend the system.

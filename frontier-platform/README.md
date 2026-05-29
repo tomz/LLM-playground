@@ -40,6 +40,7 @@ frontier-platform/
 │   ├── model/            # transformer, attention variants, MoE
 │   ├── training/         # pretraining loop, optimizer, parallelism
 │   ├── alignment/        # SFT, reward model, PPO, DPO
+│   ├── rl/               # RLVR: verifiers + group rollout + GRPO (reasoning post-train)
 │   ├── eval/             # benchmark harness
 │   ├── safety/           # classifiers + red-team harness
 │   ├── serving/          # inference server, KV-cache, batching
@@ -55,6 +56,9 @@ frontier-platform/
 2. `docs/12-cost-and-scaling-laws.md` — what you are signing up for
 3. `docs/01-data-pipeline.md` through `docs/11-infrastructure.md` in order
 4. `platform/*/README.md` for each subsystem
+5. `docs/14-gap-analysis-vs-frontier.md` — honest gaps vs 2025–2026 flagships
+   (GPT-5.x / Opus 4.x / Gemini 3.x), then `15-reasoning-rl-rlvr.md` and
+   `16-multimodality.md` for the two capability-defining gaps
 
 ## Status
 
@@ -65,6 +69,7 @@ frontier-platform/
 | Model            | ✅        | ✅            | smoke |
 | Pretraining      | ✅        | ✅            | smoke |
 | Alignment        | ✅        | ✅            | smoke |
+| RLVR / reasoning | ✅        | ✅ (toy)      | smoke |
 | Evaluation       | ✅        | ✅            | smoke |
 | Safety           | ✅        | ✅            | —     |
 | Serving          | ✅        | ✅            | smoke |
@@ -80,6 +85,7 @@ frontier-platform/
 - ✅ Tier 2 — **training**: AdamW (WD-by-dim), cosine+warmup LR, single-process ParallelEngine, DCP-style checkpointing, SpikeMonitor + RewindController, `Trainer.fit`.
 - ✅ Tier 2 — **serving**: in-process `TorchEngine` with streaming generate, router.
 - ✅ Tier 3 — **alignment**: SFT (assistant-token loss mask), BT reward model, DPO (sigmoid / IPO / KTO variants), PPO with GAE + KL-to-reference penalty + clipped objective + value head.
+- ✅ Tier 3 — **RLVR / reasoning** (`platform/rl/`, toy-functional): verifiable reward functions (math exact-answer, string/regex, length penalty; sandboxed code-test verifier stubbed), group rollout, and **GRPO** (value-network-free, group-relative advantages + KL-to-reference). See `docs/15-reasoning-rl-rlvr.md`.
 - ✅ End-to-end **smoke pipeline** (`bash scripts/smoke_pipeline.sh`, < 10s CPU): corpus → shards → pretrain → SFT → RM → DPO → PPO → eval → generate.
 
 Still `NotImplementedError` (intentionally — out of scope for a single-machine blueprint):
@@ -87,12 +93,14 @@ Still `NotImplementedError` (intentionally — out of scope for a single-machine
 - CommonCrawl / GitHub / Arxiv / Wikipedia source connectors (need real network + scrubbing).
 - FSDP2 / TP / PP backends (use `distgpt` for those).
 - vLLM / TRT-LLM / SGLang serving backends (lazy-import stubs).
+- Async RLVR rollout (vLLM/SGLang actor–learner) + sandboxed code execution — the toy GRPO loop in `platform/rl/` is synchronous and CPU-only; production hooks are stubbed. See `docs/15-reasoning-rl-rlvr.md`.
+- Multimodality (vision/audio/video) — design-only; see `docs/16-multimodality.md`.
 
 ## Running tests
 
 ```bash
 cd frontier-platform
-.venv/bin/python -m pytest -q             # 69 tests, ~4 s on CPU
+.venv/bin/python -m pytest -q             # 94 tests, ~4 s on CPU (5 CUDA-only tests skip/fail off-GPU)
 bash scripts/smoke_pipeline.sh            # full pipeline, ~6 s on CPU
 ```
 

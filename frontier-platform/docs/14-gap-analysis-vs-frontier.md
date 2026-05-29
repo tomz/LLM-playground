@@ -76,6 +76,11 @@ reward*.
 workers + GRPO/PPO-with-verifier learner); add reasoning traces to the data and
 tokenizer contract; make "thinking mode" a first-class model + serving feature.
 
+> **Update:** a *toy-functional* `platform/rl/` now exists (verifiers + group
+> rollout + GRPO; see `docs/15-reasoning-rl-rlvr.md`). It proves the loop on
+> CPU but the production gap — async vLLM/SGLang rollout, sandboxed code
+> verifiers, reasoning-data curation — is still open.
+
 ---
 
 ## 2. Default architecture is dense; the frontier is sparse MoE 🟥 ($ + R)
