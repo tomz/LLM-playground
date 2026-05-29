@@ -30,7 +30,10 @@ frontier-platform/
 │   ├── 10-serving-inference.md
 │   ├── 11-infrastructure.md
 │   ├── 12-cost-and-scaling-laws.md
-│   └── 13-simulation.md     # ← discrete-event simulator (NEW)
+│   ├── 13-simulation.md     # ← discrete-event simulator
+│   ├── 14-gap-analysis-vs-frontier.md  # ← where this blueprint trails GPT-5.x/Opus 4.x/Gemini 3.x
+│   ├── 15-reasoning-rl-rlvr.md          # ← RLVR/GRPO design stub (gap #1)
+│   └── 16-multimodality.md              # ← multimodal design stub (gap #2)
 ├── platform/             # Skeleton Python packages
 │   ├── data/             # ingestion, dedup, filter, mix, shard
 │   ├── tokenizer/        # BPE training + serving
