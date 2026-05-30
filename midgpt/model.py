@@ -18,11 +18,28 @@ class GPTConfig:
     dropout: float = 0.0
     bias: bool = False
     tie_embeddings: bool = True
+    # Opt-in modded-nanogpt stabilizer (default-off for GPT-2 parity): per-head
+    # RMSNorm on Q and K before attention. Keeps attention-logit scale bounded so
+    # you can train at higher LR without loss spikes. Adds 2 tiny norms per block.
+    qk_norm: bool = False
 
     @property
     def head_dim(self) -> int:
         assert self.d_model % self.n_head == 0
         return self.d_model // self.n_head
+
+
+class RMSNorm(nn.Module):
+    """Minimal RMSNorm (fp32 reduction) — only used for optional QK-norm."""
+
+    def __init__(self, dim: int, eps: float = 1e-5):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x):
+        n = x.float() * torch.rsqrt(x.float().pow(2).mean(-1, keepdim=True) + self.eps)
+        return n.type_as(x) * self.weight
 
 
 class CausalSelfAttention(nn.Module):
@@ -32,6 +49,8 @@ class CausalSelfAttention(nn.Module):
         self.qkv = nn.Linear(cfg.d_model, 3 * cfg.d_model, bias=cfg.bias)
         self.proj = nn.Linear(cfg.d_model, cfg.d_model, bias=cfg.bias)
         self.dropout = cfg.dropout
+        self.q_norm = RMSNorm(cfg.head_dim) if cfg.qk_norm else None
+        self.k_norm = RMSNorm(cfg.head_dim) if cfg.qk_norm else None
 
     def forward(self, x):
         B, T, C = x.shape
@@ -40,6 +59,9 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, H, D).transpose(1, 2)
         k = k.view(B, T, H, D).transpose(1, 2)
         v = v.view(B, T, H, D).transpose(1, 2)
+        if self.q_norm is not None:
+            q = self.q_norm(q)
+            k = self.k_norm(k)
         # SDPA chooses Flash / mem-efficient automatically
         y = F.scaled_dot_product_attention(
             q, k, v, dropout_p=self.dropout if self.training else 0.0, is_causal=True

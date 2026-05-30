@@ -22,6 +22,21 @@ def test_grad_checkpoint_runs():
     assert any(p.grad is not None for p in m.parameters())
 
 
+def test_qk_norm_opt_in():
+    # Default off (GPT-2 parity), on when requested.
+    base = GPT(GPTConfig(vocab_size=64, block_size=32, n_layer=1, n_head=2, d_model=32, d_ffn=64))
+    assert base.blocks[0].attn.q_norm is None
+    cfg = GPTConfig(vocab_size=64, block_size=32, n_layer=2, n_head=2, d_model=32, d_ffn=64, qk_norm=True)
+    m = GPT(cfg).train()
+    assert m.blocks[0].attn.q_norm is not None
+    assert m.blocks[0].attn.k_norm is not None
+    x = torch.randint(0, 64, (2, 32))
+    _, loss = m(x, x)
+    loss.backward()
+    assert torch.isfinite(loss)
+    assert any(p.grad is not None for p in m.parameters())
+
+
 def test_cosine_lr():
     assert cosine_lr(0, 100, 1000, 1.0, 0.1) > 0
     assert math.isclose(cosine_lr(100, 100, 1000, 1.0, 0.1), 1.0, abs_tol=1e-9)
