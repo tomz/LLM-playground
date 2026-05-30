@@ -180,9 +180,16 @@ def autotune_batch(cfg: ModelConfig, seq_len: int, device, candidates) -> int:
 
 
 def start_nvsmi(log_path: Path) -> subprocess.Popen:
+    # Sample the *exact* GPU we run on. The script runs under
+    # CUDA_VISIBLE_DEVICES=<uuid>, but nvidia-smi's `-i` takes physical indices
+    # or a UUID; a hardcoded physical index would sample the wrong card after a
+    # GPU/driver change. Pass the pinned UUID when available, else physical 0.
+    import os
+    cvd = os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",")[0].strip()
+    target = cvd if cvd.startswith("GPU-") else "0"
     f = open(log_path, "w")
     p = subprocess.Popen(
-        ["nvidia-smi", "-i", "1",
+        ["nvidia-smi", "-i", target,
          "--query-gpu=timestamp,utilization.gpu,memory.used,power.draw",
          "--format=csv,noheader,nounits", "-lms", "500"],
         stdout=f, stderr=subprocess.DEVNULL,
