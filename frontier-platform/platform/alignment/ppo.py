@@ -1,7 +1,10 @@
 """PPO with KL-to-reference penalty. The classical RLHF setup.
 
-Toy implementation: greedy/sampled rollouts via re-encoding (no KV cache);
-GAE over per-token KL-shaped rewards; clipped PPO objective.
+Full PPO: clipped policy objective, a value head with GAE(λ) over per-token
+KL-shaped rewards, an entropy bonus, and target-KL early stopping. The rollout
+re-encodes the prefix each decode step (no KV cache) — algorithmically correct
+but O(T²); production swaps in the serving Engine's incremental-cache decode for
+throughput. The advantage/return math is unchanged at scale.
 """
 from __future__ import annotations
 from dataclasses import dataclass

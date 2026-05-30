@@ -200,6 +200,44 @@ def test_dpo_variant_ipo_runs(tmp_path):
     assert torch.isfinite(L)
 
 
+def test_dpo_kto_uses_kl_reference_point():
+    """Faithful KTO: loss falls when chosen log-ratio rises above the batch KL
+    reference point and rejected falls below it."""
+    # policy strongly prefers chosen over ref, disprefers rejected -> low loss.
+    good = dpo_loss(
+        policy_logps_chosen=torch.tensor([2.0, 2.0]),
+        policy_logps_rejected=torch.tensor([-2.0, -2.0]),
+        ref_logps_chosen=torch.tensor([0.0, 0.0]),
+        ref_logps_rejected=torch.tensor([0.0, 0.0]),
+        beta=0.5, variant="kto",
+    )
+    # reversed: policy disprefers chosen, prefers rejected -> high loss.
+    bad = dpo_loss(
+        policy_logps_chosen=torch.tensor([-2.0, -2.0]),
+        policy_logps_rejected=torch.tensor([2.0, 2.0]),
+        ref_logps_chosen=torch.tensor([0.0, 0.0]),
+        ref_logps_rejected=torch.tensor([0.0, 0.0]),
+        beta=0.5, variant="kto",
+    )
+    assert torch.isfinite(good) and torch.isfinite(bad)
+    assert good < bad
+
+
+def test_dpo_label_smoothing_is_symmetric_floor():
+    """cDPO label smoothing keeps the loss finite and raises it for a confident
+    correct prediction (it hedges against flipped labels)."""
+    args = dict(
+        policy_logps_chosen=torch.tensor([3.0]),
+        policy_logps_rejected=torch.tensor([-3.0]),
+        ref_logps_chosen=torch.tensor([0.0]),
+        ref_logps_rejected=torch.tensor([0.0]),
+        beta=0.5, variant="sigmoid",
+    )
+    sharp = dpo_loss(**args, label_smoothing=0.0)
+    smoothed = dpo_loss(**args, label_smoothing=0.2)
+    assert smoothed > sharp  # hedged loss is higher on a confident-correct pair
+
+
 # ---------- PPO ----------
 
 def _make_policy_and_rm(tmp_path):
