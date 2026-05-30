@@ -39,9 +39,11 @@
   **Multi-head Latent Attention** (long-context + serving), **MoE** (≥3B
   active-equivalent), **3D/5D parallelism + overlapped comms** (multi-node).
 - **2025 post-training SOTA is reasoning-first:** DeepSeek-R1/Qwen3 made
-  RL-on-verifiable-rewards (RLVR) + GRPO-style online RL a first-class path,
-  while DPO/ORPO remain the cheap preference-alignment baseline for 0.5B–7B
-  `coder-finetune`.
+  RL-on-verifiable-rewards (RLVR) + GRPO-style online RL a first-class path. Now
+  shipped: GRPO/RLVR with unit-test rewards in `coder-finetune`, and a full RLVR
+  stack (real GRPO objective, sandboxed + symbolic verifiers, async
+  actor-learner rollout) in `frontier-platform`. DPO/ORPO remain the cheap
+  preference-alignment baseline still to land for 0.5B–7B `coder-finetune`.
 - **Serving is now part of the model recipe, not an afterthought:** PagedAttention
   / vLLM, prefix caching, speculative decoding (MTP/EAGLE), SGLang structured
   execution, and disaggregated prefill/decode should be tracked alongside
@@ -82,8 +84,8 @@ amplifies the "rare directions" a near-low-rank momentum buffer drowns out.
   MTP heads, all 1-D params.
 - **Min HW:** any (per-parameter, FSDP-safe). **Ideal:** the distributed Muon
   variant amortizes the NS overhead across ranks on multi-node.
-- **Source:** [1], [2]  ·  **Harvest:** shipped → `nanogpt-edu`. **Roadmap:**
-  port to `midgpt` + `distgpt`.
+- **Source:** [1], [2]  ·  **Harvest:** shipped → `nanogpt-edu`; ported →
+  `frontier-platform` (`45edfea`). **Roadmap:** port to `midgpt` + `distgpt`.
 
 ### 2. Multi-Token Prediction (MTP) — **shipped (nanogpt-edu)**
 
@@ -99,7 +101,8 @@ Auxiliary heads predict tokens *n+2/n+3* alongside *n+1*; loss = CE_next +
   the ideal-scale upgrade.
 - **Design notes (ours):** aux loss is train-only (eval/val stays comparable);
   `generate()` uses only the main head; MTP heads routed to AdamW.
-- **Source:** [3]  ·  **Harvest:** shipped → `nanogpt-edu`. **Roadmap:**
+- **Source:** [3]  ·  **Harvest:** shipped → `nanogpt-edu`; ported →
+  `frontier-platform` (`45edfea`). **Roadmap:**
   full-module MTP + speculative decode in `midgpt`/serving.
 
 ### 3. Liger Kernel (fused Triton kernels) — **shipped (coder-finetune)**
@@ -126,7 +129,9 @@ Fused RMSNorm/RoPE/SwiGLU + `FusedLinearCrossEntropy`, one-line patch.
 The cheap, legible slice of the modded-nanogpt architecture set: per-head
 RMSNorm on Q/K (stabilizes higher LR), zero-init residual-write matrices
 (identity-init blocks, muP-like), untied embed/head (helps loss once tokens
-support it). **Source:** [1]  ·  **Harvest:** shipped → `nanogpt-edu`.
+support it). **Source:** [1]  ·  **Harvest:** shipped → `nanogpt-edu`; QK-norm +
+zero-init-proj ported (config-gated, default-off) → `distgpt` (`108f5a9`),
+`midgpt` (`766a1ba`), `frontier-platform` (`e3ffeea`).
 
 ### 6. Data scaling: FineWeb-Edu / DCLM + over-train past Chinchilla — **shipped (prep)**
 
@@ -147,7 +152,7 @@ of them*.
 `midgpt`); bf16 by default, FP16 GradScaler path for older Tensor Core gens
 (present in `nanogpt-edu`). **Source:** [1]
 
-### 8. Reasoning post-training: RLVR + GRPO, then DPO/ORPO — **planned**
+### 8. Reasoning post-training: RLVR + GRPO, then DPO/ORPO — **shipped (coder-finetune, frontier-platform)**
 
 DeepSeek-R1 reframed post-training around **reinforcement learning on
 verifiable rewards**: for math/code/STEM tasks, the reward can be computed by
@@ -167,8 +172,14 @@ into SFT without a separate reference model.
 - **Min HW:** single GPU for DPO/ORPO/QLoRA; GRPO is more generation-heavy but
   works at 0.5B–7B with Accelerate/vLLM integration. **Ideal:** multi-GPU async
   generation + training for frontier RLVR.
-- **Source:** [14], [15], [16], [17], [18]  ·  **Harvest:** planned →
-  `coder-finetune`; design-only → `frontier-platform`.
+- **Source:** [14], [15], [16], [17], [18]  ·  **Harvest:** shipped →
+  `coder-finetune` (GRPO/RLVR with verifiable unit-test rewards, `ab82617`);
+  shipped → `frontier-platform` (real GRPO objective with per-token clipped IS
+  ratio + k3 KL `f76cce0`, sandboxed code verifier `9abf163`, symbolic-math
+  verifier `680de83`, async actor-learner rollout engine `e3295ab`,
+  reasoning-SFT cold-start + composite reward shaping `374274d`). **Roadmap:**
+  add the cheap **DPO/ORPO** preference baseline to `coder-finetune` (GRPO
+  landed first; the offline preference path is still open).
 
 ### 9. Serving-aware training: vLLM/SGLang + prefix/speculative paths — **planned**
 
@@ -200,11 +211,11 @@ blocked by any one machine.
 
 | Technique | What it does | Win | Gate (scale / arch) | Source | Harvest | Project(s) |
 |-----------|--------------|-----|---------------------|--------|---------|-----------|
-| **FP8 / NVFP4 training** (torchao / TransformerEngine) | 8-/4-bit matmul w/ per-tensor scaling | ~1.5–1.6× throughput, ~2× memory; validated at 12B/10T tokens | Hopper/Blackwell Tensor Cores; pays off >1B | [10] | **ideal** | midgpt, distgpt, frontier |
+| **FP8 / NVFP4 training** (torchao / TransformerEngine) | 8-/4-bit matmul w/ per-tensor scaling | ~1.5–1.6× throughput, ~2× memory; validated at 12B/10T tokens | Hopper/Blackwell Tensor Cores; pays off >1B | [10] | **partial** (frontier precision policy `b4788a5`) | midgpt, distgpt, frontier |
 | **FlashAttention-3** | Hopper-optimized attention kernel | ~1.5× over SDPA on H100; warp-specialized + FP8 | Hopper+; long sequences | [11] | **ideal** | midgpt, distgpt |
 | **FlexAttention** | `torch.compile` lowers custom masks/biases to fused attention kernels | FlashAttention-like speed with custom masks; sparse masks can be faster than dense attention | PyTorch 2.5+; long context, packed docs, custom masks | [24] | **planned** | nanogpt-edu, midgpt |
-| **Multi-head Latent Attention (MLA)** | Low-rank KV compression | 5–10× smaller KV cache at near-equal quality | long-context training + any serving | [3] | **planned** | distgpt, serving |
-| **Mixture-of-Experts** (fine-grained + shared expert) | Sparse FFN, more params at ~constant FLOPs | large quality/$ win | ≥3B active-equiv; needs expert parallelism | [3] | **ideal** | distgpt, frontier |
+| **Multi-head Latent Attention (MLA)** | Low-rank KV compression | 5–10× smaller KV cache at near-equal quality | long-context training + any serving | [3] | **shipped** (frontier `ae66f1c`; incremental KV-cache decode for GQA+MLA `58f857a`) | distgpt, serving, frontier |
+| **Mixture-of-Experts** (fine-grained + shared expert) | Sparse FFN, more params at ~constant FLOPs | large quality/$ win | ≥3B active-equiv; needs expert parallelism | [3] | **shipped** (frontier recipe `1be0e7a`, aux-loss-free balancing) | distgpt, frontier |
 | **3D/5D parallelism + comms overlap** | FSDP2 + TP + PP + EP + SP, overlapped collectives | near-linear scaling to 1000s of GPUs | multi-node + fast interconnect | [12] | **partial** | distgpt, frontier |
 | **Unsloth fast-path** | Custom autograd kernels for LoRA/QLoRA | ~2× faster, ~70% less memory | single-GPU PEFT | [13] | **shipped** | coder-finetune |
 | **Spectrum / targeted full-FT** | Full-FT high-SNR layers, freeze rest | beats LoRA at similar memory | mid-size SFT | — | **planned** | coder-finetune |
@@ -235,10 +246,10 @@ Everything is on a roadmap, sized by hardware tier — nothing is "blocked."
 | Project | Next harvest | Tier | Notes |
 |---------|--------------|------|-------|
 | nanogpt-edu | full-module MTP; FlexAttention long-context; serving benchmark for MTP draft heads | minimal→ideal | keep the core legible; advanced bits opt-in |
-| midgpt | Muon; Liger; FP8 matmul; FA-3; vLLM export path | minimal→ideal | FP8/FA-3 light up on 8× H100; serving benchmark closes the train→serve loop |
-| distgpt | Muon (distributed); FP8; MoE + expert parallelism; MLA | ideal | the 3D-parallel showcase; validate at multi-node |
-| coder-finetune | Spectrum; DPO/ORPO; verifier-backed GRPO for code/math; full-FT 7B | minimal→ideal | start with HumanEval+/unit-test rewards before subjective preference RL |
-| frontier-platform | FP8/NVFP4 economics; MoE $/quality; RLVR pipeline; vLLM/SGLang serving models | ideal | update cost/throughput models with FP8 + MoE + prefill/decode economics |
+| midgpt | Muon; Liger; FP8 matmul; FA-3; vLLM export path | minimal→ideal | QK-norm landed (`766a1ba`); FP8/FA-3 light up on 8× H100; serving benchmark closes the train→serve loop |
+| distgpt | Muon (distributed); FP8; MoE + expert parallelism; MLA | ideal | QK-norm + zero-init landed (`108f5a9`); the 3D-parallel showcase; validate at multi-node |
+| coder-finetune | DPO/ORPO baseline; Spectrum; full-FT 7B | minimal→ideal | GRPO/RLVR shipped (`ab82617`); the cheap offline preference path (DPO/ORPO) is the next harvest |
+| frontier-platform | wire RLVR/MLA/MoE/FP8 into $/throughput economics; vLLM/SGLang serving models | ideal | RLVR, MLA, MoE, Muon+MTP, precision policy all implemented; remaining work is the cost/throughput economics + serving models |
 
 ---
 
@@ -251,9 +262,30 @@ Config-gated, default-off, full test coverage:
   (`tiny_muon.py`, `tiny_mtp.py`, `small_fineweb.py`), multi-optimizer loop with
   shared cosine schedule + backward-compatible checkpoints. Tests 9 → 12.
 - **`coder-finetune`:** Liger Kernel, NEFTune, DoRA, rsLoRA, Unsloth fast-path;
-  `lora_5060ti.yaml` ships with the safe set enabled. Tests: 4.
+  `lora_5060ti.yaml` ships with the safe set enabled. Tests: 4. Plus
+  **GRPO/RLVR post-training** with verifiable unit-test rewards (`ab82617`).
+- **`midgpt`:** opt-in QK-norm knob (modded-nanogpt stabilizer, default-off for
+  GPT-2 parity) (`766a1ba`).
+- **`distgpt`:** ported QK-norm + zero-init-proj stability knobs (config-gated,
+  default-off) (`108f5a9`).
+- **`frontier-platform`:** large buildout toward the frontier program — Muon +
+  MTP port (`45edfea`), QK-norm stabilizer (`e3ffeea`), **MLA** + serving
+  KV-compression pricing (`ae66f1c`) with incremental GQA+MLA KV-cache decode
+  (`58f857a`), **MoE** recipe (fine-grained + shared experts, aux-loss-free
+  balancing) (`1be0e7a`), real **GRPO/RLVR** (per-token clipped IS ratio + k3 KL
+  `f76cce0`, sandboxed code verifier `9abf163`, symbolic-math verifier
+  `680de83`, async actor-learner rollout `e3295ab`, reasoning-SFT cold-start +
+  composite reward `374274d`), bf16/fp8/nvfp4-ready precision policy
+  (`b4788a5`), agentic tool-use RL + 2026 eval suite (`f1e6d23`), and a
+  pretrained SigLIP/ViT vision tower (`2af2cde`).
 
-Both repos: ruff-clean, end-to-end train/resume/sample smoke-verified.
+Both core repos: ruff-clean, end-to-end train/resume/sample smoke-verified.
+
+> **Hardware note.** Benchmarks and the examples runbook migrated from the
+> Pascal **P100** to the **RTX 5060 Ti** (`75a4621` device-agnostic benchmark,
+> `9ed3d4b` post-reboot runbook + ordered runner + nvsmi UUID fix). This retires
+> the deferred "Pascal P100 FP16 GradScaler gap" carried over from the
+> superseded `distgpt/docs/sota_review.md` watchlist.
 
 ---
 

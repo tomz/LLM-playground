@@ -11,3 +11,8 @@
 > the Pascal P100 FP16 GradScaler gap, per-trainer line references) live in the
 > consolidated edition's **Watchlist / deferred** table with explicit unblocking
 > conditions. Update the dated edition, not this file.
+>
+> **Update (2026-05):** the Pascal **P100 FP16 GradScaler** watchlist item is
+> retired — benchmarks/runbook migrated to the **RTX 5060 Ti** (commits
+> `75a4621`, `9ed3d4b`). See the consolidated edition's *What shipped this month*
+> hardware note.
