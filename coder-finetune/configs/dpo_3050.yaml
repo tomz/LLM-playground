@@ -1,0 +1,59 @@
+# DPO offline preference optimization: Qwen2.5-Coder-0.5B, RTX 3050.
+#
+# The cheap, stable rung between SFT and online RL. Instead of sampling and
+# running code every step (GRPO), DPO takes a fixed dataset of preference pairs
+# (prompt, chosen, rejected) and raises the policy's log-prob margin of chosen
+# over rejected, measured against a frozen reference. With a LoRA adapter the
+# reference is just the base model with adapters disabled — no second model copy.
+#
+# Run:  python -m cf_pref.dpo_train --config configs/dpo_3050.yaml
+# Eval: python eval/run_humaneval.py --model out/dpo_3050/final
+#
+# Ladder:  SFT (train.py)  ->  DPO (here)  ->  GRPO/RLVR (cf_rl.grpo_train)
+out_dir: out/dpo_3050
+seed: 1337
+
+model:
+  name: Qwen/Qwen2.5-Coder-0.5B
+  dtype: bfloat16
+  attn_impl: sdpa
+  trust_remote_code: false
+
+method: lora
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  bias: none
+  target_modules: ['q_proj', 'k_proj', 'v_proj', 'o_proj',
+                   'gate_proj', 'up_proj', 'down_proj']
+  use_rslora: true     # free; rank-stabilized scaling
+
+# Preference pairs: each row is {prompt, chosen, rejected} — NO reward model.
+# 'builtin' (8 tasks × repeat) needs no download; 'hf' pulls a real pref set.
+dataset:
+  source: builtin          # 'builtin' | 'hf'
+  repeat: 50               # builtin pairs repeated -> 400 examples
+  format: text             # 'text' (fenced blocks) | 'chatml' (message lists)
+  max_examples: null
+  # hf_name: HuggingFaceH4/ultrafeedback_binarized
+
+train:
+  batch_size: 2
+  grad_accum: 8
+  epochs: 1
+  lr: 5.0e-6             # DPO LRs are low; ~5e-6 is a safe default for 0.5B LoRA
+  warmup_ratio: 0.1
+  weight_decay: 0.0
+  grad_clip: 1.0
+  log_every: 5
+  save_every: 100
+  max_seq_len: 1024
+  gradient_checkpointing: true
+
+pref:
+  objective: dpo           # 'dpo' (default, available everywhere) | 'orpo' (needs trl<0.12)
+  beta: 0.1                # KL-to-reference strength (DPO) / odds-ratio weight (ORPO)
+  loss_type: sigmoid       # DPO loss family: sigmoid (original) | ipo | hinge | ...
+  max_prompt_length: 512

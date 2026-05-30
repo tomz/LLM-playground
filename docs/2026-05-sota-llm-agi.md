@@ -40,10 +40,10 @@
   active-equivalent), **3D/5D parallelism + overlapped comms** (multi-node).
 - **2025 post-training SOTA is reasoning-first:** DeepSeek-R1/Qwen3 made
   RL-on-verifiable-rewards (RLVR) + GRPO-style online RL a first-class path. Now
-  shipped: GRPO/RLVR with unit-test rewards in `coder-finetune`, and a full RLVR
-  stack (real GRPO objective, sandboxed + symbolic verifiers, async
-  actor-learner rollout) in `frontier-platform`. DPO/ORPO remain the cheap
-  preference-alignment baseline still to land for 0.5B–7B `coder-finetune`.
+  shipped: the full SFT → DPO → GRPO ladder in `coder-finetune` (DPO offline
+  preference path + GRPO/RLVR with unit-test rewards), and a full RLVR stack
+  (real GRPO objective, sandboxed + symbolic verifiers, async actor-learner
+  rollout) in `frontier-platform`.
 - **Serving is now part of the model recipe, not an afterthought:** PagedAttention
   / vLLM, prefix caching, speculative decoding (MTP/EAGLE), SGLang structured
   execution, and disaggregated prefill/decode should be tracked alongside
@@ -179,9 +179,10 @@ into SFT without a separate reference model.
   shipped → `frontier-platform` (real GRPO objective with per-token clipped IS
   ratio + k3 KL `f76cce0`, sandboxed code verifier `9abf163`, symbolic-math
   verifier `680de83`, async actor-learner rollout engine `e3295ab`,
-  reasoning-SFT cold-start + composite reward shaping `374274d`). **Roadmap:**
-  add the cheap **DPO/ORPO** preference baseline to `coder-finetune` (GRPO
-  landed first; the offline preference path is still open).
+  reasoning-SFT cold-start + composite reward shaping `374274d`). **DPO**
+  offline preference path shipped → `coder-finetune` (`cf_pref/dpo_train.py`,
+  `configs/dpo_3050.yaml`); ORPO available behind the same entry point on
+  `trl<0.12`. The post-training ladder is now SFT → DPO → GRPO end-to-end.
 
 ### 9. Serving-aware training: vLLM/SGLang + prefix/speculative paths — **planned**
 
@@ -250,7 +251,7 @@ Everything is on a roadmap, sized by hardware tier — nothing is "blocked."
 | nanogpt-edu | full-module MTP; FlexAttention long-context; serving benchmark for MTP draft heads | minimal→ideal | keep the core legible; advanced bits opt-in |
 | midgpt | FP8 matmul; FA-3; vLLM export path | minimal→ideal | Muon + Liger fused-CE + QK-norm landed; FP8/FA-3 light up on 8× H100; serving benchmark closes the train→serve loop |
 | distgpt | Muon (distributed); FP8; MoE + expert parallelism; MLA | ideal | QK-norm + zero-init landed (`108f5a9`); the 3D-parallel showcase; validate at multi-node |
-| coder-finetune | DPO/ORPO baseline; Spectrum; full-FT 7B | minimal→ideal | GRPO/RLVR shipped (`ab82617`); the cheap offline preference path (DPO/ORPO) is the next harvest |
+| coder-finetune | Spectrum; full-FT 7B | minimal→ideal | SFT → DPO → GRPO/RLVR ladder now complete; remaining harvest is targeted full-FT (Spectrum) + full-FT of 7B |
 | frontier-platform | wire RLVR/MLA/MoE/FP8 into $/throughput economics; vLLM/SGLang serving models | ideal | RLVR, MLA, MoE, Muon+MTP, precision policy all implemented; remaining work is the cost/throughput economics + serving models |
 
 ---
@@ -264,8 +265,11 @@ Config-gated, default-off, full test coverage:
   (`tiny_muon.py`, `tiny_mtp.py`, `small_fineweb.py`), multi-optimizer loop with
   shared cosine schedule + backward-compatible checkpoints. Tests 9 → 12.
 - **`coder-finetune`:** Liger Kernel, NEFTune, DoRA, rsLoRA, Unsloth fast-path;
-  `lora_5060ti.yaml` ships with the safe set enabled. Tests: 4. Plus
-  **GRPO/RLVR post-training** with verifiable unit-test rewards (`ab82617`).
+  `lora_5060ti.yaml` ships with the safe set enabled. Plus **GRPO/RLVR**
+  post-training with verifiable unit-test rewards (`ab82617`) and the **DPO/ORPO
+  offline preference path** (`cf_pref/`, `configs/dpo_3050.yaml`) — completing
+  the SFT → DPO → GRPO ladder. Tests grow with the preference dataset +
+  config-plumbing coverage.
 - **`midgpt`:** opt-in QK-norm knob (modded-nanogpt stabilizer, default-off for
   GPT-2 parity) (`766a1ba`); **Muon optimizer** (`muon.py`, `optim.optimizer:
   muon`) with a dual Muon+AdamW loop on one shared cosine schedule and

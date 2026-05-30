@@ -10,15 +10,26 @@ Fine-tune open-weights code models on a single consumer GPU. Tiers:
 | **`configs/lora_5060ti.yaml`** | **Qwen2.5-Coder-3B** | **LoRA r=16, packed** | **15.1 GB** | **12 min on 2.5k**  |
 | `configs/lora.yaml`     | Qwen2.5-Coder-1.5B       | LoRA r=16       | ~7 GB     | ~1.5 h on 20k       |
 | `configs/qlora.yaml`    | Qwen2.5-Coder-7B         | QLoRA NF4 r=32  | ~7 GB     | ~8 h on 50k         |
+| **`configs/dpo_3050.yaml`** | **Qwen2.5-Coder-0.5B** | **DPO (LoRA), offline preference pairs** | **~4–5 GB** | **fast (no sampling)** |
 | **`configs/grpo_3050.yaml`** | **Qwen2.5-Coder-0.5B** | **GRPO / RLVR (LoRA), unit-test reward** | **~5–6 GB** | **gen-heavy**       |
 
 Uses HuggingFace `transformers` + `peft` + `trl`; no custom training loop.
 
-## Two training tracks
+## Three training tracks — the post-training ladder
+
+`SFT  →  DPO/ORPO  →  GRPO/RLVR` — cheapest and most stable first.
 
 1. **SFT (`train.py`)** — supervised fine-tune on demonstrations (full / LoRA /
    QLoRA via TRL `SFTTrainer`). Teaches format and style.
-2. **RLVR / GRPO (`cf_rl/grpo_train.py`)** — *RL against a verifiable reward*:
+2. **DPO/ORPO (`cf_pref/dpo_train.py`)** — *offline preference optimization*.
+   Takes a fixed dataset of `(prompt, chosen, rejected)` pairs and raises the
+   policy's log-prob margin of `chosen` over `rejected` — no reward model, no
+   sampling, no code execution. **DPO** (Rafailov et al.) measures the margin
+   against a frozen reference; with a LoRA adapter the reference is just the base
+   model with adapters disabled, so no second model copy is loaded. **ORPO**
+   (Hong et al.) folds the same signal into SFT with an odds-ratio penalty and is
+   reference-free. This is the cheap, stable rung you run *before* online RL.
+3. **RLVR / GRPO (`cf_rl/grpo_train.py`)** — *RL against a verifiable reward*:
    sample G completions per prompt, **run each against hidden unit tests**,
    standardize the rewards within the group, take a clipped policy step (GRPO —
    DeepSeek-R1 / DeepSeekMath). The reward is deterministic (a verifier), so it
@@ -26,10 +37,22 @@ Uses HuggingFace `transformers` + `peft` + `trl`; no custom training loop.
    plumbing as `train.py` and the HumanEval subprocess sandbox as the verifier.
 
 ```bash
-# SFT first (optional), then GRPO on top:
-.venv/bin/python -m cf_rl.grpo_train --config configs/grpo_3050.yaml
+# SFT first (optional), then DPO, then GRPO on top:
+.venv/bin/python -m cf_pref.dpo_train --config configs/dpo_3050.yaml
+.venv/bin/python -m cf_rl.grpo_train  --config configs/grpo_3050.yaml
 .venv/bin/python eval/run_humaneval.py --model out/grpo_3050/final
 ```
+
+The DPO preference set carries two candidate answers per prompt instead of one
+gold answer (`cf_pref/pairs.py`: a dependency-free `builtin` set that pairs each
+task's correct solution against a realistic near-miss bug, or any HF preference
+set in `{prompt, chosen, rejected}` form). The built-in `chosen`/`rejected`
+labels are cross-checked against the RLVR unit-test verifier in the test suite,
+so the preference signal is provably correct.
+
+> **TRL note:** TRL 1.x removed the standalone `ORPOTrainer`. `pref.objective:
+> dpo` works on every supported TRL; `orpo` raises a clear, actionable error if
+> your TRL doesn't ship it (pin `trl<0.12` for ORPO).
 
 The GRPO prompt set carries unit tests instead of gold answers
 (`cf_rl/prompts.py`: a dependency-free `builtin` set, or real `mbpp` tasks).
@@ -61,8 +84,9 @@ CUDA_VISIBLE_DEVICES=0 .venv/bin/python train.py --config configs/lora_5060ti.ya
 
 ```
 coder-finetune/
-├── configs/        # YAML per recipe (SFT + grpo_3050.yaml for RLVR)
+├── configs/        # YAML per recipe (SFT + dpo_3050.yaml + grpo_3050.yaml)
 ├── cf_data/        # SFT dataset loaders (HF datasets + your own repo + synthetic)
+├── cf_pref/        # DPO/ORPO: preference pairs + dpo_train.py
 ├── cf_rl/          # RLVR/GRPO: verifiable reward + prompt sets + grpo_train.py
 ├── train.py        # SFT / LoRA / QLoRA via TRL SFTTrainer
 ├── eval/           # HumanEval+ runner with Docker sandbox (also the RL verifier)
