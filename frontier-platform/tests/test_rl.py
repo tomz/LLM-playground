@@ -58,12 +58,14 @@ def test_length_penalty_is_nonpositive():
     assert v("p", "a b c d e") == pytest.approx(-0.2)
 
 
-def test_make_verifier_registry_and_code_stub():
+def test_make_verifier_registry_and_code_verifier():
     assert make_verifier("contains", target="ok")("p", "ok") == 1.0
-    code_v = make_verifier("code_tests", tests=["assert f(1)==1"])
+    code_v = make_verifier("code_tests", tests=["assert f(1) == 1"])
     assert isinstance(code_v, CodeUnitTestVerifier)
-    with pytest.raises(NotImplementedError):
-        code_v("p", "def f(x): return x")
+    # Correct solution passes the hidden test; wrong one fails. Runs in sandbox.
+    good = code_v("p", "def f(x):\n    return x")
+    bad = code_v("p", "def f(x):\n    return x + 1")
+    assert good == 1.0 and bad == 0.0
 
 
 # ---------- group advantages ----------

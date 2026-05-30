@@ -69,7 +69,7 @@ This is an **async actor–learner system**, not a loss function. Components
 | Module | Status | Responsibility |
 |--------|--------|----------------|
 | `rl/rollout.py` | ✅ sync sampler | group sampler (G samples/prompt) + response mask + group index. ⬜ async vLLM/SGLang engine + weight-sync |
-| `rl/verifiers.py` | ✅ math/regex/contains | pluggable reward fns; ⬜ sandboxed `code` exec (gVisor/Firecracker), formal proof checkers |
+| `rl/verifiers.py` | ✅ math/regex/contains + **sandboxed code** | pluggable reward fns; `CodeUnitTestVerifier` runs untrusted code in a subprocess sandbox (`rl/sandbox.py`, POSIX rlimits + timeout). ⬜ gVisor/Firecracker jail, formal proof checkers |
 | `rl/grpo.py` | ✅ GRPO learner | group-relative advantage, KL-to-ref, REINFORCE-style objective |
 | `rl/coldstart.py` | ✅ reasoning-SFT | small long-CoT cold-start to stabilize format before RL |
 | `rl/reward.py` | ✅ shaping | composite reward: correctness + format + length penalty + reward-hacking guards |

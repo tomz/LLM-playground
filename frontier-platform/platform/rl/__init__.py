@@ -27,6 +27,7 @@ from .reward import (
     answer_spam_guard,
 )
 from .coldstart import ColdStartConfig, ColdStartResult, run_coldstart, format_trace
+from .sandbox import SandboxLimits, SandboxResult, run_in_sandbox
 from .agentic import (
     ToolSpec,
     ToolEnv,
@@ -58,6 +59,9 @@ __all__ = [
     "ColdStartResult",
     "run_coldstart",
     "format_trace",
+    "SandboxLimits",
+    "SandboxResult",
+    "run_in_sandbox",
     "ToolSpec",
     "ToolEnv",
     "Trajectory",

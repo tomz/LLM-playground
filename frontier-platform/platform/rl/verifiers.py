@@ -95,24 +95,56 @@ class MathExactVerifier:
 # ---------- sandboxed code (intentional stub) ----------
 
 class CodeUnitTestVerifier:
-    """Run candidate code against hidden unit tests in an isolated sandbox.
+    """Run candidate code against hidden unit tests in an isolated subprocess.
 
-    Production requirement: execute untrusted model output with no network and a
-    hard CPU/mem/time budget (gVisor / Firecracker / nsjail). Reward = fraction
-    of tests passing (or 1.0/0.0 for all-or-nothing). Because this executes
-    untrusted code, it is left unimplemented here on purpose — wiring it to a
-    real sandbox is a deliberate, reviewed step.
+    Executes the model's code + the hidden tests in a separate OS process with
+    POSIX rlimits (CPU/memory/output) and a wall-clock timeout via
+    :mod:`platform.rl.sandbox`. Reward is the fraction of test groups passing
+    (or all-or-nothing when ``all_or_nothing=True``).
+
+    SECURITY: the subprocess sandbox stops runaway/OOM code and isolates crashes,
+    but is not a complete jail (no FS namespacing / syscall filter). For a public
+    deployment wrap `platform.rl.sandbox` in gVisor/Firecracker/nsjail + a network
+    namespace — the interface is unchanged. See docs/09-safety-redteam.md.
     """
 
-    def __init__(self, tests: list[str], *, timeout_s: float = 5.0):
+    def __init__(self, tests: list[str], *, timeout_s: float = 5.0,
+                 all_or_nothing: bool = True, cpu_seconds: int = 5,
+                 address_space_mb: int = 512):
         self.tests = tests
         self.timeout_s = timeout_s
+        self.all_or_nothing = all_or_nothing
+        self.cpu_seconds = cpu_seconds
+        self.address_space_mb = address_space_mb
 
     def __call__(self, prompt: str, response: str) -> float:
-        raise NotImplementedError(
-            "CodeUnitTestVerifier requires a sandboxed executor (gVisor/Firecracker). "
-            "See docs/09-safety-redteam.md (tool-use sandbox) and docs/15-reasoning-rl-rlvr.md."
+        from .sandbox import SandboxLimits, run_in_sandbox
+
+        code = _extract_code(response)
+        limits = SandboxLimits(
+            cpu_seconds=self.cpu_seconds,
+            wall_seconds=self.timeout_s,
+            address_space_mb=self.address_space_mb,
         )
+        passed = 0
+        for test in self.tests:
+            res = run_in_sandbox(code, test, limits)
+            passed += int(res.ok)
+        if not self.tests:
+            return 0.0
+        if self.all_or_nothing:
+            return 1.0 if passed == len(self.tests) else 0.0
+        return passed / len(self.tests)
+
+
+_CODE_FENCE_RE = re.compile(r"```(?:python)?\s*(.*?)```", re.DOTALL)
+
+
+def _extract_code(response: str) -> str:
+    """Pull code out of a model response: prefer the first ```python``` fence,
+    else use the whole response (models often emit bare code)."""
+    m = _CODE_FENCE_RE.search(response)
+    return (m.group(1) if m else response).strip()
 
 
 # ---------- registry ----------
