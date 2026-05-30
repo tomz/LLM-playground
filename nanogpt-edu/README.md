@@ -127,12 +127,37 @@ architecture as `tiny_clean.py`, same iters/budget, all four knobs on:
 ```bash
 python train.py --config configs/tiny_clean.py  # AdamW baseline
 python train.py --config configs/tiny_muon.py   # Muon + speedrun knobs
-python tools/plot_nanogpt.py out/{tiny_clean,tiny_muon}/train.log --compare out/muon_vs_adamw.png
+python train.py --config configs/tiny_mtp.py    # Multi-Token Prediction
+python tools/plot_nanogpt.py out/{tiny_clean,tiny_muon,tiny_mtp}/train.log \
+    --compare out/compare_harvest.png \
+    --hardware "RTX 5060 Ti bf16" --dataset "Tiny Shakespeare 1.1 MB"
 ```
 
 `configs/tiny_mtp.py` isolates Multi-Token Prediction (on the AdamW baseline)
 for a clean A/B against `tiny_clean.py`. The MTP aux loss is train-only, so the
 logged **val** loss stays directly comparable between the two runs.
+
+### Measured A/B — baseline vs Muon vs MTP (RTX 5060 Ti, bf16)
+
+All three are the same 10.65M architecture, same 1,500 iters / cosine schedule /
+seed, on the same 1 MB of TinyShakespeare. Only the harvested knob changes:
+
+| Run | Harvest knob | **Best val** | vs baseline | ms/it |
+|-----|--------------|-------------:|------------:|------:|
+| `tiny_clean` | — (AdamW baseline) | 1.4831 | — | ~95 |
+| `tiny_muon`  | Muon + QK-norm + zero-init + untied | 1.4934 | +0.010 | ~145 |
+| `tiny_mtp`   | Multi-Token Prediction (mtp_tokens=2) | **1.4613** | **−0.022** | ~88 |
+
+![baseline vs Muon vs MTP](out/compare_harvest.png)
+
+**Reading this honestly:** at this scale the **data is the bottleneck, not the
+optimizer**, so Muon does *not* win here — it lands fractionally behind AdamW
+(+0.010 val), exactly as `tiny_muon.py`'s own docstring predicts. Muon's
+~1.35× sample-efficiency shows up when tokens scale with params; see the
+FineWeb-Edu section (and `midgpt`'s 350M FineWeb run) for where it pays off.
+**MTP**, by contrast, *does* help even here (−0.022 val) — its denser gradient
+is most valuable precisely in the low-data/early-training regime these tiny runs
+live in, at zero inference cost (the heads are discarded by `generate()`).
 
 ### MTP heads as a free speculative-decoding draft (serving benchmark)
 

@@ -1,0 +1,58 @@
+# 350M GPT-2 on a 1B-token FineWeb-Edu slice — *this-month's-harvest* variant of
+# gpt2_350m_fweb_5060ti.yaml. Identical architecture / data / iters / schedule;
+# the only deltas are the two shipped midgpt features turned ON:
+#
+#   * optimizer: muon  — Newton-Schulz-orthogonalized updates on the 2D hidden
+#     weight matrices (attn qkv/proj, MLP); AdamW for embeddings, the learned
+#     pos_emb table, lm_head, and all 1-D params. muon_lr lives on a different
+#     scale than the AdamW lr (0.02 is the single-GPU starting point).
+#   * fused_ce: true   — Liger fused-linear-cross-entropy: fuses the lm_head
+#     matmul + softmax-CE and never materializes the [B*T, vocab] logits.
+#     Mathematically EXACT (same loss), so it only moves throughput/VRAM, not
+#     the curve. Needs `pip install liger-kernel` + a Triton GPU.
+#
+# Tuned for RTX 5060 Ti 16 GB (Blackwell sm_120, native bf16). Head-to-head
+# against gpt2_350m_fweb_5060ti.yaml: same wall-budget, read the val curve for
+# Muon's sample-efficiency and the fused-CE throughput/VRAM win.
+#
+out_dir: out/gpt2_350m_fweb_5060ti_muon
+dataset: fineweb-edu
+tokenizer: gpt2
+seed: 1337
+dtype: bfloat16
+compile: false
+grad_checkpoint: false
+fused_ce: true            # Liger fused-linear-CE (exact; throughput/VRAM win)
+log: {jsonl: true, wandb_project: null}
+
+model:
+  vocab_size: 50304
+  block_size: 1024
+  n_layer: 24
+  n_head: 16
+  d_model: 1024
+  d_ffn: 4096
+  dropout: 0.0
+  bias: false
+  tie_embeddings: true
+
+optim:
+  optimizer: muon         # Muon on 2D hidden weights; AdamW for the rest
+  muon_lr: 0.02           # Muon's own LR (orthogonalized-update scale)
+  muon_momentum: 0.95
+  lr: 3.0e-4              # AdamW LR for embeddings / pos_emb / lm_head / 1-D
+  min_lr: 3.0e-5
+  betas: [0.9, 0.95]
+  weight_decay: 0.1
+  grad_clip: 1.0
+  warmup_iters: 200
+  lr_decay_iters: 4000
+  max_iters: 4000
+
+train:
+  micro_batch: 4
+  grad_accum: 8
+  eval_interval: 200
+  eval_iters: 50
+  log_interval: 10
+  ckpt_interval: 500
