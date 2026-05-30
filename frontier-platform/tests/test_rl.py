@@ -257,6 +257,19 @@ def test_soft_length_penalty_ramps():
     assert soft_length_penalty(long, target_tokens=512, max_tokens=2048, coef=0.1) == pytest.approx(-0.1)
 
 
+def test_soft_length_penalty_uses_real_tokenizer():
+    from platform.rl.reward import soft_length_penalty
+    tok = BytesTokenizer()
+    text = "hello world"  # 2 whitespace words, but 11 bytes/tokens
+    # With the byte tokenizer the token count (11) exceeds a tiny target where the
+    # whitespace count (2) would not — proving real token counts are used.
+    word_based = soft_length_penalty(text, target_tokens=5, max_tokens=10, coef=1.0)
+    token_based = soft_length_penalty(text, target_tokens=5, max_tokens=10, coef=1.0,
+                                      count_tokens=tok.encode)
+    assert word_based == 0.0
+    assert token_based < 0.0
+
+
 def test_repetition_penalty_catches_loops():
     from platform.rl.reward import repetition_penalty
     varied = "the quick brown fox jumps over the lazy dog today"

@@ -42,11 +42,15 @@ def format_reward(response: str, *, reward: float = 0.2) -> float:
 
 
 def soft_length_penalty(response: str, *, target_tokens: int = 512,
-                        max_tokens: int = 2048, coef: float = 0.1) -> float:
+                        max_tokens: int = 2048, coef: float = 0.1,
+                        count_tokens=None) -> float:
     """Zero up to ``target_tokens``, then ramps linearly to ``-coef`` at
-    ``max_tokens`` (and stays at ``-coef`` beyond). Token count approximated by
-    whitespace words; pass real token counts in production."""
-    n = len(response.split())
+    ``max_tokens`` (and stays at ``-coef`` beyond).
+
+    Token count comes from ``count_tokens(response) -> int`` when provided (pass
+    ``tokenizer.encode`` for exact counts); otherwise it falls back to a
+    whitespace-word approximation."""
+    n = len(count_tokens(response)) if count_tokens is not None else len(response.split())
     if n <= target_tokens:
         return 0.0
     frac = min(1.0, (n - target_tokens) / max(1, max_tokens - target_tokens))
@@ -100,6 +104,14 @@ class CompositeReward:
 
     verifier: Verifier
     cfg: RewardConfig = field(default_factory=RewardConfig)
+    tokenizer: object | None = None   # if set, length penalty uses real token counts
+
+    @property
+    def count_tokens(self):
+        tok = self.tokenizer
+        if tok is not None and hasattr(tok, "encode"):
+            return tok.encode
+        return None
 
     def breakdown(self, prompt: str, response: str) -> dict[str, float]:
         c = self.cfg
@@ -108,6 +120,7 @@ class CompositeReward:
         length = soft_length_penalty(
             response, target_tokens=c.length_target_tokens,
             max_tokens=c.length_max_tokens, coef=c.length_coef,
+            count_tokens=self.count_tokens,
         )
         rep = repetition_penalty(response, coef=c.repetition_coef)
         spam = answer_spam_guard(
