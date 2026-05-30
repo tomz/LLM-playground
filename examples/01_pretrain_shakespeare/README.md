@@ -1,6 +1,6 @@
 # 01 — TinyShakespeare pretraining
 
-A full pretrain pipeline on a single RTX 3050, using only `frontier-platform`
+A full pretrain pipeline on a single CUDA GPU, using only `frontier-platform`
 components:
 
 - `platform.tokenizer.bpe.train()` — trains a real ByteLevel BPE (vocab 4096) via the HF `tokenizers` Rust library
@@ -38,6 +38,6 @@ Produces:
 
 ## Notes
 
-We use fp32 throughout. The 3050 has plenty of headroom for a 12 M-param model;
+We use fp32 throughout. The GPU has plenty of headroom for a 12 M-param model;
 fp16 without `GradScaler` would risk gradient underflow at this batch size.
 A fully-fledged `Trainer` upgrade for AMP would slot in here cleanly.

@@ -1,7 +1,7 @@
 """SFT -> RM -> DPO chain on synthetic Shakespeare-character QA.
 
 Uses example 01's base checkpoint (out/final.pt) and its BPE tokenizer.
-Trains everything on the RTX 3050 with platform.alignment primitives.
+Trains everything on a single CUDA GPU with platform.alignment primitives.
 """
 from __future__ import annotations
 import argparse
@@ -272,6 +272,8 @@ def main():
         raise SystemExit("CUDA required.")
     device = torch.device("cuda:0")
     torch.cuda.reset_peak_memory_stats()
+    dev_name = torch.cuda.get_device_name(0)
+    print(f"[cuda] device={dev_name}")
     t_start = time.time()
 
     rng = random.Random(0)
@@ -354,7 +356,7 @@ def main():
 
     lines = []
     lines.append("# 02 — SFT → RM → DPO alignment chain: result\n")
-    lines.append("Recorded on **RTX 3050**, built on the example 01 base checkpoint.\n")
+    lines.append(f"Recorded on **{dev_name}**, built on the example 01 base checkpoint.\n")
     lines.append("## Summary\n")
     lines.append(f"| stage | first-10 loss | last-10 loss |\n|---|--:|--:|")
     lines.append(f"| SFT (200 steps, lr=1e-4) | {sum(sft_hist[:10])/10:.3f} | {sum(sft_hist[-10:])/10:.3f} |")

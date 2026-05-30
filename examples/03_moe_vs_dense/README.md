@@ -8,7 +8,7 @@ Trains two small transformers on the example 01 Shakespeare shards with
   (~3.0 M total; per-token compute uses top-2 experts so the FFN matmul cost is comparable to the dense FFN)
 
 This is the textbook MoE setup from the Switch Transformer paper, scaled
-down to fit in 1 GiB of GPU memory and finish in ~5 min on a 3050.
+down to fit in 1 GiB of GPU memory and finish in a few minutes.
 
 ## What we measure
 

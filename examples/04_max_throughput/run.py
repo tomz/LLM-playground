@@ -1,7 +1,13 @@
-"""Max-throughput benchmark for the RTX 3050 (8 GB).
+"""Max-throughput benchmark (device-agnostic).
 
 Targets ~90% sustained GPU utilization on a ~125M-param transformer in fp16
 with selective activation checkpointing and an OOM-probed batch auto-tuner.
+
+The theoretical fp16 peak used for the MFU denominator is derived at runtime
+from the live device (SM count x CUDA-cores/SM x 2 FMA x boost clock, with a
+double-rate factor for GPUs that support packed-fp16 such as the Pascal P100),
+so the report is correct on whatever GPU it runs on. Sanity-check the printed
+[peak] line against the vendor spec sheet.
 """
 from __future__ import annotations
 import asyncio
@@ -32,7 +38,60 @@ from platform.training.parallel import ParallelConfig
 from platform.serving.engine import Engine, EngineConfig, GenRequest
 
 SHAKES_URL = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
-THEORETICAL_TFLOPS_FP16 = 9.05  # RTX 3050 fp16 dense (NVIDIA spec)
+
+# CUDA cores per SM by compute capability major.minor. Used to derive the
+# theoretical fp16 peak from the live device instead of hardcoding a per-card
+# constant. Covers the archs this box may run (Pascal..Blackwell).
+_CUDA_CORES_PER_SM = {
+    (6, 0): 64,    # Pascal GP100 (P100)
+    (6, 1): 128,   # Pascal GP10x
+    (7, 0): 64,    # Volta
+    (7, 5): 64,    # Turing
+    (8, 0): 64,    # Ampere A100
+    (8, 6): 128,   # Ampere GA10x (RTX 30xx)
+    (8, 9): 128,   # Ada (RTX 40xx)
+    (9, 0): 128,   # Hopper
+    (10, 0): 128,  # Blackwell datacenter
+    (12, 0): 128,  # Blackwell consumer (RTX 50xx, sm_120)
+}
+
+
+def _max_sm_clock_hz(device) -> tuple[float, bool]:
+    """Return (clock_hz, exact). Prefer nvidia-smi's max SM clock (torch's
+    device properties don't expose clock_rate on cu13 builds). Fall back to
+    1.5 GHz if nvidia-smi is unavailable, flagging the result as approximate.
+    """
+    idx = device.index if device.index is not None else 0
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi", "-i", str(idx),
+             "--query-gpu=clocks.max.sm", "--format=csv,noheader,nounits"],
+            stderr=subprocess.DEVNULL, timeout=10,
+        ).decode().strip().splitlines()[0]
+        return float(out) * 1e6, True  # MHz -> Hz
+    except Exception:
+        return 1.5e9, False
+
+
+def theoretical_fp16_tflops(device) -> tuple[float, str]:
+    """Derive peak dense fp16 TFLOPS from the live device.
+
+    peak = SMs x cores/SM x 2 (FMA) x boost_clock_hz, then x2 on archs with
+    double-rate packed-fp16 (Pascal P100, sm_60). Returns (tflops, note).
+    This is the non-tensor-core ("CUDA core") fp16 rate, matching how the
+    benchmark computes achieved TFLOPS via the 6*N*tokens approximation.
+    """
+    props = torch.cuda.get_device_properties(device)
+    cc = (props.major, props.minor)
+    cores_per_sm = _CUDA_CORES_PER_SM.get(cc, 64)
+    clock_hz, exact = _max_sm_clock_hz(device)
+    flops = props.multi_processor_count * cores_per_sm * 2.0 * clock_hz
+    clk_tag = f"{clock_hz/1e9:.2f}GHz" + ("" if exact else "~approx")
+    note = f"cc{cc[0]}.{cc[1]} {props.multi_processor_count}SM x {cores_per_sm} x {clk_tag}"
+    if cc == (6, 0):  # P100: packed fp16x2 on FP32 units -> 2x fp32 rate
+        flops *= 2.0
+        note += " x2(packed-fp16)"
+    return flops / 1e12, note
 
 
 def prepare_data() -> tuple[Path, Path]:
@@ -91,8 +150,8 @@ class _GpuLoader:
 def autotune_batch(cfg: ModelConfig, seq_len: int, device, candidates) -> int:
     print(f"[autotune] probing batches {candidates}")
     for B in candidates:
-        m: object = None
-        o: object = None
+        m = None
+        o = None
         try:
             torch.cuda.empty_cache(); gc.collect()
             torch.cuda.reset_peak_memory_stats()
@@ -110,13 +169,13 @@ def autotune_batch(cfg: ModelConfig, seq_len: int, device, candidates) -> int:
             torch.cuda.synchronize()
             peak = torch.cuda.max_memory_allocated() / 1024**3
             print(f"[autotune] B={B} OK, peak={peak:.2f} GiB")
-            del m, o; torch.cuda.empty_cache(); gc.collect()
             return B
         except torch.cuda.OutOfMemoryError:
             print(f"[autotune] B={B} OOM, trying smaller")
-            del m, o
-            torch.cuda.empty_cache(); gc.collect()
             continue
+        finally:
+            m = None; o = None
+            torch.cuda.empty_cache(); gc.collect()
     raise SystemExit("[autotune] even B=1 OOMs; model too large for this GPU")
 
 
@@ -161,7 +220,11 @@ def main() -> None:
     if not torch.cuda.is_available():
         raise SystemExit("CUDA required")
     device = torch.device("cuda:0")
-    print(f"[cuda] {torch.cuda.get_device_name(0)}  total={torch.cuda.get_device_properties(0).total_memory/1024**3:.2f} GiB")
+    dev_name = torch.cuda.get_device_name(0)
+    total_gib = torch.cuda.get_device_properties(0).total_memory / 1024**3
+    peak_tflops, peak_note = theoretical_fp16_tflops(device)
+    print(f"[cuda] {dev_name}  total={total_gib:.2f} GiB")
+    print(f"[peak] theoretical fp16 = {peak_tflops:.2f} TFLOPS  ({peak_note})")
 
     tok_path, shard_root = prepare_data()
     tokenizer = Tokenizer(str(tok_path))
@@ -177,7 +240,8 @@ def main() -> None:
     print(f"[model] approx params: {actual_params_approx/1e6:.2f} M  (act_ckpt=selective, fp16)")
 
     seq_len = 1024
-    micro_batch = autotune_batch(cfg, seq_len, device, [16, 12, 8, 6, 4, 3, 2, 1])
+    # Probe high first so larger-VRAM cards (16 GB+) saturate; OOM falls back.
+    micro_batch = autotune_batch(cfg, seq_len, device, [48, 40, 32, 24, 16, 12, 8, 6, 4, 3, 2, 1])
     print(f"[autotune] chosen micro_batch = {micro_batch}")
 
     # Real model + loader for the benchmark
@@ -246,7 +310,7 @@ def main() -> None:
     tps = tokens / train_secs
     # MFU: forward+backward ~ 6 * N * tokens FLOPs (Kaplan/Chinchilla approximation)
     achieved_tflops = 6.0 * n_params * tps / 1e12
-    mfu = 100.0 * achieved_tflops / THEORETICAL_TFLOPS_FP16
+    mfu = 100.0 * achieved_tflops / peak_tflops
     peak_gb = torch.cuda.max_memory_allocated() / 1024**3
 
     mean_u, p50_u, p95_u = parse_nvsmi(nvsmi_log, t_start)
@@ -255,9 +319,9 @@ def main() -> None:
 
     print(f"\n[result] steps={len(losses)}  train_wall={train_secs:.1f}s")
     print(f"[result] tokens/sec = {tps:,.0f}")
-    print(f"[result] achieved TFLOPS = {achieved_tflops:.2f}  (peak fp16 = {THEORETICAL_TFLOPS_FP16})")
+    print(f"[result] achieved TFLOPS = {achieved_tflops:.2f}  (peak fp16 = {peak_tflops:.2f})")
     print(f"[result] MFU = {mfu:.1f}%")
-    print(f"[result] peak GPU memory = {peak_gb:.2f} GiB / 8.00 GiB")
+    print(f"[result] peak GPU memory = {peak_gb:.2f} GiB / {total_gib:.2f} GiB")
     print(f"[result] GPU util:  mean={mean_u:.1f}%  P50={p50_u:.1f}%  P95={p95_u:.1f}%")
     print(f"[result] loss  first-50={first50:.3f}  last-50={last50:.3f}")
     if mean_u < 85.0:
@@ -291,7 +355,8 @@ def main() -> None:
         total_steps=len(losses), tps=tps, achieved_tflops=achieved_tflops,
         mfu=mfu, peak_gb=peak_gb, mean_u=mean_u, p50_u=p50_u, p95_u=p95_u,
         first50=first50, last50=last50, train_secs=train_secs, wall=wall,
-        sample=sample,
+        sample=sample, dev_name=dev_name, total_gib=total_gib,
+        peak_tflops=peak_tflops, peak_note=peak_note,
     )
     print(f"\n[done] wall={wall:.1f}s  peak={peak_gb:.2f} GiB  mean_util={mean_u:.1f}%  MFU={mfu:.1f}%")
 
@@ -299,7 +364,7 @@ def main() -> None:
 def write_result_md(**k):
     md = f"""# 04 \u2014 Max-throughput benchmark: result
 
-Recorded from one real run on an **RTX 3050 (8 GB, sm_86)**.
+Recorded from one real run on a **{k['dev_name']}** ({k['total_gib']:.1f} GiB).
 Selective activation checkpointing, batch auto-tuned to fit VRAM.
 Compute in **bf16** (autocast); master weights + AdamW state in fp32.
 
@@ -324,8 +389,10 @@ Compute in **bf16** (autocast); master weights + AdamW state in fp32.
 | total wall time | {k['wall']:.1f} s |
 | tokens / second | {k['tps']:,.0f} |
 | achieved TFLOPS (6\u00b7N\u00b7tps) | {k['achieved_tflops']:.2f} |
-| theoretical peak (fp16, 3050) | 9.05 TFLOPS |
+| theoretical peak (fp16) | {k['peak_tflops']:.2f} TFLOPS |
 | **MFU** | **{k['mfu']:.1f}%** |
+
+_Theoretical peak derived from device: {k['peak_note']}._
 
 ## GPU saturation (`nvidia-smi -lms 500`)
 
@@ -334,7 +401,7 @@ Compute in **bf16** (autocast); master weights + AdamW state in fp32.
 | mean | **{k['mean_u']:.1f}%** |
 | P50 | {k['p50_u']:.1f}% |
 | P95 | {k['p95_u']:.1f}% |
-| peak memory | {k['peak_gb']:.2f} GiB / 8.00 GiB |
+| peak memory | {k['peak_gb']:.2f} GiB / {k['total_gib']:.2f} GiB |
 
 ## Loss
 

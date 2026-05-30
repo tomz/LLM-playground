@@ -128,10 +128,11 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
 
     if not torch.cuda.is_available():
-        raise SystemExit("CUDA required (this example targets the RTX 3050).")
+        raise SystemExit("CUDA required for this example.")
     device = torch.device("cuda:0")
     torch.cuda.reset_peak_memory_stats()
-    print(f"[cuda] device={torch.cuda.get_device_name(0)}")
+    dev_name = torch.cuda.get_device_name(0)
+    print(f"[cuda] device={dev_name}")
 
     # ---- data ----
     data_dir = download_shakespeare()
@@ -239,16 +240,17 @@ def main() -> None:
         n_params=actual, total_steps=total_steps,
         first_100=first_100, last_100=last_100,
         train_secs=train_secs, wall=wall, peak_gb=peak_gb,
-        sample=sample,
+        sample=sample, dev_name=dev_name,
     )
     print(f"\n[done] wall={wall:.1f}s  peak_gpu={peak_gb:.2f} GiB")
 
 
 def write_result_md(*, n_params, total_steps, first_100, last_100,
-                    train_secs, wall, peak_gb, sample):
+                    train_secs, wall, peak_gb, sample, dev_name):
     md = f"""# 01 \u2014 TinyShakespeare pretraining: result
 
-Recorded from one real run on an **RTX 3050 (8 GB, sm_86)** using\nfrontier-platform components end-to-end.
+Recorded from one real run on a **{dev_name}** using
+frontier-platform components end-to-end.
 
 ## Summary
 
