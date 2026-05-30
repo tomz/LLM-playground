@@ -247,7 +247,7 @@ Plotter: [`scripts/plot_training.py`](coder-finetune/scripts/plot_training.py)
 | [`nanogpt-edu/`](./nanogpt-edu) | 10M–100M | A correct transformer + training loop in ~500 lines: RoPE, RMSNorm, SwiGLU, AMP, cosine LR. | 1 GPU or CPU |
 | [`midgpt/`](./midgpt) | 124M–1.5B | GPT-2 scale with the real production toolbox: `tiktoken` BPE, gradient checkpointing, gradient accumulation, DDP, resumable runs, HellaSwag eval. | 1–8 GPUs, single node |
 | [`distgpt/`](./distgpt) | 1B–70B | Real multi-node training: FSDP2 + Tensor Parallel + Pipeline Parallel on a 3D device mesh, sharded DCP checkpoints, loss-spike rewind, streaming dataloader. | Multi-node cluster |
-| [`coder-finetune/`](./coder-finetune) | 0.5B–7B | Post-training on a single consumer GPU: full FT, LoRA, and QLoRA via HuggingFace `transformers` + `peft` + `trl`. HumanEval+ in a Docker sandbox. | 1 consumer GPU (≥6 GB) |
+| [`coder-finetune/`](./coder-finetune) | 0.5B–7B | Post-training on a single consumer GPU: full FT, LoRA, and QLoRA via HuggingFace `transformers` + `peft` + `trl`, **plus GRPO/RLVR with verifiable unit-test rewards**. HumanEval+ in a Docker sandbox. | 1 consumer GPU (≥6 GB) |
 | [`frontier-platform/`](./frontier-platform) | 1B–500B+ | Architecture-only blueprint: data acquisition → filtering → dedup → tokenizer → pretrain → SFT → RLHF/DPO → eval → red-team → serving → observability. Interfaces + design docs; bodies are `NotImplementedError`. | Design doc; no GPUs required |
 
 ## The complexity ladder
@@ -259,7 +259,7 @@ vocabulary of the previous and adds **one** production concern:
 nanogpt-edu  →  midgpt        →  distgpt          →  coder-finetune    →  frontier-platform
   minimal       real tokenizer    3D parallelism      post-training         the whole system
   correct       AMP / grad-ckpt   DCP checkpoints     LoRA / QLoRA          around training
-  transformer   single-node DDP   spike rewind        HumanEval+
+  transformer   single-node DDP   spike rewind        SFT + GRPO/RLVR       HumanEval+
 ```
 
 `coder-finetune` is the orthogonal track: instead of pretraining from
