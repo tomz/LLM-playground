@@ -8,7 +8,7 @@ P100-specific counterpart kept for cross-card comparison.
 
 | # | Example                                                  | What it shows                                   |
 |---|----------------------------------------------------------|-------------------------------------------------|
-| 1 | [`01_pretrain_shakespeare`](01_pretrain_shakespeare/)    | Real BPE tokenizer + shard pipeline + 3 k-step pretrain of a 12 M-param transformer on TinyShakespeare, then `TorchEngine` generation. |
+| 1 | [`01_pretrain_shakespeare`](01_pretrain_shakespeare/)    | Real BPE tokenizer + shard pipeline + 3 k-step pretrain of a ~19 M-param transformer on TinyShakespeare with this month's harvest enabled (**Muon** optimizer, **QK-norm**, **Multi-Token Prediction**), then `TorchEngine` generation. |
 | 2 | [`02_align_chain`](02_align_chain/)                      | SFT → reward model → DPO on a synthetic Shakespeare-character QA task, built on the example 01 checkpoint. Side-by-side base / SFT / DPO comparison. |
 | 3 | [`03_moe_vs_dense`](03_moe_vs_dense/)                    | Dense vs 4-expert top-2 MoE at matched active params, on the example 01 shards. Loss curves, tokens/sec, per-expert utilisation. |
 | 4 | [`04_max_throughput`](04_max_throughput/)                | Batch-autotuned ~500 M-param transformer (bf16 autocast + activation ckpt) pushing the GPU to near-saturation, with background `nvidia-smi` sampling and device-derived MFU. |
