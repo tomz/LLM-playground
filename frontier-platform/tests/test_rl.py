@@ -157,3 +157,119 @@ def test_run_grpo_e2e_increases_verifier_reward(tmp_path):
     early = sum(h["reward_mean"] for h in hist[:3]) / 3
     late = sum(h["reward_mean"] for h in hist[-3:]) / 3
     assert late >= early
+
+
+# ---------- reward shaping ----------
+
+def test_format_reward_rewards_think_answer_structure():
+    from platform.rl.reward import format_reward
+    full = format_reward("<think>reasoning</think>\\boxed{42}")
+    partial = format_reward("<think>reasoning</think> 42")
+    none = format_reward("just an answer 42")
+    assert full > partial > none
+    assert none == 0.0
+
+
+def test_soft_length_penalty_ramps():
+    from platform.rl.reward import soft_length_penalty
+    short = "w " * 10
+    long = "w " * 5000
+    assert soft_length_penalty(short, target_tokens=512) == 0.0
+    assert soft_length_penalty(long, target_tokens=512, max_tokens=2048, coef=0.1) == pytest.approx(-0.1)
+
+
+def test_repetition_penalty_catches_loops():
+    from platform.rl.reward import repetition_penalty
+    varied = "the quick brown fox jumps over the lazy dog today"
+    looped = "go go go go go go go go go go"
+    assert repetition_penalty(varied) == pytest.approx(0.0, abs=0.2) or repetition_penalty(varied) > -0.2
+    assert repetition_penalty(looped) < repetition_penalty(varied)
+
+
+def test_answer_spam_guard_penalizes_shotgun():
+    from platform.rl.reward import answer_spam_guard
+    ok = "\\boxed{42}"
+    spam = "\\boxed{1}\\boxed{2}\\boxed{3}\\boxed{4}\\boxed{5}"
+    assert answer_spam_guard(ok, max_candidates=3) == 0.0
+    assert answer_spam_guard(spam, max_candidates=3, coef=1.0) == -1.0
+
+
+def test_composite_reward_blends_and_clips():
+    from platform.rl.reward import CompositeReward, RewardConfig
+    base = MathExactVerifier(42)
+    comp = CompositeReward(base, RewardConfig())
+    bd = comp.breakdown("2+40=?", "<think>2+40</think>\\boxed{42}")
+    assert bd["correctness"] == 1.0
+    assert bd["format"] > 0.0
+    assert bd["total"] == comp("2+40=?", "<think>2+40</think>\\boxed{42}")
+    # Bounded by clip range.
+    lo, hi = RewardConfig().clip
+    assert lo <= bd["total"] <= hi
+
+
+def test_grpo_logs_reward_breakdown(tmp_path):
+    from platform.rl.reward import CompositeReward
+    cfg_m = _tiny_cfg()
+    base = tmp_path / "base.pt"
+    _save_base_ckpt(base, cfg_m)
+    comp = CompositeReward(reward_contains("a"))
+    gcfg = GRPOConfig(
+        policy_ckpt=str(base), out_dir=str(tmp_path / "out"),
+        group_size=4, steps=3, lr=1e-3, beta=0.0, max_new_tokens=5, seq_len=32,
+    )
+    out = run_grpo(gcfg, prompts=["Q: one"], verifier=comp)
+    hist = torch.load(out, map_location="cpu", weights_only=False)["history"]
+    # Composite reward exposes .breakdown -> components logged each step.
+    assert all("reward_correctness" in h and "reward_total" in h for h in hist)
+
+
+# ---------- cold-start reasoning-SFT ----------
+
+def test_format_trace_builds_reasoning_format():
+    from platform.rl.coldstart import format_trace
+    ex = format_trace("2+2?", "add two and two", "4")
+    assert ex["prompt"] == "2+2?"
+    assert "<think>" in ex["response"] and "\\boxed{4}" in ex["response"]
+
+
+def test_run_coldstart_reduces_loss_and_saves(tmp_path):
+    from platform.rl.coldstart import ColdStartConfig, format_trace, run_coldstart
+    cfg_m = _tiny_cfg()
+    base = tmp_path / "base.pt"
+    _save_base_ckpt(base, cfg_m)
+    examples = [
+        format_trace("2+2?", "two plus two", "4"),
+        format_trace("3+5?", "three plus five", "8"),
+    ] * 4
+    res = run_coldstart(
+        ColdStartConfig(policy_ckpt=str(base), out_dir=str(tmp_path / "cs"),
+                        epochs=6, lr=5e-3, batch_size=2, seq_len=64),
+        examples,
+    )
+    assert Path(res.out_path).exists()
+    assert len(res.loss_history) > 0
+    early = sum(res.loss_history[:2]) / 2
+    late = sum(res.loss_history[-2:]) / 2
+    assert late < early
+    # Cold-start output loads as a GRPO policy checkpoint.
+    state = torch.load(res.out_path, map_location="cpu", weights_only=False)
+    assert "model" in state and "model_cfg" in state
+
+
+def test_coldstart_then_grpo_pipeline(tmp_path):
+    """End-to-end: reasoning-SFT cold-start -> GRPO loads its checkpoint."""
+    from platform.rl.coldstart import ColdStartConfig, format_trace, run_coldstart
+    cfg_m = _tiny_cfg()
+    base = tmp_path / "base.pt"
+    _save_base_ckpt(base, cfg_m)
+    cs = run_coldstart(
+        ColdStartConfig(policy_ckpt=str(base), out_dir=str(tmp_path / "cs"),
+                        epochs=2, lr=1e-3, batch_size=2, seq_len=64),
+        [format_trace("2+2?", "two plus two", "4")] * 4,
+    )
+    gcfg = GRPOConfig(
+        policy_ckpt=cs.out_path, out_dir=str(tmp_path / "grpo"),
+        group_size=4, steps=3, lr=1e-3, beta=0.0, max_new_tokens=5, seq_len=64,
+    )
+    out = run_grpo(gcfg, prompts=["2+2?"], verifier=reward_contains("4"))
+    assert Path(out).exists()

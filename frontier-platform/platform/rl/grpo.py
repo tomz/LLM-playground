@@ -125,6 +125,11 @@ def run_grpo(
 
     For brevity this uses one verifier for all prompts; a real run carries a
     per-prompt verifier spec (the answer key / hidden tests live with the prompt).
+
+    ``verifier`` may be a bare correctness verifier or a
+    :class:`platform.rl.reward.CompositeReward` (format/length/anti-hacking
+    shaping); if it exposes ``.breakdown(prompt, response)`` the per-component
+    means are logged into each step's metrics for monitoring.
     """
     policy, tok = _load_policy(cfg)
     if cfg.ref_ckpt and Path(cfg.ref_ckpt).exists():
@@ -140,6 +145,7 @@ def run_grpo(
     prompt_ids = [tok.encode(p) for p in prompts]
     opt = torch.optim.AdamW(policy.parameters(), lr=cfg.lr, weight_decay=0.0)
     history: list[dict] = []
+    has_breakdown = hasattr(verifier, "breakdown")
 
     for step in range(cfg.steps):
         roll = sample_group(
@@ -151,11 +157,16 @@ def run_grpo(
             temperature=cfg.temperature,
             seed=step,
         )
-        rewards = torch.tensor(
-            [verifier(prompts[int(gi)], txt) for gi, txt in zip(roll.group_index, roll.response_text)],
-            dtype=torch.float32,
-        )
+        pairs = [(prompts[int(gi)], txt) for gi, txt in zip(roll.group_index, roll.response_text)]
+        rewards = torch.tensor([verifier(p, r) for p, r in pairs], dtype=torch.float32)
         metrics = grpo_step(policy, ref, roll, rewards, cfg, optimizer=opt)
+        if has_breakdown:
+            # Average each shaped-reward component across the rollout group.
+            comps: dict[str, float] = {}
+            bd = [verifier.breakdown(p, r) for p, r in pairs]
+            for key in bd[0]:
+                comps[f"reward_{key}"] = sum(b[key] for b in bd) / len(bd)
+            metrics.update(comps)
         history.append(metrics)
 
     out_dir = Path(cfg.out_dir)

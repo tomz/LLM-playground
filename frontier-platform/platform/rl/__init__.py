@@ -18,6 +18,15 @@ from .verifiers import (
     CodeUnitTestVerifier,
     make_verifier,
 )
+from .reward import (
+    RewardConfig,
+    CompositeReward,
+    format_reward,
+    soft_length_penalty,
+    repetition_penalty,
+    answer_spam_guard,
+)
+from .coldstart import ColdStartConfig, ColdStartResult, run_coldstart, format_trace
 from .rollout import sample_group, GroupRollout
 from .grpo import GRPOConfig, group_advantages, grpo_step, run_grpo
 
@@ -29,6 +38,16 @@ __all__ = [
     "MathExactVerifier",
     "CodeUnitTestVerifier",
     "make_verifier",
+    "RewardConfig",
+    "CompositeReward",
+    "format_reward",
+    "soft_length_penalty",
+    "repetition_penalty",
+    "answer_spam_guard",
+    "ColdStartConfig",
+    "ColdStartResult",
+    "run_coldstart",
+    "format_trace",
     "sample_group",
     "GroupRollout",
     "GRPOConfig",

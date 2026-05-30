@@ -91,11 +91,22 @@ wires existing subsystems into an async loop.
 ## Stability & failure modes
 
 - **Reward hacking:** models exploit verifier gaps (printing expected output,
-  degenerate tests). Mitigate with held-out tests, adversarial graders.
-- **Length explosion:** unbounded CoT growth; add length penalties / budgets.
+  degenerate tests). Mitigate with held-out tests, adversarial graders — and the
+  shaped-reward guards in `rl/reward.py`: `answer_spam_guard` (penalizes shotgun
+  multi-answer outputs gaming last-number/boxed extraction) and
+  `repetition_penalty` (catches degenerate loops).
+- **Length explosion:** unbounded CoT growth; `soft_length_penalty` ramps a soft
+  cost past a target token budget.
 - **KL collapse / mode collapse:** monitor KL-to-reference, entropy, pass@k.
+  `grpo_step` logs KL each step; `run_grpo` logs the per-component reward
+  breakdown when given a `CompositeReward`.
 - **Verifier throughput:** the sandbox fleet, not the GPUs, is often the
-  bottleneck. Budget reward-worker CPU like you budget dataloader CPU.
+  bottleneck. Budget reward-worker CPU like you budget dataloader CPU (the
+  simulator's `reasoning_rl_sim.py` charges this explicitly).
+
+`CompositeReward` blends correctness + `format_reward` (think→answer structure) +
+length/repetition/anti-spam guards into one bounded scalar, and exposes
+`.breakdown()` for per-component logging.
 
 ## Inference-time reasoning (serving + eval implications)
 
