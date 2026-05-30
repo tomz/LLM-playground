@@ -1,0 +1,67 @@
+# GRPO / RLVR recipe: Qwen2.5-Coder-0.5B, verifiable unit-test reward, RTX 3050.
+#
+# This is the post-2024 post-training step the other recipes don't have: instead
+# of SFT on demonstrations, we sample G completions per prompt, RUN each against
+# hidden unit tests, standardize the rewards within the group, and take a clipped
+# policy step (GRPO — DeepSeek-R1 / DeepSeekMath). The reward is deterministic
+# (a verifier), so it can't be reward-hacked the way a learned RM can.
+#
+# Hardware target: RTX 3050 8 GB. GRPO is generation-heavy (G samples/prompt), so
+# keep G and completion length modest on 8 GB. Expected VRAM: ~5-6 GB peak.
+#
+# Run:  python -m cf_rl.grpo_train --config configs/grpo_3050.yaml
+# Eval: python eval/run_humaneval.py --model out/grpo_3050/final
+#
+# SECURITY: GRPO executes model-generated code every step (that's the reward).
+# Run untrusted models inside Docker/gVisor; the subprocess guard is a floor.
+out_dir: out/grpo_3050
+seed: 1337
+
+model:
+  name: Qwen/Qwen2.5-Coder-0.5B
+  dtype: bfloat16
+  attn_impl: sdpa
+  trust_remote_code: false
+
+method: lora
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  bias: none
+  target_modules: ['q_proj', 'k_proj', 'v_proj', 'o_proj',
+                   'gate_proj', 'up_proj', 'down_proj']
+
+# Verifiable prompts: each row carries unit tests, NOT a gold answer.
+# 'builtin' (8 tasks × repeat) needs no download; 'mbpp' pulls real tasks.
+dataset:
+  source: builtin          # 'builtin' | 'mbpp'
+  repeat: 8                 # builtin tasks repeated -> 64 prompts
+  max_examples: null
+
+train:
+  batch_size: 2            # prompts per device per step
+  grad_accum: 4
+  epochs: 1
+  lr: 1.0e-5              # RL LRs are much lower than SFT
+  warmup_ratio: 0.05
+  weight_decay: 0.0
+  grad_clip: 1.0
+  log_every: 2
+  save_every: 50
+  gradient_checkpointing: true   # generation-heavy; trade compute for VRAM
+
+grpo:
+  num_generations: 6        # G — completions sampled per prompt
+  max_prompt_length: 384
+  max_completion_length: 384
+  temperature: 1.0
+  beta: 0.04                # KL-to-reference coefficient
+  num_iterations: 1         # inner optimization passes per batch
+  # Optional reward shaping (default off; correctness verifier is always on):
+  format_reward: true       # bonus for a single clean ```python``` block w/ a def
+  length_penalty: false
+  length_target_tokens: 384
+  length_max_tokens: 1024
+  length_coef: 0.1

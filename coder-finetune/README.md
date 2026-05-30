@@ -10,8 +10,34 @@ Fine-tune open-weights code models on a single consumer GPU. Tiers:
 | **`configs/lora_5060ti.yaml`** | **Qwen2.5-Coder-3B** | **LoRA r=16, packed** | **15.1 GB** | **12 min on 2.5k**  |
 | `configs/lora.yaml`     | Qwen2.5-Coder-1.5B       | LoRA r=16       | ~7 GB     | ~1.5 h on 20k       |
 | `configs/qlora.yaml`    | Qwen2.5-Coder-7B         | QLoRA NF4 r=32  | ~7 GB     | ~8 h on 50k         |
+| **`configs/grpo_3050.yaml`** | **Qwen2.5-Coder-0.5B** | **GRPO / RLVR (LoRA), unit-test reward** | **~5–6 GB** | **gen-heavy**       |
 
 Uses HuggingFace `transformers` + `peft` + `trl`; no custom training loop.
+
+## Two training tracks
+
+1. **SFT (`train.py`)** — supervised fine-tune on demonstrations (full / LoRA /
+   QLoRA via TRL `SFTTrainer`). Teaches format and style.
+2. **RLVR / GRPO (`cf_rl/grpo_train.py`)** — *RL against a verifiable reward*:
+   sample G completions per prompt, **run each against hidden unit tests**,
+   standardize the rewards within the group, take a clipped policy step (GRPO —
+   DeepSeek-R1 / DeepSeekMath). The reward is deterministic (a verifier), so it
+   can't be gamed the way a learned reward model can. Reuses the same LoRA/QLoRA
+   plumbing as `train.py` and the HumanEval subprocess sandbox as the verifier.
+
+```bash
+# SFT first (optional), then GRPO on top:
+.venv/bin/python -m cf_rl.grpo_train --config configs/grpo_3050.yaml
+.venv/bin/python eval/run_humaneval.py --model out/grpo_3050/final
+```
+
+The GRPO prompt set carries unit tests instead of gold answers
+(`cf_rl/prompts.py`: a dependency-free `builtin` set, or real `mbpp` tasks).
+Reward functions live in `cf_rl/reward.py` (correctness verifier always on;
+optional format / length shaping, mirroring frontier-platform's
+`CompositeReward`). **GRPO executes model-generated code every step — that *is*
+the reward — so run untrusted models inside Docker/gVisor.**
+
 
 ## Speed & quality knobs (opt-in, config-driven)
 
@@ -35,10 +61,11 @@ CUDA_VISIBLE_DEVICES=0 .venv/bin/python train.py --config configs/lora_5060ti.ya
 
 ```
 coder-finetune/
-├── configs/        # YAML per recipe
-├── cf_data/        # dataset loaders (HF datasets + your own repo + synthetic)
+├── configs/        # YAML per recipe (SFT + grpo_3050.yaml for RLVR)
+├── cf_data/        # SFT dataset loaders (HF datasets + your own repo + synthetic)
+├── cf_rl/          # RLVR/GRPO: verifiable reward + prompt sets + grpo_train.py
 ├── train.py        # SFT / LoRA / QLoRA via TRL SFTTrainer
-├── eval/           # HumanEval+ runner with Docker sandbox
+├── eval/           # HumanEval+ runner with Docker sandbox (also the RL verifier)
 ├── infer/          # merge LoRA, export for vLLM
 └── tests/
 ```
