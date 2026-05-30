@@ -46,6 +46,10 @@ class GQAttention(nn.Module):
         self.k_proj = nn.Linear(cfg.d_model, cfg.n_kv_head * D, bias=False)
         self.v_proj = nn.Linear(cfg.d_model, cfg.n_kv_head * D, bias=False)
         self.o_proj = nn.Linear(cfg.n_head * D, cfg.d_model, bias=False)
+        # QK-Norm: per-head RMSNorm over head_dim, applied after projection but
+        # before RoPE. Local per-head op → safe under tensor parallelism.
+        self.q_norm = RMSNorm(D, cfg.rms_eps) if cfg.qk_norm else None
+        self.k_norm = RMSNorm(D, cfg.rms_eps) if cfg.qk_norm else None
 
     def forward(self, x, cos, sin):
         B, T, _ = x.shape
@@ -53,6 +57,9 @@ class GQAttention(nn.Module):
         q = self.q_proj(x).view(B, T, H, D).transpose(1, 2)
         k = self.k_proj(x).view(B, T, Hk, D).transpose(1, 2)
         v = self.v_proj(x).view(B, T, Hk, D).transpose(1, 2)
+        if self.q_norm is not None:
+            q = self.q_norm(q)
+            k = self.k_norm(k)
         q, k = apply_rope(q, cos, sin), apply_rope(k, cos, sin)
         if Hk != H:
             rep = H // Hk
@@ -101,6 +108,13 @@ class GPT(nn.Module):
             self.lm_head.weight = self.tok_emb.weight
         self._rope: tuple[torch.Tensor, torch.Tensor] | None = None
         self.apply(self._init)
+        # Zero-init residual-write projections (attn o_proj + ffn down-proj) so
+        # each block starts as the identity map — stabilises high-LR warmup at
+        # scale. Done after apply(_init) so it isn't clobbered. Default-off.
+        if cfg.zero_init_proj:
+            for blk in self.layers:
+                nn.init.zeros_(blk.attn.o_proj.weight)
+                nn.init.zeros_(blk.ffn.w2.weight)
 
     def _init(self, m):
         if isinstance(m, nn.Linear):

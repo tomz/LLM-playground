@@ -14,6 +14,15 @@ class ModelConfig:
     rope_base: float = 10000.0
     rms_eps: float = 1e-5
     tie_embeddings: bool = True
+    # --- stability knobs (default-off; adopted from nanogpt-edu / modded-nanogpt) ---
+    qk_norm: bool = False        # per-head RMSNorm on Q and K before RoPE. Bounds
+                                 # attention-logit scale at large d_model/long
+                                 # context, letting you push LR higher without
+                                 # loss spikes. Per-head + local, so it stays
+                                 # tensor-parallel-friendly (no cross-shard reduce).
+    zero_init_proj: bool = False  # zero-init the residual-write matrices (attn
+                                 # o_proj + ffn down-proj) so each block starts as
+                                 # identity → stable high-LR warmup at scale.
 
     @property
     def head_dim(self) -> int:

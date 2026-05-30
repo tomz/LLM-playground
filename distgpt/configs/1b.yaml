@@ -15,6 +15,9 @@ model:
   max_seq_len: 4096
   rope_base: 10000.0
   tie_embeddings: true
+  # Stability knobs (default-off; safe under TP). Flip on to push LR harder:
+  qk_norm: false          # per-head RMSNorm on Q/K before RoPE
+  zero_init_proj: false   # identity-init blocks for stable high-LR warmup
 
 parallel:
   dp: -1     # -1 = fill remaining

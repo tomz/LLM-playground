@@ -38,6 +38,36 @@ def test_activation_ckpt_runs():
     loss.backward()
 
 
+def test_qk_norm_forward_and_modules():
+    cfg = ModelConfig(vocab_size=128, n_layer=2, n_head=4, n_kv_head=2,
+                      d_model=64, d_ffn=128, max_seq_len=32, qk_norm=True)
+    m = GPT(cfg).train()
+    # QK-norm adds per-head RMSNorm on q and k.
+    assert m.layers[0].attn.q_norm is not None
+    assert m.layers[0].attn.k_norm is not None
+    x = torch.randint(0, 128, (2, 16))
+    _, loss = m(x, x)
+    loss.backward()
+    assert torch.isfinite(loss)
+    # Default stays off.
+    assert GPT(ModelConfig(vocab_size=128, n_layer=1, n_head=4, n_kv_head=2,
+                           d_model=64, d_ffn=128)).layers[0].attn.q_norm is None
+
+
+def test_zero_init_proj_starts_as_identity():
+    cfg = ModelConfig(vocab_size=128, n_layer=2, n_head=4, n_kv_head=2,
+                      d_model=64, d_ffn=128, max_seq_len=32, zero_init_proj=True)
+    m = GPT(cfg)
+    for blk in m.layers:
+        assert torch.count_nonzero(blk.attn.o_proj.weight) == 0
+        assert torch.count_nonzero(blk.ffn.w2.weight) == 0
+    # Identity init: residual stream unchanged at step 0 -> output == embeddings
+    # passed through final norm + head. Just assert it runs and is finite.
+    x = torch.randint(0, 128, (2, 16))
+    _, loss = m.train()(x, x)
+    assert torch.isfinite(loss)
+
+
 def test_cosine_schedule():
     assert cosine_lr(0, 100, 1000, 1.0, 0.1) > 0
     assert math.isclose(cosine_lr(100, 100, 1000, 1.0, 0.1), 1.0, abs_tol=1e-9)
