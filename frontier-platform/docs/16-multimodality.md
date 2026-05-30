@@ -1,14 +1,18 @@
 # 16 — Multimodality
 
 > **Status: design stub + MM-1 skeleton.** Gap #2 in
-> `14-gap-analysis-vs-frontier.md`. A toy-functional LLaVA-style adapter now
-> exists in `platform/model/vision.py` (`VisionEncoder` + `Projector` +
-> `VisionLanguageModel`): it patchifies an image, runs a small ViT, projects
-> patches into the LM hidden space, and prepends them as image tokens, computing
-> loss on text positions only. It runs end-to-end on CPU with the tiny test
-> model (`tests/test_vision.py`), but the encoder is randomly initialized — a
-> real build loads pretrained SigLIP/ViT weights. Data, tokenizer, eval, and
-> serving multimodality are still open.
+> `14-gap-analysis-vs-frontier.md`. A LLaVA-style adapter exists in
+> `platform/model/vision.py` (`VisionEncoder` + `Projector` +
+> `VisionLanguageModel`): it patchifies an image, runs a ViT, projects patches
+> into the LM hidden space, and prepends them as image tokens, computing loss on
+> text positions only. It runs end-to-end on CPU with the tiny test model
+> (`tests/test_vision.py`). The encoder is now **swap-the-backend**:
+> `VisionEncoder.from_pretrained(cfg)` loads a real pretrained **SigLIP/ViT**
+> tower via HuggingFace `transformers` when `cfg.pretrained` is set (verified
+> with `google/siglip-base-patch16-224` → `[B,196,768]` patch embeddings), and
+> falls back to the in-house random-init ViT (with a warning) when the
+> dependency/weights are unavailable, so the interface is identical either way.
+> Data, tokenizer, eval, and serving multimodality are still open.
 
 ---
 
@@ -59,10 +63,12 @@ Multimodality is not one module; it perturbs the whole pipeline:
 
 ## Minimum viable MM-1 build
 
-1. ✅ **Done (toy):** vision encoder + projector + VLM forward in
+1. ✅ **Done:** vision encoder + projector + VLM forward in
    `platform/model/vision.py` (`VisionEncoder`, `Projector`,
-   `VisionLanguageModel`). Image tokens are prepended to text embeddings; loss
-   is on text positions only. Swap the random encoder for pretrained SigLIP/ViT.
+   `VisionLanguageModel`), with a `from_pretrained` path that loads a real
+   SigLIP/ViT tower (graceful fallback to in-house ViT). Image tokens are
+   prepended to text embeddings; loss is on text positions only. `freeze_encoder`
+   supports projector-only alignment.
 2. Extend the tokenizer contract with image placeholder tokens.
 3. Add an interleaved image-text data path: `platform/data/multimodal.py`
    (acquire, perceptual-dedup, caption/OCR pairing, shard with image refs).

@@ -163,7 +163,7 @@ class MathExactVerifier:
             return False
 
 
-# ---------- sandboxed code (intentional stub) ----------
+# ---------- sandboxed code (subprocess + rlimits) ----------
 
 class CodeUnitTestVerifier:
     """Run candidate code against hidden unit tests in an isolated subprocess.
