@@ -78,9 +78,21 @@ def _guess_spec(name: str) -> tuple[Optional[float], Optional[float]]:
 
 
 def have_cuda() -> bool:
+    """True only if CUDA is available *and* a trivial kernel actually runs.
+
+    `torch.cuda.is_available()` can return True on a card whose compute
+    capability isn't supported by the installed torch build (e.g. an sm_60 Pascal
+    with a torch compiled for sm_75+), where every kernel then raises. We verify
+    a real elementwise kernel executes so callers (and the gpu-probe tests'
+    skip guard) get an honest answer.
+    """
     try:
         import torch
-        return bool(torch.cuda.is_available()) and torch.cuda.device_count() > 0
+        if not (torch.cuda.is_available() and torch.cuda.device_count() > 0):
+            return False
+        x = torch.zeros(8, device="cuda") + 1.0
+        torch.cuda.synchronize()
+        return bool(float(x.sum().item()) == 8.0)
     except Exception:
         return False
 
