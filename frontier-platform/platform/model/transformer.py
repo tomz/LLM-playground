@@ -314,6 +314,13 @@ class Transformer(nn.Module):
         self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
         if cfg.tie_embeddings:
             self.lm_head.weight = self.tok_emb.weight
+        # Multi-Token Prediction auxiliary heads (train-only). Head j predicts the
+        # token (j+2) ahead from the same final hidden state. Discarded at
+        # inference; see config.mtp_tokens.
+        self.mtp_heads = nn.ModuleList(
+            [nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
+             for _ in range(int(getattr(cfg, "mtp_tokens", 0)))]
+        )
         self.init_weights("default")
 
     def forward(self, tokens: torch.Tensor, targets: torch.Tensor | None = None, positions=None):
@@ -338,6 +345,26 @@ class Transformer(nn.Module):
             for blk in self.layers:
                 if isinstance(blk.ffn, MoEFFN):
                     loss = loss + blk.ffn.last_aux_loss
+            # Multi-Token Prediction auxiliary loss (train-only). Head j predicts
+            # the token (j+2) ahead: targets shifted left by (j+1). Averaged over
+            # heads, scaled by mtp_weight. Gated on self.training so eval reports
+            # pure next-token CE.
+            if self.mtp_heads and self.training:
+                T = targets.size(1)
+                aux = logits.new_zeros(())
+                used = 0
+                for j, head in enumerate(self.mtp_heads):
+                    shift = j + 1
+                    if T - shift <= 0:
+                        continue
+                    pred = head(x[:, : T - shift, :])
+                    tgt = targets[:, shift:]
+                    aux = aux + F.cross_entropy(
+                        pred.float().reshape(-1, pred.size(-1)), tgt.reshape(-1)
+                    )
+                    used += 1
+                if used:
+                    loss = loss + self.cfg.mtp_weight * (aux / used)
         return logits, loss
 
     def init_weights(self, scheme: str = "muP") -> None:

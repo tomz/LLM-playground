@@ -18,6 +18,12 @@ class ModelConfig:
     # A cheap stability trick (used in many 2024-2025 frontier models) that tames
     # attention-logit blowups during large-scale training. Present in nanogpt-edu.
     qk_norm: bool = False
+    # Multi-Token Prediction (DeepSeek-V3): extra auxiliary heads predict tokens
+    # n+2, n+3, ... from the final hidden state, densifying the gradient for
+    # better sample efficiency. Train-only (discarded at inference, so zero infer
+    # cost) and doubles as a speculative-decoding draft signal. 0 = off.
+    mtp_tokens: int = 0
+    mtp_weight: float = 0.3
     # Attention variant: "gqa" (Grouped-Query, Llama-style) or "mla" (Multi-head
     # Latent Attention, DeepSeek-V2/V3). MLA compresses the KV cache 5-10x via a
     # low-rank latent projection at near-equal quality — the frontier answer for
