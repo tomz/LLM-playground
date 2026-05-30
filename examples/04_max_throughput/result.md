@@ -1,6 +1,6 @@
 # 04 — Max-throughput benchmark: result
 
-Recorded from one real run on an **RTX 3050 (8 GB, sm_86)**.
+Recorded from one real run on a **NVIDIA GeForce RTX 5060 Ti** (15.5 GiB).
 Selective activation checkpointing, batch auto-tuned to fit VRAM.
 Compute in **bf16** (autocast); master weights + AdamW state in fp32.
 
@@ -10,8 +10,8 @@ Compute in **bf16** (autocast); master weights + AdamW state in fp32.
 |---|--:|
 | parameters | 381.73 M |
 | seq_len | 1024 |
-| micro_batch (auto) | 8 |
-| tokens / step | 8,192 |
+| micro_batch (auto) | 40 |
+| tokens / step | 40,960 |
 | training steps | 1500 |
 | optimizer | AdamW, peak_lr=3e-4, warmup=100, cosine |
 | precision | bf16 autocast (fp32 master) |
@@ -21,65 +21,73 @@ Compute in **bf16** (autocast); master weights + AdamW state in fp32.
 
 | metric | value |
 |---|--:|
-| training wall time | 3309.7 s |
-| total wall time | 3362.2 s |
-| tokens / second | 3,713 |
-| achieved TFLOPS (6·N·tps) | 8.50 |
-| theoretical peak (fp16, 3050) | 9.05 TFLOPS |
-| **MFU** | **94.0%** |
+| training wall time | 7001.6 s |
+| total wall time | 7043.2 s |
+| tokens / second | 8,775 |
+| achieved TFLOPS (6·N·tps) | 20.10 |
+| theoretical peak (fp16) | 28.48 TFLOPS |
+| **MFU** | **70.6%** |
+
+_Theoretical peak derived from device: cc12.0 36SM x 128 x 3.09GHz._
 
 ## GPU saturation (`nvidia-smi -lms 500`)
 
 | stat | utilization.gpu |
 |---|--:|
-| mean | **99.8%** |
+| mean | **99.7%** |
 | P50 | 100.0% |
 | P95 | 100.0% |
-| peak memory | 6.47 GiB / 8.00 GiB |
+| peak memory | 12.82 GiB / 15.48 GiB |
 
 ## Loss
 
 | window | mean loss |
 |---|--:|
-| first 50 steps | 6.905 |
-| last 50 steps | 0.082 |
-| reduction | +6.824 |
+| first 50 steps | 6.811 |
+| last 50 steps | 0.005 |
+| reduction | +6.806 |
 
 ## Generated sample (200 tokens from `ROMEO:`)
 
 ```
 ROMEO:
-At thy choice, I think there was the duke.
+Is the day so young?
 
-DUKE OF YORK:
-You wrong me not, nor no more to thy oath.
+BENVOLIO:
+But new struck nine.
 
-DUKE OF YORK:
-My lord, I do beseech you for your grace.
+ROMEO:
+Ay me! sad hours seem long.
+Was that my father that went hence so fast?
 
-DUKE OF YORK:
-I will be gone, sir, to do't.
+BENVOLIO:
+It was. What sadness lengthens Romeo's hours?
 
-DUKE OF YORK:
-What is it, then?
+ROMEO:
+Not having that, which, having, makes them short.
 
-DUKE OF YORK:
-No, almost a word.
-Gentlemen, we now show it.
-You'll tell you what a letter?
+BENVOLIO:
+In love?
 
-DUKE OF AUMERLE:
-You shall be fond of the matter you give.
+ROMEO:
+Out--
 
-DUKE OF AUMERLE:
-Good night, thou hast; thy son is beloved and light.
+BENVOLIO:
+Of love?
 
-DUKE OF AUMERLE:
-Why, then, what's thy name, I pray,
-That I should live to thy father's house,
-And presently your subject to thy drift,
-If thou wilt, perform this noble duke,
-Or as I
+ROMEO:
+Out of her favour, where I am in love.
+
+BENVOLIO:
+Alas, that love, so gentle in his view,
+Should be so tyrannous and rough in proof!
+
+ROMEO:
+Alas, that love, whose view is muffled still,
+Should, without eyes, see pathways to his will!
+Where shall we dine? O me! What fray was here?
+Yet tell me not, for I have heard it all.
+Here's much
 ```
 
 Full sample in `out/sample.txt`. Raw nvidia-smi log in `out/nvsmi.log`.

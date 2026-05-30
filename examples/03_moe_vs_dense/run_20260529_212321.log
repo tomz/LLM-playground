@@ -1,0 +1,55 @@
+[init] dense param_count=4.01M
+[init]   moe param_count=4.89M (top-2 of 4)
+
+=== training dense ===
+[dense] params=4.01M  d_model=192 d_ffn=512 experts=1
+[dense] step    0  loss= 8.354
+[dense] step   50  loss= 6.949
+[dense] step  100  loss= 5.954
+[dense] step  150  loss= 5.736
+[dense] step  200  loss= 5.559
+[dense] step  250  loss= 5.102
+[dense] step  300  loss= 5.181
+[dense] step  350  loss= 5.106
+[dense] step  400  loss= 4.787
+[dense] step  450  loss= 4.919
+[dense] step  500  loss= 4.870
+[dense] step  550  loss= 4.592
+[dense] step  600  loss= 4.724
+[dense] step  650  loss= 4.708
+[dense] step  700  loss= 4.451
+[dense] step  750  loss= 4.598
+[dense] step  800  loss= 4.597
+[dense] step  850  loss= 4.358
+[dense] step  900  loss= 4.517
+[dense] step  950  loss= 4.537
+[dense] step  999  loss= 4.345
+
+=== training moe ===
+[moe] params=4.89M  d_model=128 d_ffn=384 experts=4
+[moe] step    0  loss= 8.355  aux=0.0019
+[moe] step   50  loss= 7.379  aux=0.0012
+[moe] step  100  loss= 6.267  aux=0.0003
+[moe] step  150  loss= 5.938  aux=0.0005
+[moe] step  200  loss= 5.772  aux=0.0007
+[moe] step  250  loss= 5.298  aux=0.0007
+[moe] step  300  loss= 5.328  aux=0.0007
+[moe] step  350  loss= 5.270  aux=0.0008
+[moe] step  400  loss= 4.944  aux=0.0008
+[moe] step  450  loss= 5.064  aux=0.0007
+[moe] step  500  loss= 5.031  aux=0.0009
+[moe] step  550  loss= 4.757  aux=0.0008
+[moe] step  600  loss= 4.901  aux=0.0009
+[moe] step  650  loss= 4.892  aux=0.0010
+[moe] step  700  loss= 4.632  aux=0.0010
+[moe] step  750  loss= 4.789  aux=0.0010
+[moe] step  800  loss= 4.801  aux=0.0011
+[moe] step  850  loss= 4.556  aux=0.0011
+[moe] step  900  loss= 4.715  aux=0.0010
+[moe] step  950  loss= 4.748  aux=0.0011
+[moe] step  999  loss= 4.515  aux=0.0011
+
+[done] wall=68.7s  peak_gpu=0.43 GiB
+[done] dense last-loss=4.441  tok/s=127,183
+[done]   moe last-loss=4.631  tok/s=39,190
+[done] expert utilisation: [0.256103515625, 0.242431640625, 0.240478515625, 0.260986328125]

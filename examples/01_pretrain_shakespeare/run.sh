@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-export CUDA_VISIBLE_DEVICES=GPU-bb18b9d3-2ce9-0696-26a6-fffaee036dbb
+export CUDA_VISIBLE_DEVICES=GPU-4bbb23a6-e2e1-d0ed-ff91-7660dd9fff2a
 export PYTHONPATH=/home/support/dev-macrohard/LLM-playground/frontier-platform${PYTHONPATH:+:$PYTHONPATH}
 PY=/home/support/dev-macrohard/LLM-playground/frontier-platform/.venv/bin/python
 

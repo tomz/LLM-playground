@@ -142,9 +142,12 @@ def main() -> None:
     shard_root = make_shards(data_dir, tokenizer)
 
     # ---- model ----
+    # Latest-harvest knobs ON (this is the showcase run): QK-norm stabilizer +
+    # Multi-Token Prediction auxiliary heads (train-only, densifies gradient).
     cfg = ModelConfig(
         vocab_size=4096, n_layer=8, n_head=8, n_kv_head=4,
         d_model=384, d_ffn=1024, max_seq_len=256,
+        qk_norm=True, mtp_tokens=2, mtp_weight=0.3,
     )
     n_params = cfg.param_count()
     print(f"[model] approx params: {n_params / 1e6:.2f} M")
@@ -163,9 +166,11 @@ def main() -> None:
     loader = _GpuLoader(base_loader, device)
 
     # ---- training ----
+    # Muon optimizer (Newton-Schulz-orthogonalized updates on 2D hidden weights;
+    # AdamW for embeddings/lm_head/MTP heads/norms) — this month's headline lever.
     total_steps = 3000
-    ocfg = OptimConfig(peak_lr=3e-4, warmup_steps=100, total_steps=total_steps,
-                       grad_clip=1.0, weight_decay=0.1)
+    ocfg = OptimConfig(name="muon", peak_lr=3e-4, warmup_steps=100,
+                       total_steps=total_steps, grad_clip=1.0, weight_decay=0.1)
     opt, sched = build_optimizer(model, ocfg)
 
     run_id = "shakespeare-12M"
@@ -251,6 +256,12 @@ def write_result_md(*, n_params, total_steps, first_100, last_100,
 
 Recorded from one real run on a **{dev_name}** using
 frontier-platform components end-to-end.
+
+**This-month's-harvest features enabled** (config-gated knobs in `platform.*`):
+**Muon** optimizer (Newton-Schulz-orthogonalized 2D hidden weights; AdamW for
+embeddings/lm_head/MTP heads/norms), **QK-norm** attention stabilizer, and
+**Multi-Token Prediction** (2 auxiliary heads, train-only — they account for the
+param bump vs the vanilla ~16 M baseline and are discarded at inference).
 
 ## Summary
 

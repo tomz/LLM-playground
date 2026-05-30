@@ -1,0 +1,15 @@
+[cuda] device=NVIDIA GeForce RTX 5060 Ti
+[base] loading example 01 checkpoint
+[base] vocab=4096  bos=0 eos=1 pad=1
+[data] sft_train=180  sft_eval=20  prefs=100  test=10
+[sft] training for 200 steps
+[sft] done in 7.2s  first10=9.418  last10=0.001
+[rm] training for 200 steps
+[rm] done in 11.6s  first10=0.665  last10=0.000
+[dpo] training for 200 steps
+[dpo] done in 14.5s  first10=0.672  last10=0.286
+[eval] generating responses for 10 test prompts from base/SFT/DPO
+
+[done] wall=38.9s  peak_gpu=1.02 GiB
+[done] EM base=0% SFT=100% DPO=100%
+[done] RM  base=+0.099  SFT=+1.146  DPO=+2.041

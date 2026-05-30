@@ -1,0 +1,39 @@
+[cuda] NVIDIA GeForce RTX 5060 Ti  total=15.48 GiB
+[peak] theoretical fp16 = 28.48 TFLOPS  (cc12.0 36SM x 128 x 3.09GHz)
+[data] reusing /home/support/dev-macrohard/LLM-playground/examples/04_max_throughput/out/tok/tokenizer.json and shards
+[tok] vocab=8192
+[model] approx params: 381.68 M  (act_ckpt=selective, fp16)
+[autotune] probing batches [48, 40, 32, 24, 16, 12, 8, 6, 4, 3, 2, 1]
+[autotune] B=48 OOM, trying smaller
+[autotune] B=40 OK, peak=12.82 GiB
+[autotune] chosen micro_batch = 40
+[model] actual params: 381.73 M
+[nvsmi] sampling -> /home/support/dev-macrohard/LLM-playground/examples/04_max_throughput/out/nvsmi.log
+[train] 1500 steps  seq=1024  micro_batch=40
+
+[result] steps=1500  train_wall=7001.6s
+[result] tokens/sec = 8,775
+[result] achieved TFLOPS = 20.10  (peak fp16 = 28.48)
+[result] MFU = 70.6%
+[result] peak GPU memory = 12.82 GiB / 15.48 GiB
+[result] GPU util:  mean=99.7%  P50=100.0%  P95=100.0%
+[result] loss  first-50=6.811  last-50=0.005
+[gen] 200 tokens from 'ROMEO:'
+[gen] first 240 chars:
+    ROMEO:
+    Is the day so young?
+    
+    BENVOLIO:
+    But new struck nine.
+    
+    ROMEO:
+    Ay me! sad hours seem long.
+    Was that my father that went hence so fast?
+    
+    BENVOLIO:
+    It was. What sadness lengthens Romeo's hours?
+    
+    ROMEO:
+    Not having that, which, having, mak
+
+[done] wall=7043.2s  peak=12.82 GiB  mean_util=99.7%  MFU=70.6%

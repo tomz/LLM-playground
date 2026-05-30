@@ -1,36 +1,36 @@
 # 02 — SFT → RM → DPO alignment chain: result
 
-Recorded on **RTX 3050**, built on the example 01 base checkpoint.
+Recorded on **NVIDIA GeForce RTX 5060 Ti**, built on the example 01 base checkpoint.
 
 ## Summary
 
 | stage | first-10 loss | last-10 loss |
 |---|--:|--:|
-| SFT (200 steps, lr=1e-4) | 5.652 | 0.001 |
-| RM  (200 steps, lr=5e-5) | 0.570 | 0.000 |
-| DPO (200 steps, lr=5e-6, β=0.1) | 0.633 | 0.087 |
+| SFT (200 steps, lr=1e-4) | 9.418 | 0.001 |
+| RM  (200 steps, lr=5e-5) | 0.665 | 0.000 |
+| DPO (200 steps, lr=5e-6, β=0.1) | 0.672 | 0.286 |
 
 ## Held-out test prompts (10 characters)
 
 | char | gold | base | SFT | DPO |
 |---|---|---|---|---|
-| Juliet | _Romeo and Juliet_ |   `too, how he will hence! king a` | ✓ `Romeo and Juliet` | ✓ `Romeo and Juliet justice` |
-| Othello | _Othello_ |   `but not but you can give my la` | ✓ `Othello` | ✓ `Othello stand stand` |
-| Menenius | _Coriolanus_ |   `but thou law for thee! thou it` | ✓ `Coriolanus` | ✓ `Coriolanus` |
-| Hamlet | _Hamlet_ |   `too, that he'll be my oath` | ✓ `Hamlet` | ✓ `Hamlet this this this this` |
-| Romeo | _Romeo and Juliet_ |   `too, how is it did fiven` | ✓ `Romeo and Juliet` | ✓ `Romeo and Juliet` |
-| Ophelia | _Hamlet_ |   `no thou didst fivet to the wor` | ✓ `Hamlet` | ✓ `Hamlet this say say comes come` |
-| Mercutio | _Romeo and Juliet_ |   `too, how is wary too,` | ✓ `Romeo and Juliet` | ✓ `Romeo and Juliet` |
-| Portia | _The Merchant of Venice_ |   `what is my head the worth is i` | ✓ `The Merchant of Venice` | ✓ `The Merchant of Venice` |
-| Iago | _Othello_ |   `what is your fellow of your? a` | ✓ `Othello` |   `O this this` |
-| Brutus | _Julius Caesar_ |   `too, like a truth, full, but a` | ✓ `Julius Caesar this` | ✓ `Julius Caesar;` |
+| Juliet | _Romeo and Juliet_ |   `but hear not am in your then w` | ✓ `Romeo and Juliet as a most` | ✓ `Romeo and Juliet as a most sta` |
+| Othello | _Othello_ |   `but did not but that which, bu` | ✓ `Othello of water, on the me a ` | ✓ `Othello of water, oning, is ve` |
+| Menenius | _Coriolanus_ |   `may kind, me before I clate.` | ✓ `Coriolanus of your quake a qua` | ✓ `Coriolanus of your qual it sti` |
+| Hamlet | _Hamlet_ |   `` | ✓ `Hamlet much` | ✓ `Hamlet much` |
+| Romeo | _Romeo and Juliet_ |   `` | ✓ `Romeo and Juliet as live hiss ` | ✓ `Romeo and Juliet as live hiss ` |
+| Ophelia | _Hamlet_ |   `or knife rouse, a man, a!` | ✓ `Hamlet to at gentle sir which` | ✓ `Hamlet to at gentle sir which` |
+| Mercutio | _Romeo and Juliet_ |   `` | ✓ `Romeo and Juliet as diet of lo` | ✓ `Romeo and Juliet as diet of lo` |
+| Portia | _The Merchant of Venice_ |   `` | ✓ `The Merchant of Venice` | ✓ `The Merchant of Venice` |
+| Iago | _Othello_ |   `for of foot be out a noble coo` | ✓ `Othello my embrace, ones!` | ✓ `Othello my embrace, the loss,` |
+| Brutus | _Julius Caesar_ |   `but that,, of love two speed f` | ✓ `Julius Caesar condemn'd air,, ` | ✓ `Julius Caesar condemn'd air,, ` |
 
 ## Aggregate
 
 | model | exact-match acc | mean RM score |
 |---|--:|--:|
-| base | 0% | -2.462 |
-| SFT  | 100%  | +8.758 |
-| DPO  | 90%  | +0.121 |
+| base | 0% | +0.099 |
+| SFT  | 100%  | +1.146 |
+| DPO  | 100%  | +2.041 |
 
-_Total wall time: 42.8s. Peak GPU memory: 0.93 GiB._
+_Total wall time: 38.9s. Peak GPU memory: 1.02 GiB._
