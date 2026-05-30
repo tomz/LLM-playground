@@ -71,12 +71,22 @@ def build(args, real_calibration=None) -> ProgramSpec:
         ServingTier("nano", n_params=1.2e9,  quant="int4", gpu="A100", gpus_per_replica=1,
                     target_throughput_tok_s=4000, ttft_ms=50),
         ServingTier("mid",  n_params=6.7e9,  quant="fp8",  gpu=args.gpu_type, gpus_per_replica=1,
-                    target_throughput_tok_s=2500, ttft_ms=100),
+                    target_throughput_tok_s=2500, ttft_ms=100,
+                    spec_decode=("mtp" if args.spec_decode else "none"),
+                    spec_draft_len=2, spec_accept_rate=0.75),
+        # pro/max are the long-context, frontier-scale tiers where MLA's KV
+        # compression and speculative decoding pay off the most (docs/14 §3).
         ServingTier("pro",  n_params=n_params if n_params <= 7e10 else 7e10,
                     quant="fp8", gpu=args.gpu_type, gpus_per_replica=8,
-                    target_throughput_tok_s=1800, ttft_ms=250),
+                    target_throughput_tok_s=1800, ttft_ms=250,
+                    attn_kind=("mla" if args.mla_serving else "gqa"), kv_compression=4.0,
+                    spec_decode=("eagle" if args.spec_decode else "none"),
+                    spec_draft_len=4, spec_accept_rate=0.8),
         ServingTier("max",  n_params=n_params, quant="fp8", gpu=args.gpu_type, gpus_per_replica=64,
-                    target_throughput_tok_s=900, ttft_ms=600),
+                    target_throughput_tok_s=900, ttft_ms=600,
+                    attn_kind=("mla" if args.mla_serving else "gqa"), kv_compression=4.0,
+                    spec_decode=("eagle" if args.spec_decode else "none"),
+                    spec_draft_len=4, spec_accept_rate=0.8),
     ]
     qps = {"nano": 80.0, "mid": 30.0, "pro": 8.0, "max": 1.5}
 
@@ -130,9 +140,13 @@ def report(result: dict, spec: ProgramSpec) -> None:
         print(f"             {k:12s} {v:.3f}")
     print()
     print(" SERVING (24h projection):")
-    print(f"   {'tier':<6s} {'qps':>6s} {'replicas':>9s} {'gpus':>6s} {'$/day':>10s} {'$/Mtok':>9s}")
+    print(f"   {'tier':<6s} {'qps':>6s} {'replicas':>9s} {'gpus':>6s} {'$/day':>10s} {'$/Mtok':>9s} {'attn':>5s} {'spec':>6s}")
     for name, s in result["serving"].items():
-        print(f"   {name:<6s} {s['qps']:>6.1f} {s['replicas']:>9d} {s['gpus']:>6d} {s['daily_dollars']:>10,.0f} {s['cost_per_mtok']:>9.2f}")
+        spec_tag = (f"{s.get('spec_throughput_mult', 1.0):.2f}x"
+                    if s.get("spec_decode", "none") != "none" else "—")
+        print(f"   {name:<6s} {s['qps']:>6.1f} {s['replicas']:>9d} {s['gpus']:>6d} "
+              f"{s['daily_dollars']:>10,.0f} {s['cost_per_mtok']:>9.2f} "
+              f"{s.get('attn_kind', 'gqa'):>5s} {spec_tag:>6s}")
     print()
     print(" COST")
     print(result["cost"].report())
@@ -155,6 +169,13 @@ def main():
     # --- training precision ---
     ap.add_argument("--precision", default="bf16", choices=["bf16", "fp8", "nvfp4"],
                     help="training numeric format; fp8/nvfp4 speed up pretrain")
+    # --- serving economics ---
+    ap.add_argument("--mla-serving", action="store_true",
+                    help="use Multi-head Latent Attention KV compression on the "
+                         "pro/max long-context tiers (fewer GPUs, lower $/Mtok)")
+    ap.add_argument("--spec-decode", action="store_true",
+                    help="enable speculative decoding (MTP/EAGLE draft heads) on "
+                         "the mid/pro/max tiers — lossless decode throughput uplift")
     # --- reasoning RL (RLVR/GRPO) ---
     ap.add_argument("--reasoning-rl", action="store_true",
                     help="add an RLVR/GRPO reasoning post-training phase")

@@ -155,6 +155,69 @@ def test_mla_serving_needs_fewer_gpus_than_gqa():
     assert out["gqa"]["kv_throughput_mult"] == 1.0
 
 
+# ---------- speculative-decoding serving economics ----------
+
+def test_spec_decode_mult_matches_geometric_acceptance():
+    from platform.sim.serving_sim import ServingTier, _spec_decode_mult
+    # none / zero draft length -> no uplift.
+    assert _spec_decode_mult(ServingTier("n", 1e9, "fp8")) == 1.0
+    assert _spec_decode_mult(
+        ServingTier("n", 1e9, "fp8", spec_decode="mtp", spec_draft_len=0)) == 1.0
+    # K=2, near-perfect acceptance reproduces the nanogpt-edu MTP benchmark shape
+    # (~3 tokens/verify pass before the small draft overhead).
+    near = _spec_decode_mult(ServingTier(
+        "m", 1e9, "fp8", spec_decode="mtp", spec_draft_len=2,
+        spec_accept_rate=0.99, spec_draft_overhead=0.0))
+    assert 2.9 <= near <= 3.0
+    # Higher acceptance and more draft tokens both raise the multiplier.
+    lo = _spec_decode_mult(ServingTier("l", 1e9, "fp8", spec_decode="mtp",
+                                       spec_draft_len=2, spec_accept_rate=0.6))
+    hi = _spec_decode_mult(ServingTier("h", 1e9, "fp8", spec_decode="eagle",
+                                       spec_draft_len=4, spec_accept_rate=0.85))
+    assert hi > lo > 1.0
+    # Draft overhead erodes the net speedup.
+    cheap = _spec_decode_mult(ServingTier("c", 1e9, "fp8", spec_decode="mtp",
+                                          spec_draft_len=3, spec_accept_rate=0.8,
+                                          spec_draft_overhead=0.05))
+    pricey = _spec_decode_mult(ServingTier("p", 1e9, "fp8", spec_decode="draft_model",
+                                           spec_draft_len=3, spec_accept_rate=0.8,
+                                           spec_draft_overhead=0.5))
+    assert cheap > pricey
+
+
+def test_spec_decode_serving_lowers_gpus_and_cost():
+    from platform.sim.serving_sim import ServingTier, simulate_serving
+    bus = EventBus(out_path=None)
+    qps = {"plain": 50.0, "spec": 50.0}
+    tiers = [
+        ServingTier("plain", 1e12, "fp8"),
+        ServingTier("spec", 1e12, "fp8", spec_decode="mtp",
+                    spec_draft_len=3, spec_accept_rate=0.8),
+    ]
+    out = simulate_serving(tiers, qps, bus)
+    # Speculative decode -> higher effective throughput -> fewer replicas/GPUs
+    # and lower $/Mtok at the same QPS, output unchanged.
+    assert out["spec"]["gpus"] < out["plain"]["gpus"]
+    assert out["spec"]["cost_per_mtok"] < out["plain"]["cost_per_mtok"]
+    assert out["spec"]["spec_throughput_mult"] > 1.0
+    assert out["plain"]["spec_throughput_mult"] == 1.0
+
+
+def test_mla_and_spec_decode_compose():
+    from platform.sim.serving_sim import ServingTier, simulate_serving
+    bus = EventBus(out_path=None)
+    qps = {"mla_only": 50.0, "mla_spec": 50.0}
+    tiers = [
+        ServingTier("mla_only", 1e12, "fp8", attn_kind="mla", kv_compression=4.0),
+        ServingTier("mla_spec", 1e12, "fp8", attn_kind="mla", kv_compression=4.0,
+                    spec_decode="eagle", spec_draft_len=4, spec_accept_rate=0.8),
+    ]
+    out = simulate_serving(tiers, qps, bus)
+    # Stacking speculative decode on top of MLA compounds the throughput win.
+    assert out["mla_spec"]["gpus"] <= out["mla_only"]["gpus"]
+    assert out["mla_spec"]["cost_per_mtok"] < out["mla_only"]["cost_per_mtok"]
+
+
 # ---------- agentic RL phase ----------
 
 def test_agentic_rl_quality_builds_on_reasoning():

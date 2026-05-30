@@ -2,6 +2,10 @@
   "size": "7b",
   "gpus": 512,
   "gpu_type": "H100",
+  "n_params": 6700000000.0,
+  "active_params": 6700000000.0,
+  "moe_experts": 0,
+  "precision": "bf16",
   "clock_days": 4.793787569287871,
   "total_dollars": 1016376.4446283624,
   "cost_by_phase": {
@@ -21,12 +25,21 @@
     "gpu_H100": 90968.32445792975,
     "human_labels": 925000.0
   },
-  "final_loss": 2.0174177011322176,
+  "final_loss": 2.029918761952112,
+  "reasoning_rl": {
+    "reasoning_quality": 1.0,
+    "rl_compute_flops": 0.0,
+    "compute_dollars": 0.0
+  },
   "eval": {
     "mmlu": 0.6272743955172635,
     "humaneval": 0.4103461029074896,
     "gsm8k": 0.3609586366237161,
-    "arena_elo": 1710.7973804467197
+    "arena_elo": 1710.7973804467197,
+    "swebench_verified": 0.10674354720762276,
+    "arc_agi2": 0.035047307079595115,
+    "hle": 0.05696177317050328,
+    "mmmu": 0.21817158172640383
   },
   "safety": {
     "verdict": "BLOCK",
@@ -49,7 +62,11 @@
       "gpus": 20,
       "daily_dollars": 576.0,
       "cost_per_mtok": 0.08333333333333333,
-      "ttft_ms": 50
+      "ttft_ms": 50,
+      "attn_kind": "gqa",
+      "kv_throughput_mult": 1.0,
+      "spec_decode": "none",
+      "spec_throughput_mult": 1.0
     },
     "mid": {
       "qps": 30.0,
@@ -57,7 +74,11 @@
       "gpus": 12,
       "daily_dollars": 576.0,
       "cost_per_mtok": 0.2222222222222222,
-      "ttft_ms": 100
+      "ttft_ms": 100,
+      "attn_kind": "gqa",
+      "kv_throughput_mult": 1.0,
+      "spec_decode": "none",
+      "spec_throughput_mult": 1.0
     },
     "pro": {
       "qps": 8.0,
@@ -65,7 +86,11 @@
       "gpus": 40,
       "daily_dollars": 1920.0,
       "cost_per_mtok": 2.7777777777777777,
-      "ttft_ms": 250
+      "ttft_ms": 250,
+      "attn_kind": "gqa",
+      "kv_throughput_mult": 1.0,
+      "spec_decode": "none",
+      "spec_throughput_mult": 1.0
     },
     "max": {
       "qps": 1.5,
@@ -73,7 +98,11 @@
       "gpus": 128,
       "daily_dollars": 6144.0,
       "cost_per_mtok": 47.40740740740741,
-      "ttft_ms": 600
+      "ttft_ms": 600,
+      "attn_kind": "gqa",
+      "kv_throughput_mult": 1.0,
+      "spec_decode": "none",
+      "spec_throughput_mult": 1.0
     }
   },
   "real_gpu": {

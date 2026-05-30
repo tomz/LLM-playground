@@ -172,6 +172,16 @@ attention default for any long-context tier.
 > and QK-norm. MLA's cache stores only the compressed latent `c_kv` + shared RoPE
 > key, not per-head K/V — the actual memory win, now real in code. Sparse
 > attention for the 1M tier remains open.
+>
+> **Update 3:** **speculative decoding is now priced in the serving simulator** —
+> `ServingTier(spec_decode="mtp"|"eagle", spec_draft_len, spec_accept_rate)` plus
+> `_spec_decode_mult()` model the truncated-geometric accepted-length uplift
+> (matching the `nanogpt-edu` MTP benchmark: K=2, high α → ~3 tokens/verify pass)
+> net of the draft's own overhead, and it **composes with MLA** so a long-context
+> tier can stack both. `scripts/simulate.py --spec-decode --mla-serving` turns
+> them on for the mid/pro/max tiers. Output is unchanged (exact verification), so
+> it is a pure $/Mtok win. The real serving engine's draft-and-verify loop (vs.
+> the priced model) is still open.
 
 ---
 
@@ -252,8 +262,9 @@ moving past for the from-scratch regime.*
   weights and are already shipped in our *own* `nanogpt-edu`. The frontier-platform
   optimizer doc doesn't mention them.
 - **Multi-Token Prediction (MTP)** (DeepSeek-V3) densifies the gradient and
-  doubles as a speculative-decoding draft head — also already in `nanogpt-edu`,
-  absent here.
+  doubles as a speculative-decoding draft head — also already in `nanogpt-edu`
+  (where `tools/bench_mtp_spec.py` now demonstrates a lossless 1.48× decode),
+  ported into the model here.
 - **WSD / constant-then-decay schedules** are increasingly preferred over cosine
   for runs where the token budget isn't fixed in advance.
 - **QK-norm and related stability tricks** — present in our `nanogpt-edu`, not in
@@ -401,7 +412,7 @@ priced in the simulator, *not* that it is production-scale.
 | 2 | Multimodality | 🟥 $/R/D | 🟡 | VLM adapter + sim pricing + MMMU; data/tokenizer/serving open |
 | 3 | MoE as default (fine-grained + shared, aux-free) | 🟥 $/R | ✅ | `MoEFFN` + `model_moe_1t.yaml` + active-param sim |
 | 4 | Agentic / tool-use training + eval | 🟧 R/D | 🟡 | `rl/agentic.py` env + sim + SWE-bench predictor; real tools open |
-| 5 | MLA / KV compression + 200k–1M context | 🟧 $/R | ✅ | `MLAttention` + **incremental KV-cache decode** (GQA+MLA) + serving sim; sparse-attn/1M open |
+| 5 | MLA / KV compression + 200k–1M context | 🟧 $/R | ✅ | `MLAttention` + **incremental KV-cache decode** (GQA+MLA) + serving sim with **speculative-decode pricing** (composes with MLA); sparse-attn/1M open |
 | 6 | Synthetic + reasoning-trace data engine | 🟧 D/R | ⬜ | not started (needs a data org) |
 | 7 | FP8/NVFP4 first-class + re-baselined sim | 🟨 $ | 🟡 | **precision policy** (`PrecisionPolicy`, TE-ready autocast) wired into trainer + sim; real FP8 numerics need the GPU |
 | 8 | Muon / MTP / QK-norm (adopt from our own repos) | 🟨 $/R | ✅ | **Muon** + **MTP** + QK-norm all ported into the model/optimizer |

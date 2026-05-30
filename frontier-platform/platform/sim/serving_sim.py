@@ -20,6 +20,19 @@ class ServingTier:
     # answer for cheap long-context serving (docs/14 §3, docs/03).
     attn_kind: str = "gqa"
     kv_compression: float = 1.0   # effective throughput multiplier from KV savings
+    # Speculative decoding. A draft (small model, or — for free — the model's own
+    # MTP heads as in our nanogpt-edu tools/bench_mtp_spec.py, EAGLE/Medusa
+    # family) proposes `spec_draft_len` tokens that one verify pass checks in
+    # parallel. Decode is latency-bound (one trunk pass per accepted token), so
+    # accepting on average L>1 tokens per verify pass lifts throughput ~L-fold,
+    # net of the draft's own cost. Output is unchanged (exact verification), so
+    # this is a pure $/Mtok win. "none" disables.
+    spec_decode: str = "none"     # 'none' | 'mtp' | 'eagle' | 'draft_model'
+    spec_draft_len: int = 0       # K draft tokens proposed per step
+    spec_accept_rate: float = 0.0  # per-draft-token acceptance prob α in [0, 1)
+    # Fraction of the verify-step compute spent producing the draft. Self-draft
+    # heads (MTP/EAGLE) are nearly free (~0.1); a separate draft model costs more.
+    spec_draft_overhead: float = 0.1
 
 
 def _kv_throughput_mult(t: "ServingTier") -> float:
@@ -30,6 +43,31 @@ def _kv_throughput_mult(t: "ServingTier") -> float:
         # default to a conservative 3x if not explicitly set
         return min(6.0, max(1.0, t.kv_compression if t.kv_compression > 1.0 else 3.0))
     return 1.0
+
+
+def _spec_decode_mult(t: "ServingTier") -> float:
+    """Throughput uplift from speculative decoding.
+
+    With K draft tokens accepted independently with probability α, the expected
+    number of accepted draft tokens before the first rejection is the truncated
+    geometric sum Σ_{i=1..K} α^i; plus the always-correct verified token gives a
+    mean of `1 + Σ α^i` tokens emitted per verify pass (this matches the
+    nanogpt-edu MTP benchmark: K=2, near-perfect α → ~3.0 tokens/round, ~1.5×).
+
+    The verify pass costs a bit more than a plain decode step because it also
+    runs the draft (`spec_draft_overhead`), so the net speedup divides the
+    accepted length by that overhead factor. Capped to stay conservative.
+    """
+    if t.spec_decode in ("none", "") or t.spec_draft_len <= 0:
+        return 1.0
+    alpha = min(max(t.spec_accept_rate, 0.0), 0.999)
+    accepted = 1.0
+    term = 1.0
+    for _ in range(t.spec_draft_len):
+        term *= alpha
+        accepted += term
+    net = accepted / (1.0 + max(0.0, t.spec_draft_overhead))
+    return min(4.0, max(1.0, net))
 
 
 def simulate_serving(
@@ -46,7 +84,8 @@ def simulate_serving(
         tok_per_request = avg_prompt_tokens + avg_completion_tokens
         tok_per_s_total = qps * tok_per_request
         kv_mult = _kv_throughput_mult(t)
-        eff_throughput = t.target_throughput_tok_s * kv_mult
+        spec_mult = _spec_decode_mult(t)
+        eff_throughput = t.target_throughput_tok_s * kv_mult * spec_mult
         replicas = max(1, int(tok_per_s_total / eff_throughput + 0.999))
         gpus = replicas * t.gpus_per_replica
         gpu_h = gpus * (seconds / 3600)
@@ -60,6 +99,8 @@ def simulate_serving(
             "ttft_ms": t.ttft_ms,
             "attn_kind": t.attn_kind,
             "kv_throughput_mult": kv_mult,
+            "spec_decode": t.spec_decode,
+            "spec_throughput_mult": spec_mult,
         }
         bus.emit("serve.tier", tier=t.name, **out[t.name])
     return out

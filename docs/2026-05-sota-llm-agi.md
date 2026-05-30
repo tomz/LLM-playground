@@ -207,8 +207,10 @@ latency at inference.
 - **Source:** [19], [20], [21], [22], [23]  ·  **Harvest:** shipped →
   `nanogpt-edu` MTP-as-speculative-draft serving benchmark
   (`tools/bench_mtp_spec.py`, EAGLE/Medusa-family self-speculation, lossless
-  1.48×); planned → `midgpt`/`coder-finetune` vLLM exports; design-only →
-  `frontier-platform`.
+  1.48×); planned → `midgpt`/`coder-finetune` vLLM exports; serving-economics
+  simulator (MoE/FP8/MLA + spec-decode all priced) shipped → `frontier-platform`
+  (`simulate.py --spec-decode --mla-serving`); real vLLM/SGLang backend remains
+  design-only there.
 
 ---
 
@@ -257,7 +259,7 @@ Everything is on a roadmap, sized by hardware tier — nothing is "blocked."
 | midgpt | FP8 matmul; FA-3; vLLM export path | minimal→ideal | Muon + Liger fused-CE + QK-norm landed; FP8/FA-3 light up on 8× H100; serving benchmark closes the train→serve loop |
 | distgpt | Muon (distributed); FP8; MoE + expert parallelism; MLA | ideal | QK-norm + zero-init landed (`108f5a9`); the 3D-parallel showcase; validate at multi-node |
 | coder-finetune | Spectrum; full-FT 7B | minimal→ideal | SFT → DPO → GRPO/RLVR ladder now complete; remaining harvest is targeted full-FT (Spectrum) + full-FT of 7B |
-| frontier-platform | wire RLVR/MLA/MoE/FP8 into $/throughput economics; vLLM/SGLang serving models | ideal | RLVR, MLA, MoE, Muon+MTP, precision policy all implemented; remaining work is the cost/throughput economics + serving models |
+| frontier-platform | sparse attention (1M ctx); real vLLM/SGLang serving backend; synthetic+reasoning-trace data engine | ideal | RLVR, MLA, MoE, Muon+MTP, precision policy, **serving economics (MoE/FP8/MLA/spec-decode all priced)** implemented; remaining work is real backends + a data org |
 
 ---
 
@@ -293,8 +295,12 @@ Config-gated, default-off, full test coverage:
   `f76cce0`, sandboxed code verifier `9abf163`, symbolic-math verifier
   `680de83`, async actor-learner rollout `e3295ab`, reasoning-SFT cold-start +
   composite reward `374274d`), bf16/fp8/nvfp4-ready precision policy
-  (`b4788a5`), agentic tool-use RL + 2026 eval suite (`f1e6d23`), and a
-  pretrained SigLIP/ViT vision tower (`2af2cde`).
+  (`b4788a5`), agentic tool-use RL + 2026 eval suite (`f1e6d23`), a
+  pretrained SigLIP/ViT vision tower (`2af2cde`), and **serving economics that
+  price MoE active-params, FP8/NVFP4, MLA KV-compression, and speculative
+  decoding (MTP/EAGLE draft heads)** — the spec-decode model matches the
+  nanogpt-edu MTP benchmark and composes with MLA (`simulate.py --spec-decode
+  --mla-serving`).
 
 Both core repos: ruff-clean, end-to-end train/resume/sample smoke-verified.
 
