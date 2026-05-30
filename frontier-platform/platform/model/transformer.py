@@ -82,8 +82,10 @@ class RoPE(nn.Module):
 
 
 class GQAttention(nn.Module):
-    """Grouped-Query Attention via SDPA. KV cache argument is accepted but ignored
-    here (used by the serving engine via a separate code path)."""
+    """Grouped-Query Attention via SDPA. Supports an optional incremental
+    ``kv_cache``: when provided, new K/V are appended and the query attends over
+    the full cached history at absolute ``start_pos`` (used by the serving
+    engine's decode path); without it, runs full causal self-attention."""
 
     def __init__(self, cfg: ModelConfig):
         super().__init__()
@@ -143,8 +145,10 @@ class MLAttention(nn.Module):
     Layout per head: head_dim = nope_dim (content, from the latent) + rope_dim
     (position, decoupled). Queries get their own latent down/up projection.
 
-    Toy-functional: computes full attention via SDPA (no incremental cache here;
-    the serving engine consumes ``kv_bytes_per_token`` for the cache-size math).
+    Supports incremental decode: only the compressed latent ``c_kv`` and the
+    single shared decoupled-RoPE key are cached (that is the whole point of MLA),
+    and per-head K/V are re-expanded from the latent each step. The serving
+    engine also consumes ``kv_bytes_per_token`` for the cache-size accounting.
     """
 
     def __init__(self, cfg: ModelConfig):

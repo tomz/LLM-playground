@@ -10,9 +10,12 @@ The frontier uses three big families:
   - code:   unit tests run in a sandbox (gVisor/Firecracker)
   - formal: proof checkers / constraint solvers / schema validators
 
-This module ships the cheap, dependency-free ones (string/regex/math) that make
-the GRPO loop runnable in tests, and a NotImplementedError stub for the
-sandboxed code verifier (which needs real isolation — see docs/09-safety-redteam.md).
+This module ships the cheap, dependency-free ones (string/regex/math) plus a
+**sandboxed code verifier** (:class:`CodeUnitTestVerifier`, subprocess + POSIX
+rlimits via :mod:`platform.rl.sandbox`). The math verifier uses sympy for
+symbolic equivalence when available and falls back to numeric last-number
+matching otherwise. For a public deployment, wrap the code sandbox in
+gVisor/Firecracker/nsjail — see docs/09-safety-redteam.md.
 """
 from __future__ import annotations
 
@@ -69,27 +72,95 @@ _NUM_RE = re.compile(r"-?\d+(?:\.\d+)?")
 
 
 class MathExactVerifier:
-    """Compare the *last* number in the response against an expected value.
+    """Verify a math answer against an expected value.
 
-    This is the canonical RLVR math reward: parse the final answer and check
-    exact (or float-close) equality. Real systems also accept symbolic
-    equivalence (sympy) and boxed-answer extraction.
+    The canonical RLVR math reward: extract the final answer and check
+    equivalence. Extraction prefers a ``\\boxed{...}`` answer (the convention the
+    reasoning-SFT format teaches), then falls back to the last number in the
+    text. Equivalence is checked three ways, in order:
+
+      1. numeric close (``abs(got - expected) <= atol``),
+      2. **symbolic** equality via sympy when installed (so ``1/2``, ``0.5`` and
+         ``\\frac{1}{2}`` all match), and
+      3. exact string match of the normalized answer.
+
+    When ``expected`` is a string (e.g. ``"\\frac{1}{2}"``) only the symbolic /
+    string paths apply. sympy is optional — without it the verifier degrades to
+    numeric + string matching.
     """
 
-    def __init__(self, expected: float, *, atol: float = 1e-6, reward: float = 1.0):
-        self.expected = float(expected)
+    def __init__(self, expected, *, atol: float = 1e-6, reward: float = 1.0):
+        self.expected_raw = expected
+        try:
+            self.expected = float(expected)
+            self._expected_is_num = True
+        except (TypeError, ValueError):
+            self.expected = None
+            self._expected_is_num = False
         self.atol = atol
         self.reward = reward
 
     def __call__(self, prompt: str, response: str) -> float:
-        matches = _NUM_RE.findall(response)
-        if not matches:
+        ans = self._extract_answer(response)
+        if ans is None:
             return 0.0
+        # 1. numeric close
+        if self._expected_is_num:
+            got = self._to_float(ans)
+            if got is not None and abs(got - self.expected) <= self.atol:
+                return self.reward
+        # 2. symbolic equivalence (optional sympy)
+        if self._symbolic_equal(ans, self.expected_raw):
+            return self.reward
+        # 3. exact normalized string match
+        if self._normalize(ans) == self._normalize(str(self.expected_raw)):
+            return self.reward
+        return 0.0
+
+    # ---- extraction ----
+    _BOXED_RE = re.compile(r"\\boxed\{([^{}]*)\}")
+
+    def _extract_answer(self, response: str) -> str | None:
+        boxed = self._BOXED_RE.findall(response)
+        if boxed:
+            return boxed[-1].strip()
+        nums = _NUM_RE.findall(response)
+        return nums[-1] if nums else None
+
+    @staticmethod
+    def _to_float(s: str):
         try:
-            got = float(matches[-1])
-        except ValueError:
-            return 0.0
-        return self.reward if abs(got - self.expected) <= self.atol else 0.0
+            return float(s)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _normalize(s: str) -> str:
+        return re.sub(r"\s+", "", s.strip().rstrip("."))
+
+    @staticmethod
+    def _latex_to_sympy(s: str) -> str:
+        r"""Best-effort \frac{a}{b} -> (a)/(b) and strip common LaTeX wrappers so
+        plain sympy.sympify can parse simple competition answers."""
+        s = s.strip().strip("$")
+        s = re.sub(r"\\frac\{([^{}]*)\}\{([^{}]*)\}", r"(\1)/(\2)", s)
+        s = s.replace("\\left", "").replace("\\right", "")
+        s = s.replace("\\cdot", "*").replace("\\times", "*")
+        s = s.replace("^", "**")
+        return s
+
+    def _symbolic_equal(self, a: str, b) -> bool:
+        try:
+            import sympy
+        except Exception:
+            return False
+        try:
+            ea = sympy.sympify(self._latex_to_sympy(str(a)))
+            eb = sympy.sympify(self._latex_to_sympy(str(b)))
+            diff = sympy.simplify(ea - eb)
+            return diff == 0
+        except Exception:
+            return False
 
 
 # ---------- sandboxed code (intentional stub) ----------

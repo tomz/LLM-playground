@@ -52,6 +52,19 @@ def test_math_exact_verifier_parses_last_number():
     assert v("2+40=?", "no numbers here") == 0.0
 
 
+def test_math_exact_verifier_boxed_and_symbolic():
+    # Boxed extraction takes precedence over stray numbers in the reasoning.
+    v = MathExactVerifier(42)
+    assert v("q", "I tried 7 and 13 but \\boxed{42}") == 1.0
+    assert v("q", "stuff 99 then \\boxed{41}") == 0.0
+    # Symbolic equivalence: 1/2 == 0.5 == \frac{1}{2} (needs sympy; falls back
+    # to numeric/string otherwise).
+    half = MathExactVerifier(0.5)
+    assert half("q", "\\boxed{1/2}") == 1.0
+    fr = MathExactVerifier("\\frac{1}{2}")
+    assert fr("q", "the answer is \\boxed{0.5}") == 1.0
+
+
 def test_length_penalty_is_nonpositive():
     v = length_penalty(max_tokens=3, coef=0.1)
     assert v("p", "a b c") == 0.0
