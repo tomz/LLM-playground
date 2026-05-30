@@ -110,11 +110,18 @@ exception. Specific deltas:
 shared-expert routing and aux-loss-free balancing; rewrite the scaling/cost
 model around active parameters.
 
-> **Update:** the *simulator* now models MoE economics — `moe_active_params()`
+> **Update:** the *simulator* models MoE economics — `moe_active_params()`
 > in `platform/sim/scaling.py` plus `--moe-experts/--moe-top-k` flags route the
 > cost/throughput model through active (not total) parameters, so a 1T-total /
-> ~357B-active run prices like its active size. The *model code* default is
-> still dense; the cost reasoning is no longer dense-only.
+> ~357B-active run prices like its active size. **The model code now also
+> implements the frontier recipe**: `MoEFFN` supports fine-grained experts
+> (`moe_expert_d_ffn`), always-on shared expert(s) (`moe_shared_experts`), and
+> aux-loss-free bias-based load balancing (`moe_balance="aux_free"`, the
+> default), with `ModelConfig.active_param_count()` exposing the per-token cost.
+> See `configs/model_moe_1t.yaml` (128 experts, top-8, 1 shared, ~1T/~37B). What
+> remains is making MoE the *default config* for large tiers (the dense 1B/7B
+> baselines stay) and real expert-parallel dispatch — the single-device loop is
+> a correctness reference, not a throughput one.
 
 ---
 

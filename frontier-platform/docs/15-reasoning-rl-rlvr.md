@@ -1,10 +1,15 @@
 # 15 — Reasoning & RL on Verifiable Rewards (RLVR)
 
-> **Status: design stub.** This is the single largest capability gap identified
-> in `14-gap-analysis-vs-frontier.md` (gap #1). 2025 was *"the year of reasoning,
-> RLVR, and GRPO"*; this blueprint's `07-alignment-sft-rlhf.md` stops at the
-> 2024 SFT→RM→PPO/DPO paradigm. This doc specifies the missing post-training
-> regime. No code yet — `platform/rl/` is unimplemented.
+> **Status: design + toy-functional skeleton.** This is the single largest
+> capability gap identified in `14-gap-analysis-vs-frontier.md` (gap #1). 2025 was
+> *"the year of reasoning, RLVR, and GRPO"*; this blueprint's
+> `07-alignment-sft-rlhf.md` stops at the 2024 SFT→RM→PPO/DPO paradigm. This doc
+> specifies the missing post-training regime. A toy-functional `platform/rl/` now
+> exists (`verifiers.py` + `rollout.py` group sampler + `grpo.py` GRPO learner +
+> `coldstart.py` reasoning-SFT + `reward.py` shaping); it runs the full
+> sample→verify→advantage→update loop on CPU with the byte tokenizer and the tiny
+> test model (`tests/test_rl.py`). The production gap is still open: **async
+> vLLM/SGLang rollout, sandboxed code verifiers, and reasoning-data curation.**
 
 ---
 
@@ -58,15 +63,17 @@ stable advantages without GAE.
 
 ## The missing subsystem: `platform/rl/`
 
-This is an **async actor–learner system**, not a loss function. Components:
+This is an **async actor–learner system**, not a loss function. Components
+(✅ = toy-functional in `platform/rl/`; ⬜ = production hook still open):
 
-| Module (proposed) | Responsibility |
-|-------------------|----------------|
-| `rl/rollout.py` | async inference engine (vLLM/SGLang) producing G samples/prompt at high throughput; weight-sync from learner |
-| `rl/verifiers/` | pluggable reward workers: `math.py`, `code.py` (sandboxed exec — gVisor/Firecracker), `formal.py`, `schema.py` |
-| `rl/grpo.py` | GRPO/PPO-with-verifier learner; KL-to-ref; group advantage |
-| `rl/buffer.py` | prompt/rollout/reward queue between actors and learner |
-| `rl/reward.py` | reward shaping, length penalties, format rewards, reward hacking guards |
+| Module | Status | Responsibility |
+|--------|--------|----------------|
+| `rl/rollout.py` | ✅ sync sampler | group sampler (G samples/prompt) + response mask + group index. ⬜ async vLLM/SGLang engine + weight-sync |
+| `rl/verifiers.py` | ✅ math/regex/contains | pluggable reward fns; ⬜ sandboxed `code` exec (gVisor/Firecracker), formal proof checkers |
+| `rl/grpo.py` | ✅ GRPO learner | group-relative advantage, KL-to-ref, REINFORCE-style objective |
+| `rl/coldstart.py` | ✅ reasoning-SFT | small long-CoT cold-start to stabilize format before RL |
+| `rl/reward.py` | ✅ shaping | composite reward: correctness + format + length penalty + reward-hacking guards |
+| `rl/buffer.py` | ⬜ | prompt/rollout/reward queue between async actors and learner |
 
 Reuse: the serving stack (`10-serving-inference.md`) *is* the rollout engine;
 the sandbox from `09-safety-redteam.md` *is* the code verifier. RLVR mostly

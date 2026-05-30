@@ -112,63 +112,108 @@ class SwiGLU(nn.Module):
 
 
 class MoEFFN(nn.Module):
-    """Top-k softmax routing over a small stack of SwiGLU experts.
+    """Sparse MoE FFN: top-k routing over fine-grained experts + optional shared
+    expert(s), with either aux-loss-free (bias-based) or aux-loss balancing.
 
-    Stores `self.last_aux_loss` (load-balance + router z-loss) so the trainer
-    can add it to the main loss. No expert-parallelism (single-device)."""
+    This is the 2025 frontier default (DeepSeek-V3): many narrow routed experts,
+    one or more always-on shared experts that capture common knowledge, and
+    **aux-loss-free** load balancing — a per-expert bias is nudged up/down to
+    equalize load instead of adding a quality-degrading auxiliary loss to the
+    main objective.
+
+    Stores ``self.last_aux_loss`` (the router z-loss, plus a load-balance loss
+    only when ``moe_balance == 'aux_loss'``) for the trainer to add to the main
+    loss, and ``self.last_expert_counts`` for monitoring. The routing bias lives
+    in ``self.routing_bias`` and is updated in-place (no gradient) each training
+    forward when balancing is aux-free.
+    """
 
     def __init__(self, cfg: ModelConfig, z_loss_coeff: float = 1e-3, lb_loss_coeff: float = 1e-2):
         super().__init__()
         self.cfg = cfg
         self.n_experts = int(cfg.moe_num_experts)
         self.top_k = int(cfg.moe_top_k)
+        self.n_shared = int(cfg.moe_shared_experts)
+        self.balance = cfg.moe_balance
+        self.bias_update_speed = float(cfg.moe_bias_update_speed)
         assert self.n_experts > 0 and 1 <= self.top_k <= self.n_experts
+        d_exp = cfg.expert_d_ffn
         self.gate = nn.Linear(cfg.d_model, self.n_experts, bias=False)
         self.experts = nn.ModuleList(
-            [SwiGLU(cfg.d_model, cfg.d_ffn) for _ in range(self.n_experts)]
+            [SwiGLU(cfg.d_model, d_exp) for _ in range(self.n_experts)]
+        )
+        self.shared = nn.ModuleList(
+            [SwiGLU(cfg.d_model, d_exp) for _ in range(self.n_shared)]
         )
         self.z_loss_coeff = z_loss_coeff
         self.lb_loss_coeff = lb_loss_coeff
+        # Aux-loss-free routing bias: added to gate logits only for top-k
+        # *selection* (not for the combine weights), nudged to equalize load.
+        self.register_buffer("routing_bias", torch.zeros(self.n_experts))
         self.last_aux_loss: torch.Tensor = torch.tensor(0.0)
         self.last_expert_counts: torch.Tensor = torch.zeros(self.n_experts, dtype=torch.long)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, T, D = x.shape
         flat = x.reshape(B * T, D)
+        N = flat.shape[0]
         logits = self.gate(flat)                                  # [N, E]
-        # z-loss: penalize large logsumexp
+        # z-loss: penalize large logsumexp (keeps router logits well-scaled)
         lse = torch.logsumexp(logits, dim=-1)
         z_loss = self.z_loss_coeff * (lse.pow(2).mean())
         probs = logits.softmax(dim=-1)                            # [N, E]
-        top_w, top_i = probs.topk(self.top_k, dim=-1)             # [N, k]
+
+        # --- selection: aux-free adds a per-expert bias to *choose* experts,
+        # but the combine weights come from the unbiased softmax probs. ---
+        if self.balance == "aux_free":
+            sel_score = probs + self.routing_bias.to(probs.dtype)
+        else:
+            sel_score = probs
+        _, top_i = sel_score.topk(self.top_k, dim=-1)             # [N, k]
+        top_w = probs.gather(1, top_i)                            # unbiased weights
         top_w = top_w / (top_w.sum(dim=-1, keepdim=True) + 1e-9)
 
-        # Load-balance: f_e * P_e per Switch Transformer
+        # Per-expert token counts (each token counted top_k times across slots).
         with torch.no_grad():
+            counts = torch.zeros(self.n_experts, device=probs.device, dtype=torch.long)
+            counts.scatter_add_(0, top_i.reshape(-1),
+                                torch.ones(top_i.numel(), device=probs.device, dtype=torch.long))
+            self.last_expert_counts = counts
+
+        if self.balance == "aux_loss":
+            # Switch-style load-balance: f_e * P_e, encourages uniform routing.
             one_hot = torch.zeros_like(probs).scatter_(1, top_i, 1.0 / self.top_k)
             f = one_hot.mean(dim=0)        # fraction of tokens routed to e
-            # Per-expert token counts (top-k routing → each token counted top_k times)
-            counts = torch.zeros(self.n_experts, device=probs.device, dtype=torch.long)
-            for e in range(self.n_experts):
-                counts[e] = (top_i == e).sum()
-            self.last_expert_counts = counts
-        P = probs.mean(dim=0)              # mean gating probability per e
-        lb_loss = self.lb_loss_coeff * self.n_experts * (f * P).sum()
-        self.last_aux_loss = z_loss + lb_loss
+            P = probs.mean(dim=0)          # mean gating probability per e
+            lb_loss = self.lb_loss_coeff * self.n_experts * (f * P).sum()
+            self.last_aux_loss = z_loss + lb_loss
+        else:
+            # Aux-loss-free: no balance term in the loss. Instead nudge the bias
+            # toward under-loaded experts (DeepSeek-V3 §2.1.2). Training only.
+            self.last_aux_loss = z_loss
+            if self.training and self.bias_update_speed > 0:
+                with torch.no_grad():
+                    load = counts.float() / max(1, N * self.top_k)  # frac of slots
+                    target = 1.0 / self.n_experts
+                    # under-loaded (load<target) -> raise bias; over-loaded -> lower
+                    self.routing_bias += self.bias_update_speed * torch.sign(target - load)
 
         out = torch.zeros_like(flat)
-        # Dispatch: per-expert mask + matmul. Fine for small N.
+        # Routed experts: per-expert mask + matmul. Fine for small/medium N.
         for e in range(self.n_experts):
             mask = (top_i == e)                                   # [N, k]
             if not mask.any():
                 continue
-            # weight contribution from each slot routed to expert e
             w_e = (top_w * mask).sum(dim=-1)                      # [N]
             sel = w_e > 0
             if not sel.any():
                 continue
             y_e = self.experts[e](flat[sel])
             out[sel] += w_e[sel, None] * y_e
+
+        # Shared expert(s): always on for every token (weight 1.0 each).
+        for sh in self.shared:
+            out += sh(flat)
         return out.view(B, T, D)
 
 
@@ -251,3 +296,5 @@ class Transformer(nn.Module):
             elif isinstance(blk.ffn, MoEFFN):
                 for e in blk.ffn.experts:
                     _init(e.w2, residual_std)
+                for sh in blk.ffn.shared:
+                    _init(sh.w2, residual_std)

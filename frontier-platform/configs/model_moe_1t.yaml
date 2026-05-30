@@ -1,0 +1,38 @@
+# Frontier-shaped sparse MoE tier (DeepSeek-V3-style): fine-grained experts +
+# 1 shared expert + aux-loss-free balancing. ~1T total / ~37B active params.
+# See docs/03-model-architecture.md and docs/14-gap-analysis-vs-frontier.md §2.
+model:
+  vocab_size: 100352
+  n_layer: 80
+  n_head: 64
+  n_kv_head: 8
+  d_model: 8192
+  d_ffn: 28672            # dense-equivalent FFN (used by shared/fallback path)
+  max_seq_len: 8192
+  rope_base: 500000
+  # --- sparse MoE ---
+  moe_num_experts: 128
+  moe_top_k: 8
+  moe_expert_d_ffn: 2048  # fine-grained: narrow experts
+  moe_shared_experts: 1
+  moe_balance: aux_free
+  moe_bias_update_speed: 1.0e-3
+optim:
+  peak_lr: 1.0e-4
+  warmup_steps: 2000
+  total_steps: 480000
+parallel:
+  backend: megatron
+  dp: 64
+  tp: 8
+  pp: 8
+  ep: 8                   # expert parallelism
+  zero_stage: 1
+train:
+  seq_len: 8192
+  micro_batch: 1
+  global_batch_tokens: 8000000
+  total_tokens: 15.0e12
+# Economics (priced by the simulator on *active* params, not total):
+#   total ~1.0T params, active ~37B/token -> trains/serves like a 37B dense model
+#   while carrying ~1T params of knowledge. Pair with --precision fp8 in the sim.

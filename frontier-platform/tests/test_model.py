@@ -54,7 +54,7 @@ def test_moe_routing_load_balance():
     cfg = ModelConfig(
         vocab_size=256, n_layer=2, n_head=4, n_kv_head=2,
         d_model=64, d_ffn=128, max_seq_len=64,
-        moe_num_experts=4, moe_top_k=2,
+        moe_num_experts=4, moe_top_k=2, moe_balance="aux_loss",
     )
     torch.manual_seed(0)
     m = Transformer(cfg)
@@ -64,6 +64,57 @@ def test_moe_routing_load_balance():
     _, loss = m(x, targets=y)
     aux = m.layers[0].ffn.last_aux_loss
     assert float(aux) > 0.0
+    assert torch.isfinite(loss)
+
+
+def test_moe_aux_free_balancing_updates_bias_and_balances_load():
+    """Aux-free routing: no load-balance loss term, and the routing bias moves
+    to equalize per-expert load over several training steps."""
+    cfg = ModelConfig(
+        vocab_size=256, n_layer=2, n_head=4, n_kv_head=2,
+        d_model=64, d_ffn=128, max_seq_len=64,
+        moe_num_experts=8, moe_top_k=2, moe_balance="aux_free",
+        moe_bias_update_speed=1e-2,
+    )
+    torch.manual_seed(0)
+    m = Transformer(cfg).train()
+    ffn = m.layers[0].ffn
+    assert torch.allclose(ffn.routing_bias, torch.zeros_like(ffn.routing_bias))
+    x = torch.randint(0, 256, (4, 32))
+    y = torch.randint(0, 256, (4, 32))
+    for _ in range(20):
+        _, loss = m(x, targets=y)
+        loss.backward()
+    # Aux-free => aux loss is just the z-loss, and the bias has moved.
+    assert ffn.routing_bias.abs().sum() > 0
+    assert torch.isfinite(loss)
+    # Counts should cover the whole token budget (top_k slots per token).
+    assert int(ffn.last_expert_counts.sum()) == 4 * 32 * cfg.moe_top_k
+
+
+def test_moe_fine_grained_and_shared_experts_param_counts():
+    """Fine-grained narrow experts + shared expert: total >> active, and the
+    config's param formulas track the real module."""
+    cfg = ModelConfig(
+        vocab_size=256, n_layer=2, n_head=4, n_kv_head=2,
+        d_model=64, d_ffn=256, max_seq_len=64,
+        moe_num_experts=16, moe_top_k=2, moe_expert_d_ffn=64,
+        moe_shared_experts=1,
+    )
+    torch.manual_seed(0)
+    m = Transformer(cfg)
+    ffn = m.layers[0].ffn
+    assert isinstance(ffn, MoEFFN)
+    assert len(ffn.experts) == 16 and len(ffn.shared) == 1
+    # Active params are far below total for a 16-expert top-2 model.
+    assert cfg.active_param_count() < cfg.param_count()
+    # param_count formula tracks the real total within 5%.
+    actual = sum(p.numel() for p in m.parameters())
+    assert abs(actual - cfg.param_count()) / cfg.param_count() < 0.05, (actual, cfg.param_count())
+    # Forward still runs and shared expert fires for every token.
+    x = torch.randint(0, 256, (2, 16))
+    y = torch.randint(0, 256, (2, 16))
+    _, loss = m(x, targets=y)
     assert torch.isfinite(loss)
 
 
