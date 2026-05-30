@@ -4,10 +4,13 @@ This is the post-2024 post-training regime missing from `platform.alignment`:
 RL against *verifiable* rewards (GRPO), where the reward is a deterministic
 verifier (math/code/schema), not a learned reward model.
 
-The implementation here is deliberately *toy-functional* — it runs end-to-end on
-CPU with the byte tokenizer and the tiny test Transformer, mirroring the style of
-`platform.alignment.{dpo,ppo}`. Production hooks (async rollout via vLLM/SGLang,
-sandboxed code execution) are marked with NotImplementedError stubs.
+The learner math is the production GRPO objective (per-token clipped importance
+ratio against the behavior policy + k3 KL to a reference), and the code verifier
+runs candidate code in a real subprocess sandbox with POSIX rlimits. Everything
+runs end-to-end on CPU with the byte tokenizer and the tiny test Transformer.
+The remaining swap-the-backend boundaries are external systems: an out-of-process
+vLLM/SGLang generation actor (the in-process async actor–learner loop is wired)
+and a gVisor/Firecracker jail around the code sandbox.
 """
 from .verifiers import (
     Verifier,
