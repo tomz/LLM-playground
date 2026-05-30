@@ -181,7 +181,10 @@ multimodal eval suite. (Audio/video are a further tier.)
 > `VisionLanguageModel`, runs on CPU; see `docs/16-multimodality.md`). It proves
 > the image-token-prepend forward/loss path, but the encoder is randomly
 > initialized and the data/tokenizer/eval/serving multimodal paths are still
-> open. The *simulator* does not yet price multimodal training.
+> open. **The simulator now prices multimodal training**:
+> `ProgramSpec(multimodal=True, mm_data_frac=…)` inflates effective training
+> tokens (vision tokens are heavy) so multimodal runs cost more wall-clock/$, and
+> the eval suite scores **MMMU** above chance only when `multimodal=True`.
 
 ---
 
@@ -201,6 +204,17 @@ completion over long horizons, not just static QA.
 
 **To close:** add tool-use trajectory data + an agentic RL environment harness;
 add SWE-bench-style and computer-use evals to `08-evaluation.md`.
+
+> **Update:** a *toy-functional* agentic harness now exists —
+> `platform/rl/agentic.py` (`ToolEnv` + `Tool`/`ToolSpec` + `rollout_episode`):
+> a multi-turn agent↔env loop where the agent emits `<|tool_call|>` JSON, the env
+> runs the tool and returns `<|tool_result|>`, and a **terminal, sparse**
+> verifiable reward scores task completion — the agentic-RL regime, not
+> single-turn. The *simulator* prices it: `platform/sim/agentic_rl_sim.py` charges
+> long-horizon rollout GPU + tool-execution CPU fleet + trajectory labels and
+> returns an `agentic_quality` lift, and the eval suite now scores **SWE-bench
+> Verified** (driven mostly by `agentic_quality`). Still open: real sandboxed
+> tools (code/browser), expert-trajectory SFT data, and the async rollout engine.
 
 ---
 
@@ -298,6 +312,16 @@ in 2026: SWE-bench Verified, ARC-AGI-2, Humanity's Last Exam, frontier-math,
 long-horizon agentic task suites, multimodal (MMMU/video), and **reasoning-cost
 curves** (score vs. test-time tokens). GSM8K/MMLU are now near-saturated and
 contamination-prone.
+
+> **Update:** the *simulator's* eval now reports the 2026 frontier suite —
+> `predict_swebench` (agentic-post-training-driven), `predict_arc_agi2` and
+> `predict_hle` (reasoning-driven), and `predict_mmmu` (at chance until
+> multimodal) in `platform/sim/scaling.py`, surfaced through `simulate_eval`.
+> Unlike the 2024 scores these are **lifted by post-training** (`reasoning_quality`
+> / `agentic_quality`) and by modality, so they move when you add RLVR, agentic
+> RL, or a vision tower — exactly the levers the static 2024 suite couldn't see.
+> The static benchmark *harness* in `08-evaluation.md` still needs the real
+> datasets wired in.
 
 **Safety** (`09`): genuinely forward-looking on *categories* (CBRN, cyber,
 autonomy, RSP preflight gate). The gap is that the **eval harness and RL loop

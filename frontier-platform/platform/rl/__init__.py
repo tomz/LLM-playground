@@ -27,6 +27,16 @@ from .reward import (
     answer_spam_guard,
 )
 from .coldstart import ColdStartConfig, ColdStartResult, run_coldstart, format_trace
+from .agentic import (
+    ToolSpec,
+    ToolEnv,
+    Trajectory,
+    Transition,
+    rollout_episode,
+    parse_action,
+    make_calculator,
+    make_keyvalue_store,
+)
 from .rollout import sample_group, GroupRollout
 from .grpo import GRPOConfig, group_advantages, grpo_step, run_grpo
 
@@ -48,6 +58,14 @@ __all__ = [
     "ColdStartResult",
     "run_coldstart",
     "format_trace",
+    "ToolSpec",
+    "ToolEnv",
+    "Trajectory",
+    "Transition",
+    "rollout_episode",
+    "parse_action",
+    "make_calculator",
+    "make_keyvalue_store",
     "sample_group",
     "GroupRollout",
     "GRPOConfig",

@@ -140,3 +140,50 @@ def reasoning_rl_quality(base_cap: float, rollouts: float, steps: float) -> floa
     max_lift = 0.30
     lift = max_lift * base_cap * exp_term * step_term
     return 1.0 + lift
+
+
+# --- 2026 eval suite predictors (reasoning/agentic/multimodal-aware) ---------
+# The 2024 suite (MMLU/HumanEval/GSM8K) is near-saturated; the frontier is judged
+# on SWE-bench, ARC-AGI-2, Humanity's Last Exam, and multimodal (MMMU). These
+# predictors are deliberately harder (lower ceilings, steeper compute thresholds)
+# and are *lifted by post-training* (reasoning_quality / agentic_quality), unlike
+# the pretraining-only 2024 scores. Calibrated to public Nov-Dec 2025 reports.
+
+def predict_swebench(n_params: float, n_tokens: float, *, code_frac: float = 0.15,
+                     reasoning_quality: float = 1.0, agentic_quality: float = 1.0) -> float:
+    """SWE-bench Verified (fraction resolved). Frontier (Opus 4.5) >0.80; a base
+    model with no agentic post-training scores near zero — this is overwhelmingly
+    a post-training/agentic capability, so the multipliers dominate."""
+    flops = compute_flops(n_params, n_tokens) * (0.5 + code_frac)
+    base = 0.02 + 0.30 * _sigmoid((math.log10(flops) - 23.6) / 1.0)
+    lift = (1.0 + (reasoning_quality - 1.0) * 2.5) * (1.0 + (agentic_quality - 1.0) * 4.0)
+    return max(0.0, min(0.95, base * lift))
+
+
+def predict_arc_agi2(n_params: float, n_tokens: float, *, reasoning_quality: float = 1.0) -> float:
+    """ARC-AGI-2 (abstraction/reasoning). Brutally hard; frontier still low.
+    Almost entirely a reasoning-compute story."""
+    flops = compute_flops(n_params, n_tokens)
+    base = 0.01 + 0.10 * _sigmoid((math.log10(flops) - 24.0) / 1.0)
+    lift = 1.0 + (reasoning_quality - 1.0) * 4.0
+    return max(0.0, min(0.80, base * lift))
+
+
+def predict_hle(n_params: float, n_tokens: float, *, reasoning_quality: float = 1.0) -> float:
+    """Humanity's Last Exam (expert-level, broad). Frontier ~0.1-0.25 in 2025."""
+    flops = compute_flops(n_params, n_tokens)
+    base = 0.02 + 0.12 * _sigmoid((math.log10(flops) - 23.8) / 1.1)
+    lift = 1.0 + (reasoning_quality - 1.0) * 2.0
+    return max(0.0, min(0.70, base * lift))
+
+
+def predict_mmmu(n_params: float, n_tokens: float, *, multimodal: bool = False,
+                 mm_data_frac: float = 0.0, sft_quality: float = 1.0) -> float:
+    """MMMU (multimodal college-level). A text-only model cannot score above
+    chance (~0.22); needs a vision tower + multimodal data. Returns chance when
+    ``multimodal`` is False."""
+    if not multimodal:
+        return 0.22
+    flops = compute_flops(n_params, n_tokens) * (0.4 + mm_data_frac)
+    return max(0.22, min(0.92, (0.22 + 0.60 * _sigmoid((math.log10(flops) - 23.2) / 1.2)) * sft_quality))
+

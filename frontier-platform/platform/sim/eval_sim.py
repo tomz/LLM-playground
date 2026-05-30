@@ -7,6 +7,7 @@ from .economy import CostBook
 from .events import EventBus
 from .scaling import (
     predict_mmlu, predict_humaneval, predict_gsm8k, predict_arena_elo,
+    predict_swebench, predict_arc_agi2, predict_hle, predict_mmmu,
 )
 
 
@@ -21,6 +22,9 @@ def simulate_eval(
     bus: EventBus,
     seed: int = 0,
     reasoning_quality: float = 1.0,
+    agentic_quality: float = 1.0,
+    multimodal: bool = False,
+    mm_data_frac: float = 0.0,
     emit: bool = True,
 ) -> dict:
     rng = random.Random(seed)
@@ -43,14 +47,27 @@ def simulate_eval(
     elo = predict_arena_elo(mmlu, he, gsm, sft_q, rlhf_q, reasoning_quality)
     # add small noise so multiple runs aren't identical
     nz = lambda x: max(0.0, min(1.0, x * (1 + rng.gauss(0, 0.01))))
+    # --- 2026 frontier suite: post-training- and modality-aware, harder ---
+    swebench = predict_swebench(n_params, n_tokens, reasoning_quality=reasoning_quality,
+                                agentic_quality=agentic_quality)
+    arc = predict_arc_agi2(n_params, n_tokens, reasoning_quality=reasoning_quality)
+    hle = predict_hle(n_params, n_tokens, reasoning_quality=reasoning_quality)
+    mmmu = predict_mmmu(n_params, n_tokens, multimodal=multimodal,
+                        mm_data_frac=mm_data_frac, sft_quality=sft_q)
     out = {
         "mmlu": nz(mmlu),
         "humaneval": nz(he),
         "gsm8k": nz(gsm),
         "arena_elo": elo + rng.gauss(0, 8),
+        # 2026 frontier benchmarks
+        "swebench_verified": nz(swebench),
+        "arc_agi2": nz(arc),
+        "hle": nz(hle),
+        "mmmu": nz(mmmu),
     }
     if emit:
-        bus.emit("eval.done", **out, hours=base_h, reasoning_quality=reasoning_quality)
+        bus.emit("eval.done", **out, hours=base_h, reasoning_quality=reasoning_quality,
+                 agentic_quality=agentic_quality, multimodal=multimodal)
     return out
 
 
