@@ -397,30 +397,32 @@ priced in the simulator, *not* that it is production-scale.
 
 | # | Gap | Tag | Status | Notes |
 |---|-----|-----|--------|-------|
-| 1 | RLVR + GRPO + reasoning post-training | 🟥 R/D | ✅ | `platform/rl/`: GRPO + cold-start + reward shaping; sim phase |
+| 1 | RLVR + GRPO + reasoning post-training | 🟥 R/D | ✅ | GRPO + cold-start + reward shaping + **sandboxed code verifier** + **async actor–learner rollout** (`run_grpo_async`) |
 | 2 | Multimodality | 🟥 $/R/D | 🟡 | VLM adapter + sim pricing + MMMU; data/tokenizer/serving open |
 | 3 | MoE as default (fine-grained + shared, aux-free) | 🟥 $/R | ✅ | `MoEFFN` + `model_moe_1t.yaml` + active-param sim |
 | 4 | Agentic / tool-use training + eval | 🟧 R/D | 🟡 | `rl/agentic.py` env + sim + SWE-bench predictor; real tools open |
-| 5 | MLA / KV compression + 200k–1M context | 🟧 $/R | 🟡 | `MLAttention` + serving sim; sparse-attn + 1M context open |
-| 6 | Synthetic + reasoning-trace data engine | 🟧 D/R | ⬜ | not started |
-| 7 | FP8/NVFP4 first-class + re-baselined sim | 🟨 $ | 🟡 | sim prices it; training numerics not implemented |
-| 8 | Muon / MTP / QK-norm (adopt from our own repos) | 🟨 $/R | 🟡 | QK-norm done; Muon/MTP/WSD open |
+| 5 | MLA / KV compression + 200k–1M context | 🟧 $/R | ✅ | `MLAttention` + **incremental KV-cache decode** (GQA+MLA) + serving sim; sparse-attn/1M open |
+| 6 | Synthetic + reasoning-trace data engine | 🟧 D/R | ⬜ | not started (needs a data org) |
+| 7 | FP8/NVFP4 first-class + re-baselined sim | 🟨 $ | 🟡 | **precision policy** (`PrecisionPolicy`, TE-ready autocast) wired into trainer + sim; real FP8 numerics need the GPU |
+| 8 | Muon / MTP / QK-norm (adopt from our own repos) | 🟨 $/R | ✅ | **Muon** + **MTP** + QK-norm all ported into the model/optimizer |
 | 9 | 2026 eval + safety surfaces | 🟨 O/D | 🟡 | sim eval (SWE-bench/ARC-AGI-2/HLE/MMMU); real harness + safety open |
 
 **Bottom line.** The blueprint nails the *systems-engineering* half of a frontier
 program — data hygiene, distributed training, checkpointing/stability, infra
-reliability math, serving tiers, RSP gating. Those are real and hard and mostly
-**right**. The *2025–2026 capability stack* that was missing is now present in
-**toy-functional + simulated** form: sparse MoE (fine-grained + shared, aux-free),
-MLA KV compression, RLVR/GRPO reasoning post-training with cold-start and reward
-shaping, agentic tool-use RL, multimodal understanding, and a post-training-aware
-2026 eval suite — all runnable on CPU and priced by the simulator on hardware we
-don't own (GB200/B300). What remains is the **production-scale** half of each:
-async vLLM/SGLang rollout, sandboxed code/browser tools, pretrained vision towers,
-FP8 numerics, expert-parallel MoE dispatch, the synthetic/reasoning-trace data
-engine, and wiring real benchmark datasets into the eval harness. Those need
-**research bets, a data/labeling org, and real GPUs** — which is why the flagship
-labs still spend as much on *people and data* as on *compute*.
+reliability math, serving tiers, RSP gating. The *2025–2026 capability stack* is
+now implemented in **CPU-runnable, GPU-ready** form: sparse MoE (fine-grained +
+shared, aux-free), MLA with a real incremental KV cache, RLVR/GRPO with a
+sandboxed code verifier and an async actor–learner rollout, Muon + MTP + QK-norm,
+a Transformer-Engine-ready precision policy, multimodal understanding, and a
+post-training-aware 2026 eval suite — all green on CPU and priced by the simulator
+on hardware we don't own (GB200/B300). The design is now **swap-the-backend**, not
+rebuild: when the GPUs land, point `EngineConfig.backend="vllm"`, set
+`precision="fp8"` (install Transformer Engine), wrap the code sandbox in
+gVisor/Firecracker, and add expert-parallel dispatch — each an interface-compatible
+drop-in. What still needs **research bets and a data/labeling org**: the synthetic
++ reasoning-trace data engine (#6), pretrained vision towers and the multimodal
+data path (#2), real agentic tools (#4), and wiring real benchmark datasets into
+the eval harness (#9).
 
 ---
 
