@@ -132,3 +132,47 @@ def test_mtp_heads_routed_to_adamw_not_muon():
         if "mtp_heads" in name and any(p is q for q in mp)
     )
     assert n_mtp_in_muon == 0
+
+
+def test_hidden_matches_forward_logits():
+    """`hidden()` is the shared trunk primitive: lm_head(hidden(x)) must equal
+    the logits returned by forward()."""
+    torch.manual_seed(0)
+    cfg = GPTConfig(vocab_size=40, block_size=32, n_layer=2, n_head=4, n_kv_head=2,
+                    d_model=64, d_ffn=128, mtp_tokens=2)
+    m = GPT(cfg).eval()
+    x = torch.randint(0, 40, (1, 12))
+    logits, _ = m(x)
+    h = m.hidden(x)
+    assert torch.allclose(m.lm_head(h), logits, atol=1e-5)
+
+
+def test_mtp_speculative_matches_greedy_exactly():
+    """Greedy verification makes the MTP-speculative decoder bit-identical to
+    plain greedy decoding — the speedup must be lossless."""
+    torch.manual_seed(0)
+    cfg = GPTConfig(vocab_size=48, block_size=64, n_layer=2, n_head=4, n_kv_head=2,
+                    d_model=64, d_ffn=128, mtp_tokens=3)
+    m = GPT(cfg).eval()
+    idx = torch.randint(0, 48, (1, 8))
+    g = m.generate_greedy(idx.clone(), 40)
+    s, stats = m.generate_mtp_speculative(idx.clone(), 40)
+    assert torch.equal(g, s)
+    assert g.size(1) == idx.size(1) + 40           # exact token budget
+    assert sum(stats["accepted"]) == 40
+    # Each verification round emits between 1 and K+2 tokens (true token + up to
+    # K accepted drafts + 1 bonus token when the whole chain is accepted).
+    assert all(1 <= a <= len(m.mtp_heads) + 2 for a in stats["accepted"])
+
+
+def test_mtp_speculative_falls_back_without_heads():
+    """With mtp_tokens=0 the speculative path is just greedy decoding."""
+    torch.manual_seed(0)
+    cfg = GPTConfig(vocab_size=48, block_size=64, n_layer=2, n_head=4, n_kv_head=2,
+                    d_model=64, d_ffn=128, mtp_tokens=0)
+    m = GPT(cfg).eval()
+    idx = torch.randint(0, 48, (1, 8))
+    g = m.generate_greedy(idx.clone(), 20)
+    s, stats = m.generate_mtp_speculative(idx.clone(), 20)
+    assert torch.equal(g, s)
+    assert stats["rounds"] == 0

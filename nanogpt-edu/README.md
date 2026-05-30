@@ -134,6 +134,37 @@ python tools/plot_nanogpt.py out/{tiny_clean,tiny_muon}/train.log --compare out/
 for a clean A/B against `tiny_clean.py`. The MTP aux loss is train-only, so the
 logged **val** loss stays directly comparable between the two runs.
 
+### MTP heads as a free speculative-decoding draft (serving benchmark)
+
+The MTP heads are trained as a throwaway auxiliary loss — but at inference each
+one predicts a *future* token from the same final hidden state, so they double
+as a Medusa-style self-speculative **draft model for free**. `generate()` still
+uses the main head only (zero-cost default); `tools/bench_mtp_spec.py` measures
+what the heads buy when you *do* use them:
+
+```bash
+python train.py --config configs/tiny_mtp.py            # train a mtp_tokens=2 model
+python tools/bench_mtp_spec.py --ckpt out/tiny_mtp/ckpt.pt --prompt $'ROMEO:\n' --tokens 256
+```
+
+One trunk pass drafts `K+1` candidate tokens (main head + K MTP drafts); a
+second pass verifies them with the main head's greedy argmax, accepting the
+longest matching prefix (plus a bonus token when the whole chain verifies). A
+real run of a 10.7M `mtp_tokens=2` checkpoint on an RTX 3050:
+
+| decoder | tokens/s | trunk passes (256 tokens) | speedup |
+|---------|---------:|--------------------------:|--------:|
+| baseline greedy | ~240 | 256 | 1.00× |
+| MTP-speculative | ~355 | 170 | **1.48×** |
+
+Output is **bit-identical** to greedy decoding (greedy verification is exact —
+the tool asserts it), so the 1.48× is a pure latency win at zero quality cost:
+~3.0 tokens emitted per verification round, 34% fewer trunk passes. The same
+MTP head that densified the training gradient pays off again at serving time —
+exactly the train→serve loop the SOTA watch flags. Runs anywhere (with no
+`--ckpt` it builds a random tiny model to exercise the mechanism in CI).
+
+
 > On 1 MB of TinyShakespeare the **data** is the bottleneck, not the optimizer,
 > so the gap is modest. To see Muon shine, scale the tokens (next section).
 

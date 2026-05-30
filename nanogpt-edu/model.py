@@ -241,3 +241,104 @@ class GPT(nn.Module):
             nxt = torch.multinomial(probs, num_samples=1)
             idx = torch.cat([idx, nxt], dim=1)
         return idx
+
+    @torch.no_grad()
+    def hidden(self, idx):
+        """Run the trunk and return the post-final-norm hidden states [B, T, D].
+
+        The shared primitive behind both the main `lm_head` and the auxiliary
+        MTP heads — exposing it lets the speculative-decoding path read the MTP
+        drafts off the same hidden state without re-running the trunk.
+        """
+        B, T = idx.shape
+        assert T <= self.cfg.block_size, f"seq {T} > block_size {self.cfg.block_size}"
+        x = self.tok_emb(idx)
+        cache = self._rope_cache
+        if (cache is None
+                or cache[0].device != x.device
+                or cache[0].dtype != x.dtype
+                or cache[0].shape[0] < T):
+            self._rope_cache = build_rope_cache(
+                self.cfg.block_size, self.cfg.head_dim, self.cfg.rope_base, x.device, x.dtype
+            )
+        cos, sin = self._rope_cache
+        for blk in self.blocks:
+            x = blk(x, cos, sin)
+        return self.final_norm(x)
+
+    @torch.no_grad()
+    def generate_greedy(self, idx, max_new_tokens: int):
+        """Plain greedy autoregressive decoding using the main head only.
+
+        The baseline the MTP-speculative path must match token-for-token.
+        """
+        for _ in range(max_new_tokens):
+            idx_cond = idx[:, -self.cfg.block_size :]
+            logits = self.lm_head(self.hidden(idx_cond))[:, -1, :]
+            nxt = logits.argmax(dim=-1, keepdim=True)
+            idx = torch.cat([idx, nxt], dim=1)
+        return idx
+
+    @torch.no_grad()
+    def generate_mtp_speculative(self, idx, max_new_tokens: int):
+        """Medusa-style self-speculative greedy decoding using the MTP heads.
+
+        Each step:
+          1. Run the trunk once over the context. From the last hidden state the
+             *main* head gives the true next token `a`, and MTP head j gives a
+             cheap draft for the token (j+2) ahead — a chain of K candidate
+             tokens [a, d0, d1, ..., d_{K-1}] produced by a single trunk pass.
+          2. Verify the chain with one more trunk pass over the appended
+             candidates: the main head's greedy argmax at each candidate position
+             is the "true" continuation. Accept the longest matching prefix; on
+             the first mismatch keep the corrected true token and stop.
+
+        Greedy verification makes the output **identical** to `generate_greedy`,
+        but each verification pass can emit up to K+2 tokens (the true token, all
+        K accepted drafts, plus one bonus token from the final verified position)
+        for two trunk evaluations — that's the serving speedup the MTP heads buy
+        for free (they were trained only as an auxiliary loss). Batch size 1 (the
+        latency-bound serving regime). Returns (idx, stats) where stats records
+        accepted-token counts per verification round.
+        """
+        assert idx.size(0) == 1, "speculative path benchmarks batch size 1"
+        K = len(self.mtp_heads)
+        if K == 0:
+            return self.generate_greedy(idx, max_new_tokens), {"rounds": 0, "accepted": []}
+        block = self.cfg.block_size
+        accepted_per_round: list[int] = []
+        produced = 0
+        while produced < max_new_tokens:
+            h_last = self.hidden(idx[:, -block:])[:, -1, :]        # [1, D]
+            a = self.lm_head(h_last).argmax(-1)                    # true next token [1]
+            drafts = [head(h_last).argmax(-1) for head in self.mtp_heads]  # K drafts
+            # Candidate chain: true token then the K drafts.
+            chain = torch.cat([a] + drafts).view(1, -1)           # [1, K+1]
+            cand = torch.cat([idx, chain], dim=1)
+            # One verification pass: main-head greedy argmax at each candidate
+            # position gives the true continuation after consuming that token.
+            verify_logits = self.lm_head(self.hidden(cand[:, -block:]))   # [1, L, V]
+            # The candidate tokens occupy the last (K+1) positions; the true
+            # next-token *after* candidate position p is argmax at that position.
+            true_next = verify_logits[0, -(K + 1):, :].argmax(-1)  # [K+1]
+            # a (chain[0]) is always correct by construction → accept it. Then
+            # accept draft d_i iff it equals the verified true token at the
+            # previous candidate position.
+            accepted = [int(a)]
+            for i in range(K):
+                if int(drafts[i]) == int(true_next[i]):
+                    accepted.append(int(drafts[i]))
+                else:
+                    # First mismatch: take the corrected true token and stop.
+                    accepted.append(int(true_next[i]))
+                    break
+            else:
+                # All drafts accepted → the token after the last draft is a free
+                # bonus from the final verified position.
+                accepted.append(int(true_next[K]))
+            # Trim to the token budget and append.
+            take = accepted[: max_new_tokens - produced]
+            idx = torch.cat([idx, torch.tensor([take], device=idx.device, dtype=idx.dtype)], dim=1)
+            produced += len(take)
+            accepted_per_round.append(len(take))
+        return idx, {"rounds": len(accepted_per_round), "accepted": accepted_per_round}

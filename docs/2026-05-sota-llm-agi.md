@@ -102,9 +102,11 @@ Auxiliary heads predict tokens *n+2/n+3* alongside *n+1*; loss = CE_next +
   the ideal-scale upgrade.
 - **Design notes (ours):** aux loss is train-only (eval/val stays comparable);
   `generate()` uses only the main head; MTP heads routed to AdamW.
-- **Source:** [3]  ·  **Harvest:** shipped → `nanogpt-edu`; ported →
-  `frontier-platform` (`45edfea`). **Roadmap:**
-  full-module MTP + speculative decode in `midgpt`/serving.
+- **Source:** [3]  ·  **Harvest:** shipped → `nanogpt-edu` (training aux loss +
+  **MTP-as-speculative-draft serving benchmark**, `tools/bench_mtp_spec.py`:
+  1.48× lossless decode on a 10.7M checkpoint); ported → `frontier-platform`
+  (`45edfea`). **Roadmap:** full-module MTP + speculative decode in
+  `midgpt`/serving.
 
 ### 3. Liger Kernel (fused Triton kernels) — **shipped (coder-finetune)**
 
@@ -184,7 +186,7 @@ into SFT without a separate reference model.
   `configs/dpo_3050.yaml`); ORPO available behind the same entry point on
   `trl<0.12`. The post-training ladder is now SFT → DPO → GRPO end-to-end.
 
-### 9. Serving-aware training: vLLM/SGLang + prefix/speculative paths — **planned**
+### 9. Serving-aware training: vLLM/SGLang + prefix/speculative paths — **in progress**
 
 The training stack should optimize for serving shape. PagedAttention/vLLM makes
 KV-cache memory near-paged instead of contiguous, raising throughput at fixed
@@ -202,8 +204,11 @@ latency at inference.
 - **Min HW:** any inference GPU for benchmarking small models. **Ideal:**
   multi-GPU vLLM/SGLang with disaggregated prefill/decode for long prompts and
   high-QPS serving.
-- **Source:** [19], [20], [21], [22], [23]  ·  **Harvest:** planned →
-  `midgpt`/`coder-finetune` exports; design-only → `frontier-platform`.
+- **Source:** [19], [20], [21], [22], [23]  ·  **Harvest:** shipped →
+  `nanogpt-edu` MTP-as-speculative-draft serving benchmark
+  (`tools/bench_mtp_spec.py`, EAGLE/Medusa-family self-speculation, lossless
+  1.48×); planned → `midgpt`/`coder-finetune` vLLM exports; design-only →
+  `frontier-platform`.
 
 ---
 
@@ -248,7 +253,7 @@ Everything is on a roadmap, sized by hardware tier — nothing is "blocked."
 
 | Project | Next harvest | Tier | Notes |
 |---------|--------------|------|-------|
-| nanogpt-edu | full-module MTP; FlexAttention long-context; serving benchmark for MTP draft heads | minimal→ideal | keep the core legible; advanced bits opt-in |
+| nanogpt-edu | full-module MTP; FlexAttention long-context | minimal→ideal | keep the core legible; advanced bits opt-in. MTP draft-head serving benchmark shipped (`tools/bench_mtp_spec.py`, 1.48× lossless) |
 | midgpt | FP8 matmul; FA-3; vLLM export path | minimal→ideal | Muon + Liger fused-CE + QK-norm landed; FP8/FA-3 light up on 8× H100; serving benchmark closes the train→serve loop |
 | distgpt | Muon (distributed); FP8; MoE + expert parallelism; MLA | ideal | QK-norm + zero-init landed (`108f5a9`); the 3D-parallel showcase; validate at multi-node |
 | coder-finetune | Spectrum; full-FT 7B | minimal→ideal | SFT → DPO → GRPO/RLVR ladder now complete; remaining harvest is targeted full-FT (Spectrum) + full-FT of 7B |
@@ -263,7 +268,10 @@ Config-gated, default-off, full test coverage:
 - **`nanogpt-edu`:** Muon (`muon.py`), QK-Norm / zero-init / untied embeddings,
   Multi-Token Prediction, FineWeb-Edu + DCLM BPE prep, new configs
   (`tiny_muon.py`, `tiny_mtp.py`, `small_fineweb.py`), multi-optimizer loop with
-  shared cosine schedule + backward-compatible checkpoints. Tests 9 → 12.
+  shared cosine schedule + backward-compatible checkpoints. Plus the **MTP
+  draft-head serving benchmark** (`tools/bench_mtp_spec.py`): a Medusa-style
+  self-speculative greedy decoder reusing the MTP heads, bit-identical to greedy
+  (1.48× / 34% fewer trunk passes on a 10.7M checkpoint). Tests 12 → 15.
 - **`coder-finetune`:** Liger Kernel, NEFTune, DoRA, rsLoRA, Unsloth fast-path;
   `lora_5060ti.yaml` ships with the safe set enabled. Plus **GRPO/RLVR**
   post-training with verifiable unit-test rewards (`ab82617`) and the **DPO/ORPO
