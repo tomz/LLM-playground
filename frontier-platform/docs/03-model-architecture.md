@@ -6,6 +6,11 @@
 - **Norm**: RMSNorm, pre-norm.
 - **Activation**: SwiGLU, FFN dim ≈ 8/3 × hidden, rounded to multiple of 256.
 - **Attention**: Grouped-Query Attention (GQA, 8 KV heads typical) for inference efficiency.
+  For long-context tiers prefer **Multi-head Latent Attention (MLA)** —
+  `attn_kind="mla"` — which caches only a shared low-rank KV latent (+ a decoupled
+  RoPE key) for 3-10x KV-cache compression at near-equal quality (DeepSeek-V2/V3).
+  `ModelConfig.kv_bytes_per_token()` quantifies the saving; the serving simulator
+  prices the throughput uplift.
 - **Bias**: none on linear layers.
 - **Tied embeddings**: optional; usually untied at frontier scale.
 

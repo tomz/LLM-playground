@@ -3,7 +3,7 @@ import math
 import torch
 
 from platform.model.config import ModelConfig
-from platform.model.transformer import Transformer, MoEFFN
+from platform.model.transformer import Transformer, MoEFFN, MLAttention, GQAttention
 
 
 def test_param_count_matches_actual_module(tiny_model_cfg, tiny_model):
@@ -134,3 +134,35 @@ def test_activation_checkpoint_runs():
     assert torch.isfinite(l1) and torch.isfinite(l2)
     # losses should be very close (same init, same compute graph mathematically)
     assert abs(float(l1) - float(l2)) < 1e-3
+
+
+def test_mla_attention_forward_and_train():
+    """MLA produces finite loss, trains, and uses far less KV cache than GQA."""
+    cfg = ModelConfig(
+        vocab_size=256, n_layer=2, n_head=8, n_kv_head=2,
+        d_model=128, d_ffn=256, max_seq_len=64,
+        attn_kind="mla", mla_kv_latent_dim=64, mla_rope_head_dim=8,
+    )
+    torch.manual_seed(0)
+    m = Transformer(cfg)
+    assert isinstance(m.layers[0].attn, MLAttention)
+    x = torch.randint(0, 256, (2, 24))
+    y = torch.randint(0, 256, (2, 24))
+    _, loss = m(x, targets=y)
+    assert torch.isfinite(loss)
+    loss.backward()
+    assert all(p.grad is not None for p in m.layers[0].attn.kv_down.parameters())
+
+
+def test_mla_kv_cache_smaller_than_gqa():
+    """The whole point of MLA: the cached latent is much smaller than GQA's K+V."""
+    common = dict(vocab_size=256, n_layer=2, n_head=16, n_kv_head=8,
+                  d_model=512, d_ffn=1024, max_seq_len=128)
+    gqa = ModelConfig(attn_kind="gqa", **common)
+    mla = ModelConfig(attn_kind="mla", mla_kv_latent_dim=128, mla_rope_head_dim=16, **common)
+    assert mla.kv_bytes_per_token() < gqa.kv_bytes_per_token()
+    # GQA caches 2 * n_kv_head * head_dim = 2*8*32 = 512 dims; MLA caches 128+16=144.
+    assert gqa.kv_bytes_per_token() == 2 * 8 * 32 * 2
+    assert mla.kv_bytes_per_token() == (128 + 16) * 2
+    # Compression ratio should be a meaningful 3x+ here.
+    assert gqa.kv_bytes_per_token() / mla.kv_bytes_per_token() > 3.0

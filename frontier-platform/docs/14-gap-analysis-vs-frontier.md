@@ -141,6 +141,16 @@ the frontier-platform docs haven't caught up to our own research digest.)
 **To close:** add MLA (or a documented GQA+sparse-attention alternative) as the
 attention default for any long-context tier.
 
+> **Update:** **MLA now exists in the model code** — `MLAttention` in
+> `platform/model/transformer.py` (set `attn_kind="mla"`): a shared low-rank KV
+> latent (`mla_kv_latent_dim`) is the only cached quantity, with a decoupled RoPE
+> key carrying position, giving 3-10x KV-cache compression
+> (`ModelConfig.kv_bytes_per_token()` quantifies it). The *serving simulator*
+> prices the win: `ServingTier(attn_kind="mla", kv_compression=…)` raises
+> effective decode throughput so an MLA tier needs fewer GPUs / lower $/Mtok at
+> the same QPS. Still open: incremental MLA decode cache in the real serving
+> engine, and sparse attention (DeepSeek-V3.2) for the 1M-context tier.
+
 ---
 
 ## 4. Multimodality is absent 🟥 ($ + R + D)

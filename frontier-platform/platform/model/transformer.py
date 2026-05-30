@@ -100,6 +100,71 @@ class GQAttention(nn.Module):
         return self.o_proj(y)
 
 
+class MLAttention(nn.Module):
+    """Multi-head Latent Attention (DeepSeek-V2/V3).
+
+    The KV cache is the dominant cost of long-context serving. MLA compresses it
+    by projecting the input to a small shared **latent** ``c_kv`` (dim
+    ``mla_kv_latent_dim``) that is the *only* thing cached, then up-projecting to
+    per-head K/V on the fly. Position information is carried by a small
+    **decoupled RoPE** key (dim ``mla_rope_dim``) computed once and shared across
+    heads. This gives 5-10x KV-cache compression at near-equal quality.
+
+    Layout per head: head_dim = nope_dim (content, from the latent) + rope_dim
+    (position, decoupled). Queries get their own latent down/up projection.
+
+    Toy-functional: computes full attention via SDPA (no incremental cache here;
+    the serving engine consumes ``kv_bytes_per_token`` for the cache-size math).
+    """
+
+    def __init__(self, cfg: ModelConfig):
+        super().__init__()
+        self.cfg = cfg
+        H, D = cfg.n_head, cfg.head_dim
+        self.n_head = H
+        self.head_dim = D
+        self.rope_dim = cfg.mla_rope_dim
+        self.nope_dim = D - self.rope_dim
+        assert self.nope_dim > 0, "mla_rope_head_dim must be < head_dim"
+        self.kv_latent = cfg.mla_kv_latent_dim
+        self.q_latent = cfg.mla_kv_latent_dim
+
+        # Query: down-project to a latent, then up to per-head (nope + rope).
+        self.q_down = nn.Linear(cfg.d_model, self.q_latent, bias=False)
+        self.q_up = nn.Linear(self.q_latent, H * D, bias=False)
+        # KV: down-project to the cached latent (this is what we'd cache) ...
+        self.kv_down = nn.Linear(cfg.d_model, self.kv_latent, bias=False)
+        # ... then up-project to per-head K(nope) and V.
+        self.k_up = nn.Linear(self.kv_latent, H * self.nope_dim, bias=False)
+        self.v_up = nn.Linear(self.kv_latent, H * D, bias=False)
+        # Decoupled RoPE key: a single shared key carrying position (broadcast to heads).
+        self.k_rope = nn.Linear(cfg.d_model, self.rope_dim, bias=False)
+        self.o_proj = nn.Linear(H * D, cfg.d_model, bias=False)
+        self.rope = RoPE(self.rope_dim, base=cfg.rope_base, max_seq=cfg.max_seq_len)
+
+    def forward(self, x: torch.Tensor, kv_cache=None) -> torch.Tensor:
+        B, T, _ = x.shape
+        H, D = self.n_head, self.head_dim
+        # Queries
+        q = self.q_up(self.q_down(x)).view(B, T, H, D).transpose(1, 2)   # [B,H,T,D]
+        q_nope, q_rope = q[..., : self.nope_dim], q[..., self.nope_dim :]
+        # KV latent (the cached quantity)
+        c_kv = self.kv_down(x)                                            # [B,T,kv_latent]
+        k_nope = self.k_up(c_kv).view(B, T, H, self.nope_dim).transpose(1, 2)
+        v = self.v_up(c_kv).view(B, T, H, D).transpose(1, 2)
+        # Decoupled RoPE key, shared across heads
+        k_rope = self.k_rope(x).view(B, T, 1, self.rope_dim).transpose(1, 2)  # [B,1,T,r]
+        # Apply RoPE to q_rope and the shared k_rope
+        q_rope, k_rope = self.rope.apply(q_rope, k_rope)
+        k_rope = k_rope.expand(B, H, T, self.rope_dim).contiguous()
+        # Concatenate content + position parts back to full head dim
+        q_full = torch.cat([q_nope, q_rope], dim=-1)
+        k_full = torch.cat([k_nope, k_rope], dim=-1)
+        y = F.scaled_dot_product_attention(q_full, k_full, v, is_causal=True)
+        y = y.transpose(1, 2).contiguous().view(B, T, H * D)
+        return self.o_proj(y)
+
+
 class SwiGLU(nn.Module):
     def __init__(self, d_model: int, d_ffn: int):
         super().__init__()
@@ -222,7 +287,7 @@ class Block(nn.Module):
         super().__init__()
         self.layer_idx = layer_idx
         self.attn_norm = RMSNorm(cfg.d_model, cfg.rms_eps)
-        self.attn = GQAttention(cfg)
+        self.attn = MLAttention(cfg) if cfg.attn_kind == "mla" else GQAttention(cfg)
         self.ffn_norm = RMSNorm(cfg.d_model, cfg.rms_eps)
         self.ffn = MoEFFN(cfg) if cfg.moe_num_experts else SwiGLU(cfg.d_model, cfg.d_ffn)
 

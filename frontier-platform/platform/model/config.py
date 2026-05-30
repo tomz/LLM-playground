@@ -14,6 +14,18 @@ class ModelConfig:
     rope_base: float = 500_000.0
     rms_eps: float = 1e-5
     tie_embeddings: bool = False
+    # Attention variant: "gqa" (Grouped-Query, Llama-style) or "mla" (Multi-head
+    # Latent Attention, DeepSeek-V2/V3). MLA compresses the KV cache 5-10x via a
+    # low-rank latent projection at near-equal quality — the frontier answer for
+    # long-context serving cost.
+    attn_kind: str = "gqa"
+    # MLA: dimension of the shared KV latent (the compressed cache). Typical
+    # frontier value ~512 (vs n_kv_head*head_dim for GQA). Only used when
+    # attn_kind == "mla".
+    mla_kv_latent_dim: int = 512
+    # MLA: per-head dimension carrying decoupled RoPE position info (DeepSeek-V3
+    # uses 64). The rest of the head dim is the "nope" (content) part.
+    mla_rope_head_dim: int = 0   # 0 => head_dim // 2
     # MoE (sparse Mixture-of-Experts). Fine-grained + shared-expert routing with
     # aux-loss-free (bias-based) load balancing is the 2025 frontier default
     # (DeepSeek-V3). Set moe_num_experts>1 to enable.
@@ -45,6 +57,25 @@ class ModelConfig:
     def expert_d_ffn(self) -> int:
         """Hidden dim of a single routed/shared expert FFN."""
         return self.moe_expert_d_ffn if self.moe_expert_d_ffn else self.d_ffn
+
+    @property
+    def mla_rope_dim(self) -> int:
+        """Per-head RoPE (positional) dimension for MLA."""
+        return self.mla_rope_head_dim if self.mla_rope_head_dim else self.head_dim // 2
+
+    def kv_bytes_per_token(self, dtype_bytes: int = 2) -> int:
+        """KV-cache size per token per layer, in bytes.
+
+        GQA caches K and V for ``n_kv_head`` heads. MLA caches only the shared
+        low-rank latent (``mla_kv_latent_dim``) plus the decoupled RoPE key
+        (``mla_rope_dim``) — the 5-10x compression that makes long context
+        affordable. Multiply by ``n_layer`` and context length for the total.
+        """
+        if self.attn_kind == "mla":
+            per_tok = self.mla_kv_latent_dim + self.mla_rope_dim
+        else:
+            per_tok = 2 * self.n_kv_head * self.head_dim   # K and V
+        return per_tok * dtype_bytes
 
     def _attn_emb_params(self) -> tuple[int, int, int]:
         emb = self.vocab_size * self.d_model

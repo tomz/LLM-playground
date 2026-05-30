@@ -10,6 +10,10 @@ model:
   d_ffn: 28672            # dense-equivalent FFN (used by shared/fallback path)
   max_seq_len: 8192
   rope_base: 500000
+  # --- attention: MLA for cheap long-context KV cache ---
+  attn_kind: mla
+  mla_kv_latent_dim: 512
+  mla_rope_head_dim: 64
   # --- sparse MoE ---
   moe_num_experts: 128
   moe_top_k: 8

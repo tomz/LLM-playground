@@ -135,3 +135,22 @@ def test_orchestrator_moe_fp8_rl_e2e_beats_dense_baseline():
     assert moe["eval"]["arena_elo"] > dense["eval"]["arena_elo"]
     assert moe["reasoning_rl"]["reasoning_quality"] > 1.0
 
+
+# ---------- MLA serving KV compression ----------
+
+def test_mla_serving_needs_fewer_gpus_than_gqa():
+    from platform.sim.serving_sim import ServingTier, simulate_serving
+    bus = EventBus(out_path=None)
+    qps = {"gqa": 50.0, "mla": 50.0}
+    tiers = [
+        ServingTier("gqa", 1e12, "fp8", attn_kind="gqa"),
+        ServingTier("mla", 1e12, "fp8", attn_kind="mla", kv_compression=4.0),
+    ]
+    out = simulate_serving(tiers, qps, bus)
+    # MLA's KV compression -> higher effective throughput -> fewer replicas/GPUs
+    # and a lower $/Mtok at the same QPS.
+    assert out["mla"]["gpus"] < out["gqa"]["gpus"]
+    assert out["mla"]["cost_per_mtok"] < out["gqa"]["cost_per_mtok"]
+    assert out["mla"]["kv_throughput_mult"] > 1.0
+    assert out["gqa"]["kv_throughput_mult"] == 1.0
+
