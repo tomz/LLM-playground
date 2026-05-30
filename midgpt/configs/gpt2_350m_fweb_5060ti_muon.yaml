@@ -5,7 +5,8 @@
 #   * optimizer: muon  — Newton-Schulz-orthogonalized updates on the 2D hidden
 #     weight matrices (attn qkv/proj, MLP); AdamW for embeddings, the learned
 #     pos_emb table, lm_head, and all 1-D params. muon_lr lives on a different
-#     scale than the AdamW lr (0.02 is the single-GPU starting point).
+#     scale than the AdamW lr; this 24-layer net needs muon_lr=0.002 (the 0.02
+#     tiny-recipe default is ~10x too hot here — see the optim block below).
 #   * fused_ce: true   — Liger fused-linear-cross-entropy: fuses the lm_head
 #     matmul + softmax-CE and never materializes the [B*T, vocab] logits.
 #     Mathematically EXACT (same loss), so it only moves throughput/VRAM, not
@@ -38,7 +39,14 @@ model:
 
 optim:
   optimizer: muon         # Muon on 2D hidden weights; AdamW for the rest
-  muon_lr: 0.02           # Muon's own LR (orthogonalized-update scale)
+  # muon_lr: 0.002 — the 0.02 single-GPU starting point (from the tiny
+  # 6-layer/d_ffn=1024 recipe) is ~10x too hot for THIS 24-layer/d_ffn=4096
+  # net and diverges (val ~7.5 vs baseline ~6.0). Because Muon's update is
+  # RMS-normalized to ~muon_lr per step (the sqrt(max(rows,cols)) scale in
+  # muon.py), the deeper/wider stack needs a proportionally smaller LR. A
+  # downward probe sweep {0.002, 0.005, 0.01} showed a clean monotonic cliff:
+  # only 0.002 tracks the AdamW baseline (val 6.42 vs ~6.5 @ iter 150).
+  muon_lr: 0.002          # Muon's own LR (orthogonalized-update scale)
   muon_momentum: 0.95
   lr: 3.0e-4              # AdamW LR for embeddings / pos_emb / lm_head / 1-D
   min_lr: 3.0e-5
