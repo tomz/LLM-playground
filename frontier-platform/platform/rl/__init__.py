@@ -28,6 +28,11 @@ from .reward import (
 )
 from .coldstart import ColdStartConfig, ColdStartResult, run_coldstart, format_trace
 from .sandbox import SandboxLimits, SandboxResult, run_in_sandbox
+from .async_rollout import (
+    AsyncRolloutConfig,
+    AsyncRolloutEngine,
+    RolloutBuffer,
+)
 from .agentic import (
     ToolSpec,
     ToolEnv,
@@ -39,7 +44,7 @@ from .agentic import (
     make_keyvalue_store,
 )
 from .rollout import sample_group, GroupRollout
-from .grpo import GRPOConfig, group_advantages, grpo_step, run_grpo
+from .grpo import GRPOConfig, group_advantages, grpo_step, run_grpo, run_grpo_async
 
 __all__ = [
     "Verifier",
@@ -62,6 +67,9 @@ __all__ = [
     "SandboxLimits",
     "SandboxResult",
     "run_in_sandbox",
+    "AsyncRolloutConfig",
+    "AsyncRolloutEngine",
+    "RolloutBuffer",
     "ToolSpec",
     "ToolEnv",
     "Trajectory",
@@ -76,4 +84,5 @@ __all__ = [
     "group_advantages",
     "grpo_step",
     "run_grpo",
+    "run_grpo_async",
 ]

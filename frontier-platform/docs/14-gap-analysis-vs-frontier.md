@@ -84,6 +84,15 @@ tokenizer contract; make "thinking mode" a first-class model + serving feature.
 > cold-start→sample→verify→shape→advantage→update loop on CPU. The production
 > gap — async vLLM/SGLang rollout, sandboxed code verifiers, reasoning-data
 > curation at scale — is still open.
+>
+> **Update 2:** the production gap is now substantially closed in CPU-runnable
+> form: **sandboxed code verifier** (`rl/sandbox.py` — subprocess + POSIX rlimits
+> + timeout, wired into `CodeUnitTestVerifier`) and an **async actor–learner
+> rollout** (`rl/async_rollout.py` — `AsyncRolloutEngine` over the serving Engine
+> with real KV-cache decode + weight-sync; `run_grpo_async` drives GRPO from it).
+> What remains is purely the production *backend*: an out-of-process vLLM/SGLang
+> actor (swap `EngineConfig.backend`) and a gVisor/Firecracker jail wrapping the
+> sandbox — both interface-compatible drop-ins.
 
 ---
 

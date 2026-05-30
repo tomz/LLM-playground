@@ -68,7 +68,7 @@ This is an **async actor–learner system**, not a loss function. Components
 
 | Module | Status | Responsibility |
 |--------|--------|----------------|
-| `rl/rollout.py` | ✅ sync sampler | group sampler (G samples/prompt) + response mask + group index. ⬜ async vLLM/SGLang engine + weight-sync |
+| `rl/rollout.py` | ✅ sync sampler | group sampler (G samples/prompt) + response mask + group index. **`rl/async_rollout.py`** adds an async actor (`AsyncRolloutEngine`) over the serving Engine with KV-cache decode + weight-sync; ⬜ out-of-process vLLM/SGLang actor |
 | `rl/verifiers.py` | ✅ math/regex/contains + **sandboxed code** | pluggable reward fns; `CodeUnitTestVerifier` runs untrusted code in a subprocess sandbox (`rl/sandbox.py`, POSIX rlimits + timeout). ⬜ gVisor/Firecracker jail, formal proof checkers |
 | `rl/grpo.py` | ✅ GRPO learner | group-relative advantage, KL-to-ref, REINFORCE-style objective |
 | `rl/coldstart.py` | ✅ reasoning-SFT | small long-CoT cold-start to stabilize format before RL |

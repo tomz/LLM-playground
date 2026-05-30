@@ -177,3 +177,55 @@ def run_grpo(
         out_path,
     )
     return str(out_path)
+
+
+def run_grpo_async(
+    cfg: GRPOConfig,
+    prompts: list[str],
+    verifier: Verifier,
+) -> str:
+    """GRPO using the **async actor–learner** rollout engine (real serving Engine
+    with KV-cache decode) instead of the synchronous sampler.
+
+    Identical learner math to :func:`run_grpo`; only generation is swapped for
+    :class:`platform.rl.async_rollout.AsyncRolloutEngine`, which generates the
+    group concurrently and (in production) decouples actors from the learner with
+    weight sync. The learner calls ``actor.sync_weights()`` after each update.
+    """
+    from .async_rollout import AsyncRolloutConfig, AsyncRolloutEngine
+
+    policy, tok = _load_policy(cfg)
+    ref = clone_for_reference(policy)
+    actor = AsyncRolloutEngine(
+        policy, tok,
+        AsyncRolloutConfig(
+            group_size=cfg.group_size, max_new_tokens=cfg.max_new_tokens,
+            temperature=cfg.temperature, seq_len=cfg.seq_len,
+        ),
+    )
+    prompt_ids = [tok.encode(p) for p in prompts]
+    opt = torch.optim.AdamW(policy.parameters(), lr=cfg.lr, weight_decay=0.0)
+    history: list[dict] = []
+    has_breakdown = hasattr(verifier, "breakdown")
+
+    for _ in range(cfg.steps):
+        roll = actor.generate_group(prompt_ids)
+        pairs = [(prompts[int(gi)], txt) for gi, txt in zip(roll.group_index, roll.response_text)]
+        rewards = torch.tensor([verifier(p, r) for p, r in pairs], dtype=torch.float32)
+        metrics = grpo_step(policy, ref, roll, rewards, cfg, optimizer=opt)
+        metrics["weight_version"] = actor.weight_version
+        if has_breakdown:
+            bd = [verifier.breakdown(p, r) for p, r in pairs]
+            for key in bd[0]:
+                metrics[f"reward_{key}"] = sum(b[key] for b in bd) / len(bd)
+        history.append(metrics)
+        actor.sync_weights()   # learner -> actor weight sync after the update
+
+    out_dir = Path(cfg.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "grpo_async.pt"
+    torch.save(
+        {"model": policy.state_dict(), "model_cfg": policy.cfg, "history": history},
+        out_path,
+    )
+    return str(out_path)
