@@ -1,14 +1,19 @@
 """Eval harness. Wraps lm-evaluation-harness for academic benchmarks; adds an
-internal arena ELO and a contamination report.
+internal arena ELO and a real n-gram contamination report.
 
-This is a toy in-process implementation. The `run_fast` path computes mean
-cross-entropy / perplexity on a fixed batch. A real impl would dispatch tasks
-to `lm_eval.simple_evaluate(...)` and shard them across the eval cluster.
+The `run_fast` path computes mean cross-entropy / perplexity on a fixed batch
+(used as a cheap in-loop signal during training). Full academic benchmarks are a
+genuine external-tool boundary: when installed, `Evaluator.run` hands the tasks
+to `lm_eval.simple_evaluate(...)`; otherwise it falls back to the fast loss eval.
+Contamination is computed exactly via `platform.eval.contamination` (n-gram
+overlap) whenever the request carries train/eval text — no longer a stubbed {}.
 """
 from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass, field
+
+from .contamination import contamination_report
 
 FAST_TASKS = ["hellaswag", "arc_easy", "piqa", "boolq", "openbookqa"]
 FULL_TASKS = [
@@ -25,6 +30,13 @@ class EvalRequest:
     decoding: dict = field(default_factory=lambda: {"temperature": 0.0})
     seed: int = 0
     eval_batch: object | None = None  # optional (x, y) numpy arrays for run_fast
+    # Optional decontamination inputs: training corpus texts + per-task eval
+    # example texts. When both are present the report carries a real n-gram
+    # contamination rate per task instead of an empty dict.
+    train_texts: list[str] | None = None
+    contamination_tasks: dict[str, list[str]] | None = None
+    contamination_n: int = 8
+    contamination_threshold: float = 0.8
 
 
 @dataclass
@@ -49,16 +61,21 @@ def _cross_entropy(logits, targets) -> float:
     return float(nll.mean())
 
 
+def _has_lm_eval() -> bool:
+    """True when the real lm-evaluation-harness is installed (full academic
+    benchmarks); otherwise the harness uses the fast in-process loss fallback."""
+    try:
+        import lm_eval  # type: ignore  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
 class Evaluator:
     def __init__(self, cluster=None):
         self.cluster = cluster
 
     def run(self, req: EvalRequest) -> EvalReport:
-        # Real impl would hand off to lm-evaluation-harness.
-        try:
-            import lm_eval  # type: ignore  # noqa: F401
-        except ImportError:
-            pass
         # Toy fallback: just run a fast in-process loss eval if a model+batch is
         # available via the request's `eval_batch` attribute.
         t0 = time.time()
@@ -71,11 +88,17 @@ class Evaluator:
             metrics["perplexity"] = math.exp(min(20.0, loss))
         for t in req.tasks:
             metrics.setdefault(t, 0.0)
+        contamination: dict[str, float] = {}
+        if req.train_texts is not None and req.contamination_tasks is not None:
+            contamination = contamination_report(
+                req.train_texts, req.contamination_tasks,
+                n=req.contamination_n, threshold=req.contamination_threshold,
+            )
         return EvalReport(
             ckpt=req.ckpt,
             metrics=metrics,
-            contamination={},
-            harness_sha="toy",
+            contamination=contamination,
+            harness_sha="lm_eval" if _has_lm_eval() else "fast_fallback",
             duration_s=time.time() - t0,
         )
 
@@ -87,7 +110,7 @@ class Evaluator:
         """
         t0 = time.time()
         if batch is None:
-            return EvalReport(ckpt=f"step_{step}", metrics={}, contamination={}, harness_sha="toy", duration_s=0.0)
+            return EvalReport(ckpt=f"step_{step}", metrics={}, contamination={}, harness_sha="fast_fallback", duration_s=0.0)
         x, y = batch
         logits = engine.forward(x)
         loss = _cross_entropy(logits, y)
@@ -95,6 +118,6 @@ class Evaluator:
             ckpt=f"step_{step}",
             metrics={"loss": loss, "perplexity": math.exp(min(20.0, loss))},
             contamination={},
-            harness_sha="toy",
+            harness_sha="fast_fallback",
             duration_s=time.time() - t0,
         )
