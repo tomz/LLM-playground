@@ -15,7 +15,7 @@ def _make_dummy(d: pathlib.Path) -> None:
         rng.integers(0, 256, size=20_000, dtype=np.uint16).tofile(str(sub / "shard_000000.bin"))
 
 
-def _config(out_dir: pathlib.Path) -> str:
+def _config(out_dir: pathlib.Path, optimizer: str = "adamw") -> str:
     return f"""
 out_dir: {out_dir}
 dataset: smoke
@@ -38,6 +38,9 @@ model:
   tie_embeddings: true
 
 optim:
+  optimizer: {optimizer}
+  muon_lr: 0.02
+  muon_momentum: 0.95
   lr: 1.0e-3
   min_lr: 1.0e-4
   betas: [0.9, 0.95]
@@ -57,17 +60,17 @@ train:
 """
 
 
-def test_train_one_step_cpu(tmp_path: pathlib.Path):
+def _run(tmp_path: pathlib.Path, optimizer: str) -> pathlib.Path:
     # midgpt expects data/<dataset>/<split>/*.bin relative to cwd.
     work = tmp_path / "work"
     (work / "data").mkdir(parents=True)
     _make_dummy(work / "data")
     out = work / "out"
     cfg_path = work / "smoke.yaml"
-    cfg_path.write_text(_config(out))
+    cfg_path.write_text(_config(out, optimizer))
 
-    # Symlink train.py / model.py / data.py / utils so cwd-based imports work.
-    for f in ("train.py", "model.py", "data.py"):
+    # Symlink train.py / model.py / data.py / muon.py / utils so cwd-imports work.
+    for f in ("train.py", "model.py", "data.py", "muon.py"):
         (work / f).symlink_to(ROOT / f)
     (work / "utils").symlink_to(ROOT / "utils")
 
@@ -82,3 +85,19 @@ def test_train_one_step_cpu(tmp_path: pathlib.Path):
     log = (out / "log.jsonl").read_text().splitlines()
     assert len(log) >= 2
     assert all(json.loads(l) for l in log)
+    return out
+
+
+def test_train_one_step_cpu(tmp_path: pathlib.Path):
+    _run(tmp_path, "adamw")
+
+
+def test_train_one_step_muon_cpu(tmp_path: pathlib.Path):
+    # Muon's Newton-Schulz runs in bf16 but is CPU-safe; verifies the dual
+    # Muon+AdamW optimizer loop trains and checkpoints end-to-end.
+    out = _run(tmp_path, "muon")
+    # New-style checkpoint stores a list of optimizer states.
+    import torch
+    sd = torch.load(out / "ckpt.pt", map_location="cpu", weights_only=False)
+    assert "optims" in sd and len(sd["optims"]) == 2
+

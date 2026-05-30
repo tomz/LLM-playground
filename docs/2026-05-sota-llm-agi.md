@@ -85,7 +85,8 @@ amplifies the "rare directions" a near-low-rank momentum buffer drowns out.
 - **Min HW:** any (per-parameter, FSDP-safe). **Ideal:** the distributed Muon
   variant amortizes the NS overhead across ranks on multi-node.
 - **Source:** [1], [2]  ·  **Harvest:** shipped → `nanogpt-edu`; ported →
-  `frontier-platform` (`45edfea`). **Roadmap:** port to `midgpt` + `distgpt`.
+  `frontier-platform` (`45edfea`), `midgpt` (`optim.optimizer: muon`).
+  **Roadmap:** port to `distgpt` (distributed Muon).
 
 ### 2. Multi-Token Prediction (MTP) — **shipped (nanogpt-edu)**
 
@@ -114,8 +115,9 @@ Fused RMSNorm/RoPE/SwiGLU + `FusedLinearCrossEntropy`, one-line patch.
   ~150K vocab; scales to any large-vocab model and composes with FSDP.
 - **Min HW:** any Triton GPU. **Ideal:** pairs with FSDP on multi-GPU for the
   full 20%/60% headline (benchmarked LLaMA-3-8B on 8× A100).
-- **Source:** [4]  ·  **Harvest:** shipped → `coder-finetune`. **Roadmap:**
-  enable in `midgpt`/`distgpt` training loops.
+- **Source:** [4]  ·  **Harvest:** shipped → `coder-finetune`; fused
+  linear-CE ported → `midgpt` (`fused_ce: true`, custom-GPT path). **Roadmap:**
+  enable in `distgpt` training loop.
 
 ### 4. DoRA + rsLoRA + NEFTune — **shipped (coder-finetune)**
 
@@ -246,7 +248,7 @@ Everything is on a roadmap, sized by hardware tier — nothing is "blocked."
 | Project | Next harvest | Tier | Notes |
 |---------|--------------|------|-------|
 | nanogpt-edu | full-module MTP; FlexAttention long-context; serving benchmark for MTP draft heads | minimal→ideal | keep the core legible; advanced bits opt-in |
-| midgpt | Muon; Liger; FP8 matmul; FA-3; vLLM export path | minimal→ideal | QK-norm landed (`766a1ba`); FP8/FA-3 light up on 8× H100; serving benchmark closes the train→serve loop |
+| midgpt | FP8 matmul; FA-3; vLLM export path | minimal→ideal | Muon + Liger fused-CE + QK-norm landed; FP8/FA-3 light up on 8× H100; serving benchmark closes the train→serve loop |
 | distgpt | Muon (distributed); FP8; MoE + expert parallelism; MLA | ideal | QK-norm + zero-init landed (`108f5a9`); the 3D-parallel showcase; validate at multi-node |
 | coder-finetune | DPO/ORPO baseline; Spectrum; full-FT 7B | minimal→ideal | GRPO/RLVR shipped (`ab82617`); the cheap offline preference path (DPO/ORPO) is the next harvest |
 | frontier-platform | wire RLVR/MLA/MoE/FP8 into $/throughput economics; vLLM/SGLang serving models | ideal | RLVR, MLA, MoE, Muon+MTP, precision policy all implemented; remaining work is the cost/throughput economics + serving models |
@@ -265,7 +267,10 @@ Config-gated, default-off, full test coverage:
   `lora_5060ti.yaml` ships with the safe set enabled. Tests: 4. Plus
   **GRPO/RLVR post-training** with verifiable unit-test rewards (`ab82617`).
 - **`midgpt`:** opt-in QK-norm knob (modded-nanogpt stabilizer, default-off for
-  GPT-2 parity) (`766a1ba`).
+  GPT-2 parity) (`766a1ba`); **Muon optimizer** (`muon.py`, `optim.optimizer:
+  muon`) with a dual Muon+AdamW loop on one shared cosine schedule and
+  backward-compatible (`optims` list) checkpoints; **Liger fused linear-CE**
+  (`fused_ce: true`, GPU+Triton, loss-only train path). Tests 4 → 11.
 - **`distgpt`:** ported QK-norm + zero-init-proj stability knobs (config-gated,
   default-off) (`108f5a9`).
 - **`frontier-platform`:** large buildout toward the frontier program — Muon +

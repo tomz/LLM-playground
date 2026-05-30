@@ -16,6 +16,9 @@ GPT-2 scale (124M–1.5B). Real BPE tokenizer (`tiktoken`), WikiText-103 or Open
 | FlashAttention                | SDPA picks it | SDPA picks it; checkpoint-friendly |
 | Logging                       | print      | print + JSON lines + optional W&B |
 | Resume                        | last ckpt  | last ckpt with full RNG/optim/loader state |
+| Optimizer                     | AdamW / Muon | AdamW / Muon (orthogonalized 2D-weight updates) |
+| QK-Norm stabilizer            | ✅ opt-in   | ✅ opt-in (`model.qk_norm`) |
+| Fused linear-CE (Liger)       | —          | ✅ opt-in (`fused_ce`, GPU+Triton) |
 
 ## Quickstart
 
@@ -57,6 +60,32 @@ The 5060 Ti row is a *real measured run* (see
 [`examples/5060ti_350m_fineweb.md`](examples/5060ti_350m_fineweb.md));
 the others are napkin estimates at ~50 % MFU.
 
+## Speed/quality knobs (opt-in, default-off for GPT-2 parity)
+
+Ported from the modded-nanogpt / Liger work harvested in
+[`../docs/2026-05-sota-llm-agi.md`](../docs/2026-05-sota-llm-agi.md). All are
+config-gated and off by default so existing runs are bit-for-bit unchanged.
+
+- **Muon optimizer** — set `optim.optimizer: muon`. Replaces the Adam update for
+  2D *hidden* weight matrices (attn qkv/proj, MLP) with the nearest
+  semi-orthogonal matrix via a 5-step Newton-Schulz iteration; embeddings,
+  the learned position table, `lm_head`, and all 1-D params stay on AdamW.
+  ~1.35× sample-efficiency on the FineWeb GPT-2 task. Tune with `optim.muon_lr`
+  (default 0.02, higher than AdamW's) and `optim.muon_momentum`. A single cosine
+  schedule scales both optimizers by the same multiplier. See `muon.py`.
+- **Liger fused linear-cross-entropy** — set `fused_ce: true` (needs
+  `pip install liger-kernel` + a Triton GPU). Computes the `lm_head` matmul and
+  the cross-entropy in one kernel *without* materializing the `[B·T, vocab]`
+  logits — the largest forward activation. Exact (not an approximation),
+  ~20% faster / up to ~60% less memory. Loss-only on the train path; `eval.py`
+  / sampling use the standard logits path.
+
+```bash
+# Muon + fused-CE on a single GPU
+python train.py --config configs/gpt2_124m.yaml   # edit: optimizer: muon, fused_ce: true
+```
+
+
 ## Worked example: 350M GPT-2 on FineWeb-Edu, 2.5 h on RTX 5060 Ti
 
 A full pretraining run from random init, with a clean loss curve and
@@ -84,6 +113,7 @@ model is undertrained-by-design (0.37× Chinchilla), not overfit.
 ```
 midgpt/
 ├── model.py          # GPT-2 architecture (LayerNorm, learned posn, full attention)
+├── muon.py           # Muon optimizer (Newton-Schulz) + 2D-weight param split
 ├── data.py           # tiktoken loader, packed sequences, mmap shards
 ├── prepare.py        # download + tokenize WikiText / OpenWebText
 ├── train.py          # DDP loop, AMP, grad-ckpt, grad-accum, resume

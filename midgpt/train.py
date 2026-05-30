@@ -84,17 +84,44 @@ def main():
                           rank=rank, world_size=world, split="val")
 
     mcfg = GPTConfig(**cfg["model"])
-    model = GPT(mcfg, grad_checkpoint=cfg["grad_checkpoint"]).to(device)
+    # Liger fused-linear-CE (optional, GPU+Triton only). Returns loss-only, so we
+    # disable it automatically for eval paths that need logits.
+    fused_ce = bool(cfg.get("fused_ce", False))
+    model = GPT(mcfg, grad_checkpoint=cfg["grad_checkpoint"], fused_ce=fused_ce).to(device)
     if is_master:
-        print(f"model: {model.num_params()/1e6:.2f}M non-emb params")
+        print(f"model: {model.num_params()/1e6:.2f}M non-emb params"
+              + ("  [liger fused-CE]" if fused_ce else ""))
 
     if cfg.get("compile"):
         model = torch.compile(model)
 
-    optim = model.configure_optimizer(
-        cfg["optim"]["weight_decay"], cfg["optim"]["lr"],
-        tuple(cfg["optim"]["betas"]), fused=is_cuda,
-    )
+    # Optimizer choice: "adamw" (default) or "muon". Muon orthogonalizes the
+    # update for 2D hidden weights via Newton-Schulz and routes embeddings /
+    # pos_emb / lm_head / 1-D params to a small AdamW — ~1.35x sample-efficiency
+    # on the modded-nanogpt FineWeb speedrun. See muon.py.
+    base_lr = cfg["optim"]["lr"]
+    if cfg["optim"].get("optimizer", "adamw") == "muon":
+        from muon import Muon, split_muon_params
+        muon_params, adamw_params = split_muon_params(model)
+        muon_lr = cfg["optim"].get("muon_lr", 0.02)
+        muon = Muon(muon_params, lr=muon_lr, momentum=cfg["optim"].get("muon_momentum", 0.95))
+        aux = torch.optim.AdamW(adamw_params, lr=base_lr, betas=tuple(cfg["optim"]["betas"]),
+                                weight_decay=cfg["optim"]["weight_decay"], fused=is_cuda)
+        optimizers = [muon, aux]
+        if is_master:
+            print(f"optimizer: Muon ({len(muon_params)} 2D mats, lr={muon_lr}) "
+                  f"+ AdamW ({len(adamw_params)} other, lr={base_lr})")
+    else:
+        optimizers = [model.configure_optimizer(
+            cfg["optim"]["weight_decay"], base_lr,
+            tuple(cfg["optim"]["betas"]), fused=is_cuda,
+        )]
+    # Stamp each param group with its base LR so the cosine schedule can scale
+    # all optimizers (Muon + AdamW) by a single multiplier while preserving
+    # their different absolute learning rates.
+    for opt in optimizers:
+        for g in opt.param_groups:
+            g["initial_lr"] = g["lr"]
     scaler = torch.amp.GradScaler("cuda", enabled=(dtype == torch.float16 and is_cuda))
 
     # Wrap in DDP AFTER optimizer construction (params are the same tensors)
@@ -109,7 +136,13 @@ def main():
     if args.resume and os.path.exists(ckpt_path):
         sd = torch.load(ckpt_path, map_location=device, weights_only=False)
         inner.load_state_dict(sd["model"])
-        optim.load_state_dict(sd["optim"])
+        # Backward-compatible: old checkpoints stored a single "optim"; new ones
+        # store a list of optimizer state dicts under "optims" (Muon + AdamW).
+        if "optims" in sd:
+            for opt, osd in zip(optimizers, sd["optims"]):
+                opt.load_state_dict(osd)
+        elif "optim" in sd:
+            optimizers[0].load_state_dict(sd["optim"])
         if "scaler" in sd and sd["scaler"] is not None:
             scaler.load_state_dict(sd["scaler"])
         if "rng_state" in sd:
@@ -139,7 +172,8 @@ def main():
 
     def _save(path: str, it: int):
         save_ckpt(path, dict(
-            model=inner.state_dict(), optim=optim.state_dict(),
+            model=inner.state_dict(),
+            optims=[opt.state_dict() for opt in optimizers],
             scaler=scaler.state_dict() if scaler.is_enabled() else None,
             iter=it, cfg=cfg, best_val=best_val,
             rng_state=torch.get_rng_state(),
@@ -151,10 +185,16 @@ def main():
     for it in range(start_iter, cfg["optim"]["max_iters"]):
         lr = cosine_lr(it, cfg["optim"]["warmup_iters"], cfg["optim"]["lr_decay_iters"],
                        cfg["optim"]["lr"], cfg["optim"]["min_lr"])
-        for g in optim.param_groups:
-            g["lr"] = lr
+        # Scale every optimizer's groups by the same cosine multiplier relative to
+        # each group's own base LR (so Muon's higher LR and AdamW's lower LR decay
+        # on one shared schedule).
+        mult = lr / base_lr if base_lr else 1.0
+        for opt in optimizers:
+            for g in opt.param_groups:
+                g["lr"] = g["initial_lr"] * mult
 
-        optim.zero_grad(set_to_none=True)
+        for opt in optimizers:
+            opt.zero_grad(set_to_none=True)
         loss_acc = 0.0
         for micro in range(accum):
             # only sync grads on last micro-step
@@ -167,9 +207,12 @@ def main():
                 scaler.scale(loss).backward()
                 loss_acc += loss.detach().float().item()
         if cfg["optim"]["grad_clip"]:
-            scaler.unscale_(optim)
+            for opt in optimizers:
+                scaler.unscale_(opt)
             torch.nn.utils.clip_grad_norm_(inner.parameters(), cfg["optim"]["grad_clip"])
-        scaler.step(optim); scaler.update()
+        for opt in optimizers:
+            scaler.step(opt)
+        scaler.update()
 
         # Each micro-batch loss was already divided by accum, so loss_acc is
         # already the per-step average. Optionally all-reduce across DP for an

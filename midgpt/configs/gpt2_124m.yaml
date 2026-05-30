@@ -4,6 +4,7 @@ tokenizer: gpt2          # tiktoken encoding name
 seed: 1337
 dtype: bfloat16
 compile: false
+fused_ce: false          # opt-in: Liger fused-linear-CE (GPU+Triton; loss-only)
 grad_checkpoint: false   # 124M fits without it
 log: {jsonl: true, wandb_project: null}
 
@@ -20,6 +21,9 @@ model:
   qk_norm: false          # opt-in: per-head RMSNorm on Q/K (lets you raise LR)
 
 optim:
+  optimizer: adamw       # "adamw" (default) or "muon" (orthogonalized 2D-weight updates)
+  muon_lr: 0.02          # Muon's own LR (only used when optimizer: muon); higher than AdamW's
+  muon_momentum: 0.95
   lr: 6.0e-4
   min_lr: 6.0e-5
   betas: [0.9, 0.95]

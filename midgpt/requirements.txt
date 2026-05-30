@@ -7,3 +7,8 @@ tqdm
 requests
 # optional
 # wandb
+# Optional throughput add-on (config-gated, off by default):
+#   liger-kernel — fused linear-cross-entropy; set fused_ce: true (GPU+Triton).
+#   Avoids materializing the [B*T, vocab] logits; exact, ~20% faster / ~60% less
+#   memory. Install only if you enable it (pulls heavier Triton/CUDA deps).
+# liger-kernel>=0.4

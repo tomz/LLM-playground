@@ -96,10 +96,22 @@ class Block(nn.Module):
 
 
 class GPT(nn.Module):
-    def __init__(self, cfg: GPTConfig, grad_checkpoint: bool = False):
+    def __init__(self, cfg: GPTConfig, grad_checkpoint: bool = False,
+                 fused_ce: bool = False):
         super().__init__()
         self.cfg = cfg
         self.grad_checkpoint = grad_checkpoint
+        # Liger fused-linear-cross-entropy: computes the lm_head matmul and the
+        # cross-entropy in one fused Triton kernel WITHOUT materializing the full
+        # [B*T, vocab] logits tensor — the single largest activation in the
+        # forward pass. Exact (not an approximation); ~20% faster / up to ~60%
+        # less memory, decisive for large vocabs. Requires `pip install
+        # liger-kernel` + a Triton GPU; resolved lazily so import stays optional.
+        self.fused_ce = fused_ce
+        self._liger_ce = None
+        if fused_ce:
+            from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss
+            self._liger_ce = LigerFusedLinearCrossEntropyLoss(ignore_index=-100)
         self.tok_emb = nn.Embedding(cfg.vocab_size, cfg.d_model)
         self.pos_emb = nn.Embedding(cfg.block_size, cfg.d_model)
         self.drop = nn.Dropout(cfg.dropout)
@@ -150,6 +162,12 @@ class GPT(nn.Module):
             if return_full_logits:
                 return self.lm_head(x), None
             return self.lm_head(x[:, [-1], :]), None
+        if self._liger_ce is not None:
+            # Fused linear-CE: pass hidden states + lm_head weight straight to the
+            # kernel so the [B*T, vocab] logits are never materialized. Returns
+            # loss only (no logits) — callers needing logits must disable fused_ce.
+            loss = self._liger_ce(self.lm_head.weight, x.reshape(-1, x.size(-1)), targets.reshape(-1))
+            return None, loss
         logits = self.lm_head(x)
         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-100)
         return logits, loss
