@@ -38,3 +38,6 @@ out/sim/7b_realgpu/*
 !out/sim/7b_realgpu/loss.png
 !out/sim/7b_realgpu/loss.svg
 !out/sim/7b_realgpu/summary.json
+
+# Test-generated sim artifacts
+out/sim/_test/
