@@ -17,6 +17,7 @@ class ParallelConfig:
     zero_stage: int = 3
     activation_recompute: str = "selective"
     grad_clip: float = 1.0  # mirrored from OptimConfig; set by Trainer
+    precision: str = "fp32"  # 'fp32'|'bf16'|'fp16'|'fp8'|'nvfp4' (autocast policy)
 
     def world_size(self) -> int:
         return self.dp * self.tp * self.pp * self.cp
@@ -45,14 +46,19 @@ class ParallelEngine:
         if cfg.dp > 1 and dist.is_available() and dist.is_initialized():
             self.model = DDP(model)
         self._dist = dist
+        # Precision policy: bf16/fp8 autocast on capable GPUs, fp32 elsewhere.
+        from .precision import PrecisionPolicy
+        self.precision = PrecisionPolicy.create(cfg.precision)
 
     def forward_backward(self, batch) -> dict:
         input_ids, targets = batch
-        logits, loss = self.model(input_ids, targets=targets)
+        with self.precision.autocast():
+            logits, loss = self.model(input_ids, targets=targets)
         loss.backward()
         return {
             "loss": float(loss.detach()),
             "tokens": int(input_ids.numel()),
+            "precision_backend": self.precision.backend,
         }
 
     def step(self) -> None:

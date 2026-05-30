@@ -10,7 +10,14 @@
 
 ## Numerics
 
-- BF16 weights, BF16 activations, FP32 master weights & optimizer state, FP8 matmul on Hopper/Blackwell via Transformer Engine.
+- **BF16** weights, BF16 activations, FP32 master weights & optimizer state, FP8
+  matmul on Hopper/Blackwell via Transformer Engine. The precision policy lives
+  in `platform/training/precision.py` (`PrecisionPolicy`): set
+  `ParallelConfig.precision="fp8"` and the trainer wraps every forward in
+  `te.fp8_autocast` (under bf16 autocast) when Transformer Engine + a Hopper/
+  Blackwell GPU are present, transparently falling back to bf16 (Ampere) or fp32
+  (CPU/old GPU) otherwise — so the same code runs everywhere today and switches
+  to real FP8 the moment the hardware is available.
 - Loss in FP32. Reduction in FP32. No FP16 anywhere (overflow risk too high for long runs).
 
 ## Stability tooling
