@@ -76,10 +76,14 @@ reward*.
 workers + GRPO/PPO-with-verifier learner); add reasoning traces to the data and
 tokenizer contract; make "thinking mode" a first-class model + serving feature.
 
-> **Update:** a *toy-functional* `platform/rl/` now exists (verifiers + group
-> rollout + GRPO; see `docs/15-reasoning-rl-rlvr.md`). It proves the loop on
-> CPU but the production gap — async vLLM/SGLang rollout, sandboxed code
-> verifiers, reasoning-data curation — is still open.
+> **Update:** a *toy-functional* `platform/rl/` now exists and has been deepened
+> beyond the basic loop (see `docs/15-reasoning-rl-rlvr.md`): verifiers + group
+> rollout + **GRPO learner** + **reasoning-SFT cold-start** (`coldstart.py`,
+> R1-style) + **composite reward shaping** (`reward.py` — format/length rewards
+> plus repetition/answer-spam reward-hacking guards). It proves the
+> cold-start→sample→verify→shape→advantage→update loop on CPU. The production
+> gap — async vLLM/SGLang rollout, sandboxed code verifiers, reasoning-data
+> curation at scale — is still open.
 
 ---
 
@@ -240,6 +244,11 @@ moving past for the from-scratch regime.*
 **Irony to fix:** our small-scale repos are *ahead* of our frontier blueprint on
 training tricks. The blueprint should at minimum cross-reference and adopt them.
 
+> **Update (partial):** **QK-norm now exists in the model code** — `qk_norm=True`
+> applies per-head RMSNorm to queries and keys before attention (the
+> `nanogpt-edu` stability trick), in `GQAttention`. Muon, MTP, and WSD schedules
+> remain to be ported from `nanogpt-edu`.
+
 ---
 
 ## 7. FP8/low-precision is mentioned but under-committed 🟨 ($)
@@ -364,28 +373,36 @@ post-training compute stage; let reasoning compute affect predicted eval scores.
 
 ## Priority ordering (if the cluster arrived tomorrow)
 
-| # | Gap | Tag | Without it you are… |
-|---|-----|-----|---------------------|
-| 1 | RLVR + GRPO + reasoning post-training | 🟥 R/D | a non-reasoning model = a generation behind |
-| 2 | Multimodality | 🟥 $/R/D | text-only = not a flagship |
-| 3 | MoE as default (fine-grained + shared, aux-free) | 🟥 $/R | paying dense prices for sub-frontier quality |
-| 4 | Agentic / tool-use training + eval | 🟧 R/D | losing the benchmarks buyers care about |
-| 5 | MLA / KV compression + 200k–1M context | 🟧 $/R | uneconomical long-context serving |
-| 6 | Synthetic + reasoning-trace data engine | 🟧 D/R | data-starved for §1 and §4 |
-| 7 | FP8/NVFP4 first-class + re-baselined sim | 🟨 $ | ~1.5–2× overpaying; wrong cost model |
-| 8 | Muon / MTP / QK-norm (adopt from our own repos) | 🟨 $/R | leaving free efficiency on the table |
-| 9 | 2026 eval + safety surfaces | 🟨 O/D | can't measure whether you closed 1–4 |
+Status legend: ✅ implemented (toy-functional code + sim), 🟡 partially (code or
+sim, not both), ⬜ open. "Toy-functional" means it runs end-to-end on CPU and is
+priced in the simulator, *not* that it is production-scale.
+
+| # | Gap | Tag | Status | Notes |
+|---|-----|-----|--------|-------|
+| 1 | RLVR + GRPO + reasoning post-training | 🟥 R/D | ✅ | `platform/rl/`: GRPO + cold-start + reward shaping; sim phase |
+| 2 | Multimodality | 🟥 $/R/D | 🟡 | VLM adapter + sim pricing + MMMU; data/tokenizer/serving open |
+| 3 | MoE as default (fine-grained + shared, aux-free) | 🟥 $/R | ✅ | `MoEFFN` + `model_moe_1t.yaml` + active-param sim |
+| 4 | Agentic / tool-use training + eval | 🟧 R/D | 🟡 | `rl/agentic.py` env + sim + SWE-bench predictor; real tools open |
+| 5 | MLA / KV compression + 200k–1M context | 🟧 $/R | 🟡 | `MLAttention` + serving sim; sparse-attn + 1M context open |
+| 6 | Synthetic + reasoning-trace data engine | 🟧 D/R | ⬜ | not started |
+| 7 | FP8/NVFP4 first-class + re-baselined sim | 🟨 $ | 🟡 | sim prices it; training numerics not implemented |
+| 8 | Muon / MTP / QK-norm (adopt from our own repos) | 🟨 $/R | 🟡 | QK-norm done; Muon/MTP/WSD open |
+| 9 | 2026 eval + safety surfaces | 🟨 O/D | 🟡 | sim eval (SWE-bench/ARC-AGI-2/HLE/MMMU); real harness + safety open |
 
 **Bottom line.** The blueprint nails the *systems-engineering* half of a frontier
 program — data hygiene, distributed training, checkpointing/stability, infra
 reliability math, serving tiers, RSP gating. Those are real and hard and mostly
-**right**. What it's missing is the *2025–2026 capability stack*: it would train
-an excellent **GPT‑4-generation dense model** and then stop exactly where the
-modern frontier *begins* — sparse MoE, large-scale RL on verifiable rewards,
-inference-time reasoning, native multimodality, and agents. With unlimited GPUs,
-gaps 3/5/7/8/11 are mostly **money + engineering**; gaps 1/2/4/6 also need
-**research bets and a data/labeling org**, which is why the flagship labs spend
-as much on *people and data* as on *compute*.
+**right**. The *2025–2026 capability stack* that was missing is now present in
+**toy-functional + simulated** form: sparse MoE (fine-grained + shared, aux-free),
+MLA KV compression, RLVR/GRPO reasoning post-training with cold-start and reward
+shaping, agentic tool-use RL, multimodal understanding, and a post-training-aware
+2026 eval suite — all runnable on CPU and priced by the simulator on hardware we
+don't own (GB200/B300). What remains is the **production-scale** half of each:
+async vLLM/SGLang rollout, sandboxed code/browser tools, pretrained vision towers,
+FP8 numerics, expert-parallel MoE dispatch, the synthetic/reasoning-trace data
+engine, and wiring real benchmark datasets into the eval harness. Those need
+**research bets, a data/labeling org, and real GPUs** — which is why the flagship
+labs still spend as much on *people and data* as on *compute*.
 
 ---
 

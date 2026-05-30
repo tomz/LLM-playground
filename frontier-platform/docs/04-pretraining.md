@@ -15,6 +15,9 @@
 
 ## Stability tooling
 
+- **QK-norm** (`qk_norm=True`): per-head RMSNorm on queries and keys before
+  attention — caps attention-logit growth, a cheap stabilizer for large-scale
+  runs (monitor "attention-logit max" below).
 - Per-step monitor: loss, grad-norm, param-norm, update/param ratio, attention-logit max.
 - Auto-rewind on loss spike (>4σ over 200-step rolling): roll back N steps, lower LR, skip 1k steps of data.
 - Spike forensics: dump bad batch + activations to S3 for offline replay.

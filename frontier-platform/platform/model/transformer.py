@@ -83,6 +83,10 @@ class GQAttention(nn.Module):
         self.v_proj = nn.Linear(cfg.d_model, cfg.n_kv_head * D, bias=False)
         self.o_proj = nn.Linear(cfg.n_head * D, cfg.d_model, bias=False)
         self.rope = RoPE(D, base=cfg.rope_base, max_seq=cfg.max_seq_len)
+        self.qk_norm = bool(getattr(cfg, "qk_norm", False))
+        if self.qk_norm:
+            self.q_norm = RMSNorm(D, cfg.rms_eps)
+            self.k_norm = RMSNorm(D, cfg.rms_eps)
 
     def forward(self, x: torch.Tensor, kv_cache=None) -> torch.Tensor:
         B, T, _ = x.shape
@@ -90,6 +94,9 @@ class GQAttention(nn.Module):
         q = self.q_proj(x).view(B, T, H, D).transpose(1, 2)
         k = self.k_proj(x).view(B, T, Hk, D).transpose(1, 2)
         v = self.v_proj(x).view(B, T, Hk, D).transpose(1, 2)
+        if self.qk_norm:
+            q = self.q_norm(q)
+            k = self.k_norm(k)
         q, k = self.rope.apply(q, k)
         if Hk != H:
             rep = H // Hk

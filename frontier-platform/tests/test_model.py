@@ -166,3 +166,18 @@ def test_mla_kv_cache_smaller_than_gqa():
     assert mla.kv_bytes_per_token() == (128 + 16) * 2
     # Compression ratio should be a meaningful 3x+ here.
     assert gqa.kv_bytes_per_token() / mla.kv_bytes_per_token() > 3.0
+
+
+def test_qk_norm_runs_and_trains():
+    """QK-norm (per-head RMSNorm on Q/K) produces finite loss and trains."""
+    cfg = ModelConfig(vocab_size=256, n_layer=2, n_head=4, n_kv_head=2,
+                      d_model=64, d_ffn=128, max_seq_len=32, qk_norm=True)
+    torch.manual_seed(0)
+    m = Transformer(cfg)
+    assert hasattr(m.layers[0].attn, "q_norm")
+    x = torch.randint(0, 256, (2, 16))
+    y = torch.randint(0, 256, (2, 16))
+    _, loss = m(x, targets=y)
+    assert torch.isfinite(loss)
+    loss.backward()
+    assert m.layers[0].attn.q_norm.weight.grad is not None

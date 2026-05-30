@@ -14,6 +14,10 @@ class ModelConfig:
     rope_base: float = 500_000.0
     rms_eps: float = 1e-5
     tie_embeddings: bool = False
+    # QK-norm: RMSNorm applied to per-head queries and keys before attention.
+    # A cheap stability trick (used in many 2024-2025 frontier models) that tames
+    # attention-logit blowups during large-scale training. Present in nanogpt-edu.
+    qk_norm: bool = False
     # Attention variant: "gqa" (Grouped-Query, Llama-style) or "mla" (Multi-head
     # Latent Attention, DeepSeek-V2/V3). MLA compresses the KV cache 5-10x via a
     # low-rank latent projection at near-equal quality — the frontier answer for
