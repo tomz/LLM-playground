@@ -38,6 +38,15 @@ def _apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.
     return torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
 
 
+def _rope_at(rope: "RoPE", x: torch.Tensor, positions: torch.Tensor) -> torch.Tensor:
+    """Apply RoPE to a single [B,H,T,Dr] tensor at the given absolute positions."""
+    max_pos = int(positions.max().item()) + 1
+    cos, sin = rope._ensure(max_pos, x.device, x.dtype)
+    cos = cos[positions]
+    sin = sin[positions]
+    return _apply_rope(x, cos, sin)
+
+
 class RoPE(nn.Module):
     """Rotary Position Embedding. Stateless except for a cached (cos, sin) buffer."""
 
@@ -60,11 +69,13 @@ class RoPE(nn.Module):
 
     def apply(self, q: torch.Tensor, k: torch.Tensor, positions: torch.Tensor | None = None):
         T = q.shape[-2]
-        cos, sin = self._ensure(T, q.device, q.dtype)
         if positions is not None:
+            need = int(positions.max().item()) + 1
+            cos, sin = self._ensure(need, q.device, q.dtype)
             cos = cos[positions]
             sin = sin[positions]
         else:
+            cos, sin = self._ensure(T, q.device, q.dtype)
             cos = cos[:T]
             sin = sin[:T]
         return _apply_rope(q, cos, sin), _apply_rope(k, cos, sin)
@@ -88,7 +99,7 @@ class GQAttention(nn.Module):
             self.q_norm = RMSNorm(D, cfg.rms_eps)
             self.k_norm = RMSNorm(D, cfg.rms_eps)
 
-    def forward(self, x: torch.Tensor, kv_cache=None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, kv_cache=None, start_pos: int = 0) -> torch.Tensor:
         B, T, _ = x.shape
         H, Hk, D = self.cfg.n_head, self.cfg.n_kv_head, self.cfg.head_dim
         q = self.q_proj(x).view(B, T, H, D).transpose(1, 2)
@@ -97,12 +108,24 @@ class GQAttention(nn.Module):
         if self.qk_norm:
             q = self.q_norm(q)
             k = self.k_norm(k)
-        q, k = self.rope.apply(q, k)
+        # RoPE at absolute positions [start_pos, start_pos+T) so cached and new
+        # tokens share a consistent rotation.
+        positions = torch.arange(start_pos, start_pos + T, device=x.device)
+        q, k = self.rope.apply(q, k, positions=positions)
+        if kv_cache is not None:
+            # Append new K,V to the cache and attend over the full history.
+            k = kv_cache.append("k", k, time_dim=2)
+            v = kv_cache.append("v", v, time_dim=2)
         if Hk != H:
             rep = H // Hk
             k = k.repeat_interleave(rep, dim=1)
             v = v.repeat_interleave(rep, dim=1)
-        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        if kv_cache is not None and T == 1:
+            # Single-token decode: query attends to all cached keys (no causal mask
+            # needed — everything in the cache is in the past).
+            y = F.scaled_dot_product_attention(q, k, v, is_causal=False)
+        else:
+            y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
         y = y.transpose(1, 2).contiguous().view(B, T, H * D)
         return self.o_proj(y)
 
@@ -149,25 +172,37 @@ class MLAttention(nn.Module):
         self.o_proj = nn.Linear(H * D, cfg.d_model, bias=False)
         self.rope = RoPE(self.rope_dim, base=cfg.rope_base, max_seq=cfg.max_seq_len)
 
-    def forward(self, x: torch.Tensor, kv_cache=None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, kv_cache=None, start_pos: int = 0) -> torch.Tensor:
         B, T, _ = x.shape
         H, D = self.n_head, self.head_dim
         # Queries
         q = self.q_up(self.q_down(x)).view(B, T, H, D).transpose(1, 2)   # [B,H,T,D]
         q_nope, q_rope = q[..., : self.nope_dim], q[..., self.nope_dim :]
-        # KV latent (the cached quantity)
-        c_kv = self.kv_down(x)                                            # [B,T,kv_latent]
-        k_nope = self.k_up(c_kv).view(B, T, H, self.nope_dim).transpose(1, 2)
-        v = self.v_up(c_kv).view(B, T, H, D).transpose(1, 2)
-        # Decoupled RoPE key, shared across heads
-        k_rope = self.k_rope(x).view(B, T, 1, self.rope_dim).transpose(1, 2)  # [B,1,T,r]
-        # Apply RoPE to q_rope and the shared k_rope
-        q_rope, k_rope = self.rope.apply(q_rope, k_rope)
-        k_rope = k_rope.expand(B, H, T, self.rope_dim).contiguous()
-        # Concatenate content + position parts back to full head dim
+        # KV latent (the cached quantity) — for the *new* tokens
+        c_kv_new = self.kv_down(x)                                        # [B,T,kv_latent]
+        # Decoupled RoPE key for the new tokens, shared across heads
+        k_rope_new = self.k_rope(x).view(B, T, 1, self.rope_dim).transpose(1, 2)  # [B,1,T,r]
+
+        positions = torch.arange(start_pos, start_pos + T, device=x.device)
+        # RoPE: queries rotate at their absolute positions; the new keys too.
+        q_rope = _rope_at(self.rope, q_rope, positions)
+        k_rope_new = _rope_at(self.rope, k_rope_new, positions)
+
+        if kv_cache is not None:
+            c_kv = kv_cache.append("c_kv", c_kv_new, time_dim=1)          # [B,T_tot,latent]
+            k_rope = kv_cache.append("k_rope", k_rope_new, time_dim=2)    # [B,1,T_tot,r]
+        else:
+            c_kv, k_rope = c_kv_new, k_rope_new
+
+        T_kv = c_kv.shape[1]
+        # Re-expand per-head K(nope) and V from the (cached) latent.
+        k_nope = self.k_up(c_kv).view(B, T_kv, H, self.nope_dim).transpose(1, 2)
+        v = self.v_up(c_kv).view(B, T_kv, H, D).transpose(1, 2)
+        k_rope = k_rope.expand(B, H, T_kv, self.rope_dim).contiguous()
         q_full = torch.cat([q_nope, q_rope], dim=-1)
         k_full = torch.cat([k_nope, k_rope], dim=-1)
-        y = F.scaled_dot_product_attention(q_full, k_full, v, is_causal=True)
+        causal = not (kv_cache is not None and T == 1)
+        y = F.scaled_dot_product_attention(q_full, k_full, v, is_causal=causal)
         y = y.transpose(1, 2).contiguous().view(B, T, H * D)
         return self.o_proj(y)
 
@@ -298,8 +333,8 @@ class Block(nn.Module):
         self.ffn_norm = RMSNorm(cfg.d_model, cfg.rms_eps)
         self.ffn = MoEFFN(cfg) if cfg.moe_num_experts else SwiGLU(cfg.d_model, cfg.d_ffn)
 
-    def forward(self, x: torch.Tensor, kv_cache=None) -> torch.Tensor:
-        x = x + self.attn(self.attn_norm(x), kv_cache=kv_cache)
+    def forward(self, x: torch.Tensor, kv_cache=None, start_pos: int = 0) -> torch.Tensor:
+        x = x + self.attn(self.attn_norm(x), kv_cache=kv_cache, start_pos=start_pos)
         x = x + self.ffn(self.ffn_norm(x))
         return x
 
@@ -366,6 +401,24 @@ class Transformer(nn.Module):
                 if used:
                     loss = loss + self.cfg.mtp_weight * (aux / used)
         return logits, loss
+
+    @torch.no_grad()
+    def forward_with_cache(self, tokens: torch.Tensor, kv_cache):
+        """Incremental decode forward. ``tokens`` is ``[B, T]`` (T = prompt len on
+        prefill, 1 per decode step). Uses ``kv_cache`` (a
+        :class:`platform.model.kv_cache.KVCache`) to attend over history at
+        absolute positions starting from ``kv_cache.pos``. Returns logits ``[B,T,V]``.
+
+        Only the main head runs (MTP heads are train-only), so inference cost is
+        identical to a non-MTP model.
+        """
+        start_pos = kv_cache.pos
+        x = self.tok_emb(tokens)
+        for blk, lc in zip(self.layers, kv_cache.layers):
+            x = blk(x, kv_cache=lc, start_pos=start_pos)
+        kv_cache.advance(tokens.shape[1])
+        x = self.final_norm(x)
+        return self.lm_head(x)
 
     def init_weights(self, scheme: str = "muP") -> None:
         """muP-flavored: residual output projections get smaller std."""

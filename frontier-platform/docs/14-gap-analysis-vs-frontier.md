@@ -154,6 +154,15 @@ attention default for any long-context tier.
 > effective decode throughput so an MLA tier needs fewer GPUs / lower $/Mtok at
 > the same QPS. Still open: incremental MLA decode cache in the real serving
 > engine, and sparse attention (DeepSeek-V3.2) for the 1M-context tier.
+>
+> **Update 2:** **incremental KV-cache decode is now implemented** for both GQA
+> and MLA — `Transformer.forward_with_cache` + `platform/model/kv_cache.py`
+> (`KVCache`). The serving engine (`TorchEngine`) prefills the prompt then decodes
+> one token per step over the cache (O(T)/token), and a correctness test asserts
+> the cached path matches the full re-encode logits bitwise-close for GQA, MLA,
+> and QK-norm. MLA's cache stores only the compressed latent `c_kv` + shared RoPE
+> key, not per-head K/V — the actual memory win, now real in code. Sparse
+> attention for the 1M tier remains open.
 
 ---
 

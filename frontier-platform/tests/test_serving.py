@@ -27,7 +27,7 @@ def _tiny():
 
 def test_torch_engine_greedy_generation():
     model = _tiny()
-    eng = Engine(EngineConfig(backend="torch"), model=model)
+    eng = Engine(EngineConfig(backend="torch", device="cpu"), model=model)
     req = GenRequest(prompt_ids=[1, 2, 3], max_new_tokens=5, temperature=0.0)
     chunks = _async_collect(eng.generate(req))
     assert chunks[-1]["done"] is True
@@ -35,14 +35,14 @@ def test_torch_engine_greedy_generation():
     tokens = [c["token_id"] for c in chunks if not c.get("done")]
     assert len(tokens) == 5
     # Determinism: same seed → same tokens.
-    chunks2 = _async_collect(Engine(EngineConfig(backend="torch"), model=model).generate(req))
+    chunks2 = _async_collect(Engine(EngineConfig(backend="torch", device="cpu"), model=model).generate(req))
     tokens2 = [c["token_id"] for c in chunks2 if not c.get("done")]
     assert tokens == tokens2
 
 
 def test_engine_stop_token():
     model = _tiny()
-    eng = Engine(EngineConfig(backend="torch"), model=model)
+    eng = Engine(EngineConfig(backend="torch", device="cpu"), model=model)
     # Find what the greedy first token actually is, then use it as stop.
     first = _async_collect(eng.generate(GenRequest(prompt_ids=[1, 2, 3], max_new_tokens=1, temperature=0.0)))
     stop_id = first[0]["token_id"]

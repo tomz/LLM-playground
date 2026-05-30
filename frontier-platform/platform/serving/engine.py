@@ -11,6 +11,7 @@ class EngineConfig:
     tp: int = 1
     pp: int = 1
     dtype: str = "fp32"        # bf16 not used on Pascal; fp16 or fp32
+    device: str = "auto"       # 'auto' | 'cpu' | 'cuda' — override for tests/old GPUs
     max_model_len: int = 32_768
     max_num_seqs: int = 256
     enable_prefix_cache: bool = True
