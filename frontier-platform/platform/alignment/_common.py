@@ -101,6 +101,23 @@ def compute_logps(
     return (gathered * loss_mask).sum(dim=-1)
 
 
+def compute_token_logps(
+    model,
+    input_ids: torch.Tensor,
+    target_ids: torch.Tensor,
+) -> torch.Tensor:
+    """Per-*token* log P(target | input) under ``model``. Returns ``[B, T]``.
+
+    Unlike :func:`compute_logps` this does **not** reduce over time or apply a
+    mask — the caller needs the per-token quantities to form PPO/GRPO importance
+    ratios ``exp(logp - logp_old)`` and a per-token KL penalty. Gradients flow
+    through ``model``; mask and reduce downstream.
+    """
+    logits, _ = model(input_ids)
+    logp = F.log_softmax(logits.float(), dim=-1)
+    return logp.gather(-1, target_ids.unsqueeze(-1)).squeeze(-1)  # [B,T]
+
+
 def clone_for_reference(model: torch.nn.Module) -> torch.nn.Module:
     """Deep copy + freeze + eval mode. Returns the frozen reference."""
     ref = copy.deepcopy(model)

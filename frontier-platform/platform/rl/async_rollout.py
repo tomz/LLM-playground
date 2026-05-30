@@ -70,7 +70,7 @@ class AsyncRolloutEngine:
             )
         self.weight_version += 1
 
-    async def _one_rollout(self, prompt_ids: list[int]) -> list[int]:
+    async def _one_rollout(self, prompt_ids: list[int]) -> tuple[list[int], list[float]]:
         async with self._sem:
             req = GenRequest(
                 prompt_ids=list(prompt_ids),
@@ -79,10 +79,12 @@ class AsyncRolloutEngine:
                 top_p=self.cfg.top_p,
             )
             gen: list[int] = []
+            logps: list[float] = []
             async for chunk in self.engine.generate(req):
                 if not chunk.get("done"):
                     gen.append(chunk["token_id"])
-            return gen
+                    logps.append(float(chunk.get("logprob", 0.0)))
+            return gen, logps
 
     async def generate_group_async(self, prompts_ids: list[list[int]]) -> GroupRollout:
         """Generate ``group_size`` samples for each prompt concurrently and pack
@@ -97,7 +99,9 @@ class AsyncRolloutEngine:
                 group_index.append(gi)
                 rows.append(list(p))
 
-        gen_lists = await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks)
+        gen_lists = [g for g, _ in results]
+        logp_lists = [lp for _, lp in results]
 
         # Pack into padded [N, T] tensors with a response mask (mirrors sample_group).
         pad_id, eos_id = self.tokenizer.pad_id, self.tokenizer.eos_id
@@ -110,13 +114,19 @@ class AsyncRolloutEngine:
 
         ids = torch.full((N, T_total), pad_id, dtype=torch.long)
         resp_mask = torch.zeros((N, T_total), dtype=torch.float32)
+        behavior_logp = torch.zeros((N, T_total), dtype=torch.float32)
         response_text: list[str] = []
-        for i, (p, gen) in enumerate(zip(rows, gen_lists)):
+        for i, (p, gen, lps) in enumerate(zip(rows, gen_lists, logp_lists)):
             seq = (list(p) + list(gen))[:T_total]
             ids[i, : len(seq)] = torch.tensor(seq, dtype=torch.long)
             gen_start = min(len(p), T_total)
             gen_end = min(len(p) + len(gen), T_total)
             resp_mask[i, gen_start:gen_end] = 1.0
+            n_gen = gen_end - gen_start
+            if n_gen > 0:
+                behavior_logp[i, gen_start:gen_end] = torch.tensor(
+                    lps[:n_gen], dtype=torch.float32
+                )
             response_text.append(self.tokenizer.decode(list(gen)))
             _ = eos_id  # eos handled by the engine's stop logic upstream
 
@@ -126,6 +136,7 @@ class AsyncRolloutEngine:
             group_index=torch.tensor(group_index, dtype=torch.long),
             prompt_lens=torch.tensor(prompt_lens, dtype=torch.long),
             response_text=response_text,
+            behavior_logp=behavior_logp,
         )
 
     def generate_group(self, prompts_ids: list[list[int]]) -> GroupRollout:

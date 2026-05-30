@@ -25,6 +25,11 @@ class GroupRollout:
     group_index: torch.Tensor  # [N]     which prompt (0..B-1) each row belongs to
     prompt_lens: torch.Tensor  # [N]     prompt length per row
     response_text: list[str]   # [N]     decoded generated text (for verifiers)
+    behavior_logp: torch.Tensor | None = None  # [N, T] log-prob of each token
+                               # under the *sampling* (behavior) policy, aligned
+                               # to ``ids`` positions (logp for token at t lives
+                               # at column t). Needed for the GRPO/PPO importance
+                               # ratio; None for greedy or legacy rollouts.
 
     @property
     def n_rows(self) -> int:
@@ -69,6 +74,7 @@ def sample_group(
 
     ids = torch.full((B, T_total), pad_id, dtype=torch.long, device=device)
     resp_mask = torch.zeros((B, T_total), dtype=torch.float32, device=device)
+    behavior_logp = torch.zeros((B, T_total), dtype=torch.float32, device=device)
     for i, p in enumerate(rows):
         L = min(len(p), T_total)
         ids[i, :L] = torch.tensor(p[:L], dtype=torch.long, device=device)
@@ -87,15 +93,22 @@ def sample_group(
         next_logits = logits[ar, idx].float()
         if temperature <= 0:
             tok = next_logits.argmax(dim=-1)
+            step_logp = F.log_softmax(next_logits, dim=-1)
         else:
-            probs = F.softmax(next_logits / temperature, dim=-1)
+            scaled = next_logits / temperature
+            probs = F.softmax(scaled, dim=-1)
             tok = torch.multinomial(probs, 1).squeeze(-1)
+            # Behavior log-prob must reflect the *sampling* distribution, i.e.
+            # the temperature-scaled softmax actually used to draw ``tok``.
+            step_logp = F.log_softmax(scaled, dim=-1)
+        tok_logp = step_logp.gather(-1, tok.unsqueeze(-1)).squeeze(-1)  # [B]
 
         write_pos = cur_lens.clamp(max=T_total - 1)
         for b in range(B):
             if not bool(done[b].item()):
                 ids[b, write_pos[b]] = tok[b]
                 resp_mask[b, write_pos[b]] = 1.0
+                behavior_logp[b, write_pos[b]] = tok_logp[b]
         cur_lens = torch.where(done, cur_lens, cur_lens + 1)
         done = done | (tok == eos_id) | (cur_lens >= T_total)
 
@@ -111,4 +124,5 @@ def sample_group(
         group_index=torch.tensor(group_index, dtype=torch.long, device=device),
         prompt_lens=torch.tensor(prompt_lens, dtype=torch.long, device=device),
         response_text=response_text,
+        behavior_logp=behavior_logp,
     )

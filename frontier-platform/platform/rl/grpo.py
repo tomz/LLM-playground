@@ -5,12 +5,23 @@ For each prompt, sample a group of G responses, score each with a *verifier*
 (see `platform.rl.verifiers`), and use the group's mean/std to form a baseline:
 
     advantage_i = (r_i - mean(group)) / (std(group) + eps)
-    loss        = -(advantage_i * sum_t logp(token_t))  +  beta * KL(pi || pi_ref)
 
-This toy implementation uses a REINFORCE-style per-sequence log-prob (summed over
-generated tokens) rather than per-token PPO ratios — enough to demonstrate the
-GRPO advantage/objective end-to-end on CPU. Production GRPO keeps per-token
-importance ratios and a clipped objective; the advantage computation is identical.
+The per-token objective is the PPO-style **clipped** surrogate with a
+group-relative advantage broadcast to every generated token, minus a
+per-token KL penalty to the reference policy:
+
+    ratio_t   = exp(logp_theta(t) - logp_behavior(t))
+    surr_t    = min(ratio_t * A, clip(ratio_t, 1-eps_lo, 1+eps_hi) * A)
+    kl_t      = exp(logp_ref - logp_theta) - (logp_ref - logp_theta) - 1   # k3, >=0
+    loss      = -mean_t(surr_t) + beta * mean_t(kl_t)
+
+This is the production GRPO objective: per-token importance ratios against the
+**behavior** policy that generated the rollout (so it is correct under async
+actor–learner skew, where the sampling policy lags the learner), Schulman's k3
+unbiased KL estimator (always >= 0, low variance), and decoupled lower/upper
+clip ranges (DAPO-style ``clip_higher``). When a rollout carries no behavior
+log-probs (legacy/greedy), the ratio degenerates to ``exp(logp - logp.detach())
+== 1`` on the first inner step, recovering the REINFORCE surrogate.
 """
 from __future__ import annotations
 
@@ -19,7 +30,7 @@ from pathlib import Path
 
 import torch
 
-from ..alignment._common import clone_for_reference, compute_logps
+from ..alignment._common import clone_for_reference, compute_token_logps
 from ..model.config import ModelConfig
 from ..model.transformer import Transformer
 from ..tokenizer.bytes import BytesTokenizer
@@ -36,6 +47,9 @@ class GRPOConfig:
     steps: int = 10
     lr: float = 1e-5
     beta: float = 0.04                # KL-to-reference coefficient
+    clip_eps_low: float = 0.2         # PPO lower clip (1 - eps_low)
+    clip_eps_high: float = 0.2        # PPO upper clip (1 + eps_high); DAPO raises this
+    ppo_epochs: int = 1               # inner optimization passes per rollout batch
     max_new_tokens: int = 16
     seq_len: int = 256
     temperature: float = 1.0
@@ -70,34 +84,66 @@ def grpo_step(
     *,
     optimizer=None,
 ) -> dict:
-    """One GRPO update over a group rollout. Returns metrics dict."""
-    adv = group_advantages(rewards, roll.group_index)        # [N]
-    x, y, m = _shift(roll.ids, roll.resp_mask)
+    """One GRPO update over a group rollout (real per-token clipped objective).
 
-    policy.train()
-    logp = compute_logps(policy, x, y, m)                    # [N] sum over generated tokens
-    with torch.no_grad():
-        ref_logp = compute_logps(ref, x, y, m)
-    kl = (logp - ref_logp)                                   # [N] surrogate KL(pi||ref)
+    Computes group-relative advantages, then for ``cfg.ppo_epochs`` inner passes
+    applies the PPO-clipped surrogate with a per-token importance ratio against
+    the rollout's behavior log-probs and a k3 KL penalty to ``ref``. Returns a
+    metrics dict. When ``optimizer`` is None, runs a single forward to populate
+    metrics without updating (advantages still computed)."""
+    adv_seq = group_advantages(rewards, roll.group_index)        # [N]
+    x, y, m = _shift(roll.ids, roll.resp_mask)                   # [N, T-1]
 
-    pg_loss = -(adv.detach() * logp).mean()
-    kl_loss = cfg.beta * kl.mean()
-    loss = pg_loss + kl_loss
+    # Behavior (sampling) log-probs aligned to the target positions y.
+    if roll.behavior_logp is not None:
+        old_logp = roll.behavior_logp[:, 1:].detach()            # [N, T-1]
+    else:
+        old_logp = None
 
-    metrics = {
-        "loss": float(loss.detach()),
-        "pg_loss": float(pg_loss.detach()),
-        "kl": float(kl.mean().detach()),
-        "reward_mean": float(rewards.mean().detach()),
-        "reward_std": float(rewards.std(unbiased=False).detach()),
-        "adv_abs_mean": float(adv.abs().mean().detach()),
-    }
-    if optimizer is not None:
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(policy.parameters(), cfg.grad_clip)
-        optimizer.step()
-    return metrics
+    # Per-token advantage = broadcast group advantage over generated tokens.
+    adv_tok = adv_seq.unsqueeze(1).detach()                      # [N, 1]
+    tok_count = m.sum().clamp_min(1.0)
+
+    n_epochs = max(1, cfg.ppo_epochs) if optimizer is not None else 1
+    last_metrics: dict = {}
+    for _ in range(n_epochs):
+        policy.train()
+        logp = compute_token_logps(policy, x, y)                # [N, T-1], grad
+        with torch.no_grad():
+            ref_logp = compute_token_logps(ref, x, y)           # [N, T-1]
+
+        base = old_logp if old_logp is not None else logp.detach()
+        ratio = torch.exp(logp - base)                          # [N, T-1]
+        unclipped = ratio * adv_tok
+        clipped = torch.clamp(ratio, 1.0 - cfg.clip_eps_low, 1.0 + cfg.clip_eps_high) * adv_tok
+        surrogate = torch.minimum(unclipped, clipped)           # [N, T-1]
+
+        # Schulman k3 unbiased KL estimator: exp(d) - d - 1, d = ref_logp - logp.
+        d = ref_logp - logp
+        kl_tok = torch.exp(d) - d - 1.0                         # >= 0
+
+        pg_loss = -(surrogate * m).sum() / tok_count
+        kl_loss = cfg.beta * (kl_tok * m).sum() / tok_count
+        loss = pg_loss + kl_loss
+
+        with torch.no_grad():
+            clip_frac = (((ratio < 1.0 - cfg.clip_eps_low) | (ratio > 1.0 + cfg.clip_eps_high)).float() * m).sum() / tok_count
+        last_metrics = {
+            "loss": float(loss.detach()),
+            "pg_loss": float(pg_loss.detach()),
+            "kl": float((kl_tok * m).sum().detach() / tok_count),
+            "clip_frac": float(clip_frac.detach()),
+            "ratio_mean": float(((ratio * m).sum() / tok_count).detach()),
+            "reward_mean": float(rewards.mean().detach()),
+            "reward_std": float(rewards.std(unbiased=False).detach()),
+            "adv_abs_mean": float(adv_seq.abs().mean().detach()),
+        }
+        if optimizer is not None:
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(policy.parameters(), cfg.grad_clip)
+            optimizer.step()
+    return last_metrics
 
 
 def _load_policy(cfg: GRPOConfig) -> tuple[Transformer, BytesTokenizer]:

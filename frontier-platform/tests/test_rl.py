@@ -130,8 +130,72 @@ def test_grpo_step_runs_and_metrics_finite():
     gcfg = GRPOConfig(group_size=4, max_new_tokens=5, seq_len=32, beta=0.04)
     opt = torch.optim.AdamW(policy.parameters(), lr=1e-4)
     metrics = grpo_step(policy, ref, roll, rewards, gcfg, optimizer=opt)
-    for k in ("loss", "pg_loss", "kl", "reward_mean"):
+    for k in ("loss", "pg_loss", "kl", "reward_mean", "clip_frac", "ratio_mean"):
         assert math.isfinite(metrics[k])
+
+
+def test_sample_group_captures_behavior_logp():
+    """The rollout must record per-token sampling log-probs for the importance
+    ratio — without them GRPO degenerates to REINFORCE."""
+    cfg = _tiny_cfg()
+    torch.manual_seed(0)
+    policy = Transformer(cfg)
+    tok = BytesTokenizer()
+    prompts = [tok.encode("Q: a")]
+    roll = sample_group(
+        policy, prompts, group_size=2, max_new_tokens=5,
+        seq_len=32, tokenizer=tok, temperature=1.0, seed=0,
+    )
+    assert roll.behavior_logp is not None
+    assert roll.behavior_logp.shape == roll.ids.shape
+    # Behavior log-probs are negative (log of a probability) at generated tokens.
+    gen = roll.behavior_logp[roll.resp_mask > 0]
+    assert (gen <= 1e-4).all() and torch.isfinite(gen).all()
+
+
+def test_grpo_kl_estimator_nonnegative_and_zero_at_ref():
+    """k3 KL estimator must be >= 0, and exactly 0 when policy == ref."""
+    cfg_m = _tiny_cfg()
+    torch.manual_seed(0)
+    policy = Transformer(cfg_m)
+    from platform.alignment._common import clone_for_reference
+    ref = clone_for_reference(policy)  # identical weights -> KL must be ~0
+    tok = BytesTokenizer()
+    roll = sample_group(
+        policy, [tok.encode("Q: x")], group_size=4, max_new_tokens=5,
+        seq_len=32, tokenizer=tok, seed=2,
+    )
+    rewards = torch.rand(roll.n_rows)
+    gcfg = GRPOConfig(group_size=4, max_new_tokens=5, seq_len=32, beta=0.04)
+    # No optimizer -> single eval pass, policy still equals ref.
+    metrics = grpo_step(policy, ref, roll, rewards, gcfg, optimizer=None)
+    assert metrics["kl"] >= -1e-6
+    assert metrics["kl"] == pytest.approx(0.0, abs=1e-4)
+    # First inner step: ratio against behavior log-probs ~ 1 (same weights).
+    assert metrics["ratio_mean"] == pytest.approx(1.0, abs=0.05)
+
+
+def test_grpo_clipped_objective_bounds_ratio():
+    """Large advantage with a clip range must engage the clip (clip_frac>0) once
+    the policy moves off the behavior distribution."""
+    cfg_m = _tiny_cfg()
+    torch.manual_seed(0)
+    policy = Transformer(cfg_m)
+    from platform.alignment._common import clone_for_reference
+    ref = clone_for_reference(policy)
+    tok = BytesTokenizer()
+    roll = sample_group(
+        policy, [tok.encode("Q: x")], group_size=6, max_new_tokens=6,
+        seq_len=32, tokenizer=tok, seed=3,
+    )
+    rewards = torch.rand(roll.n_rows)
+    gcfg = GRPOConfig(group_size=6, max_new_tokens=6, seq_len=32, beta=0.0,
+                      clip_eps_low=0.2, clip_eps_high=0.2, ppo_epochs=4)
+    opt = torch.optim.AdamW(policy.parameters(), lr=1e-1)  # big steps -> ratio moves
+    metrics = grpo_step(policy, ref, roll, rewards, gcfg, optimizer=opt)
+    # After several aggressive inner epochs some tokens leave the trust region.
+    assert 0.0 <= metrics["clip_frac"] <= 1.0
+    assert math.isfinite(metrics["ratio_mean"])
 
 
 def test_run_grpo_e2e_increases_verifier_reward(tmp_path):

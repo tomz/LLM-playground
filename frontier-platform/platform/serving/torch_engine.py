@@ -31,11 +31,19 @@ class TorchEngine:
         self.model = model.to(self.device).eval()
         self._use_cache = hasattr(self.model, "forward_with_cache")
 
-    def _sample(self, next_logits: torch.Tensor, req: GenRequest) -> int:
+    def _sample(self, next_logits: torch.Tensor, req: GenRequest) -> tuple[int, float]:
+        """Return ``(token_id, logprob)`` where ``logprob`` is the log-probability
+        of the chosen token under the *sampling* distribution actually used
+        (temperature-scaled, top-p-renormalized). This mirrors the ``logprobs``
+        field real engines (vLLM/SGLang) return and is what the RL learner needs
+        to form an importance ratio against the current policy."""
         next_logits = next_logits.float()
         if req.temperature <= 0.0:
-            return int(next_logits.argmax(dim=-1).item())
-        probs = (next_logits / req.temperature).softmax(dim=-1)
+            tok = int(next_logits.argmax(dim=-1).item())
+            logp = torch.log_softmax(next_logits, dim=-1)[..., tok]
+            return tok, float(logp.item())
+        scaled = next_logits / req.temperature
+        probs = scaled.softmax(dim=-1)
         if 0.0 < req.top_p < 1.0:
             sorted_probs, sorted_idx = probs.sort(dim=-1, descending=True)
             cum = sorted_probs.cumsum(dim=-1)
@@ -44,8 +52,13 @@ class TorchEngine:
             sorted_probs[mask] = 0.0
             sorted_probs = sorted_probs / sorted_probs.sum(dim=-1, keepdim=True)
             pick = torch.multinomial(sorted_probs, 1)
-            return int(sorted_idx.gather(-1, pick).item())
-        return int(torch.multinomial(probs, 1).item())
+            tok = int(sorted_idx.gather(-1, pick).item())
+            logp = float(sorted_probs.gather(-1, pick).clamp_min(1e-20).log().item())
+            return tok, logp
+        pick = torch.multinomial(probs, 1)
+        tok = int(pick.item())
+        logp = float(probs.gather(-1, pick).clamp_min(1e-20).log().item())
+        return tok, logp
 
     def _decode_text(self, token_id: int):
         if self.tokenizer is not None and hasattr(self.tokenizer, "decode"):
@@ -67,9 +80,9 @@ class TorchEngine:
                 logits = self.model.forward_with_cache(prompt, cache)
                 next_logits = logits[:, -1, :]
                 for _ in range(req.max_new_tokens):
-                    next_id = self._sample(next_logits, req)
+                    next_id, logp = self._sample(next_logits, req)
                     generated.append(next_id)
-                    yield {"token_id": next_id, "text": self._decode_text(next_id), "done": False}
+                    yield {"token_id": next_id, "logprob": logp, "text": self._decode_text(next_id), "done": False}
                     if next_id in stop:
                         break
                     step = torch.tensor([[next_id]], dtype=torch.long, device=self.device)
@@ -78,9 +91,9 @@ class TorchEngine:
             else:
                 for _ in range(req.max_new_tokens):
                     logits, _ = self.model(prompt)
-                    next_id = self._sample(logits[:, -1, :], req)
+                    next_id, logp = self._sample(logits[:, -1, :], req)
                     generated.append(next_id)
-                    yield {"token_id": next_id, "text": self._decode_text(next_id), "done": False}
+                    yield {"token_id": next_id, "logprob": logp, "text": self._decode_text(next_id), "done": False}
                     if next_id in stop:
                         break
                     prompt = torch.cat(
