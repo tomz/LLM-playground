@@ -51,15 +51,11 @@ def test_apply_tp_is_noop_when_tp_mesh_is_none():
 
 
 def test_apply_tp_marker_uses_safe_attribute_name():
-    """The SP marker must not start with `_dist` — that prefix triggers
-    torch.distributed.checkpoint's monkey-patched `__getattr__` to silently
-    return False instead of raising AttributeError, which silently corrupted
-    an earlier `_distgpt_sequence_parallel` attribute. See
-    tests/test_pytorch_quirks.py for the regression pin.
+    """The SP marker name `_dgpt_sp_enabled` is short and consistent with
+    the rest of distgpt's internal-attribute namespace. This test pins
+    the chosen name so a rename is a conscious decision (downstream
+    code may grep for it).
     """
-    # We don't test the bug here (that's the quirks file's job); we just
-    # pin the chosen attribute name so a future rename doesn't slide back
-    # into the `_dist*` footgun.
     cfg = ModelConfig(vocab_size=32, n_layer=2, n_head=4, n_kv_head=4,
                       d_model=32, d_ffn=64, max_seq_len=16)
     m = GPT(cfg)
@@ -67,7 +63,6 @@ def test_apply_tp_marker_uses_safe_attribute_name():
     # Setting it manually to validate the chosen name round-trips cleanly.
     m._dgpt_sp_enabled = True
     assert m._dgpt_sp_enabled is True
-    assert not "_dgpt_sp_enabled".startswith("_dist")
 
 
 def test_trainer_accepts_sequence_parallel_config(tmp_path: pathlib.Path):

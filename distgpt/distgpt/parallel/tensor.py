@@ -51,12 +51,11 @@ on the long axis. Same call we made in the writeup design notes.
 Convenience marker
 ------------------
 We tag the model with `_dgpt_sp_enabled: bool` so downstream code (logging,
-FSDP policy) can detect SP. The name deliberately AVOIDS the `_dist*`
-prefix — torch's distributed.checkpoint module monkey-patches
-`nn.Module.__getattr__` so any attribute name starting with `_dist*`
-silently returns False instead of raising AttributeError, which made an
-earlier `_distgpt_sequence_parallel` attribute appear to always be False
-even after assignment. See tests/test_pytorch_quirks.py.
+FSDP policy) can detect SP. The `dgpt` prefix (not `distgpt`) just keeps
+the name short for an internal marker; both `dgpt` and `distgpt` are
+fine — we checked: torch's nn.Module.__getattr__ raises AttributeError
+normally for any unset attribute regardless of prefix. See
+tests/test_pytorch_quirks.py for the regression pin.
 """
 from __future__ import annotations
 import torch.nn as nn

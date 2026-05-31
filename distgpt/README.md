@@ -18,6 +18,13 @@ This code is real and self-consistent. It will not actually finish a 70B run on 
 
 ## Layout
 
+> **Recent additions:** Muon optimizer, Liger fused linear-CE, Transformer
+> Engine FP8 path, Megatron-style sequence parallelism, HuggingFace export
+> + lm-evaluation-harness CLI, recipe configs (cooldown / longctx / Muon
+> speedrun), warm-start checkpoint loading. See
+> [`docs/improvements_2026q1.md`](docs/improvements_2026q1.md) for what
+> landed, why, and which latent bugs got caught along the way.
+
 ```
 distgpt/
 ├── distgpt/
