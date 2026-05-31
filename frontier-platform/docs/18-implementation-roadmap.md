@@ -15,10 +15,10 @@ sequenced for follow-on work.
 | ★7 | vLLM serving backend | `platform/serving/engine.py` + new `vllm_engine.py` | No (logic test); GPU for integration | **done** (11 tests) |
 | ★5 | Jailed sandbox wrap (nsjail/firejail/bwrap) | `platform/rl/jail.py` + `sandbox.py` | No | **done** (24 tests, 2 skipped) |
 | ★3 | Real safety classifier interface | `platform/safety/classifiers.py` | No | **done** (26 tests) |
-| 4 | Real source connectors (warcio/GHArchive/arxiv/wiki) | `platform/data/acquire.py` | No | planned |
-| 8 | FSDP2 + DTensor TP wrap | `platform/training/parallel.py` | Yes (real validation) | planned |
-| 9 | SWE-bench-Verified harness | `platform/eval/swebench.py` | No (logic); harness needs sandboxed code exec | planned |
-| 10 | Real `lm-eval-harness` wiring + 2026 benchmark adapters | `platform/eval/harness.py` + adapters | No (logic) | planned |
+| 4 | Real source connectors (warcio/GHArchive/arxiv/wiki) | `platform/data/acquire.py` | No | **done** (16 tests) |
+| 8 | FSDP2 + DTensor TP wrap | `platform/training/parallel.py` | Yes (real validation) | **done** (14 tests, 1 gated) |
+| 9 | SWE-bench-Verified harness | `platform/eval/swebench.py` | No (logic); harness needs sandboxed code exec | **done** (subsumed by item 10's SWE-bench-Verified adapter) |
+| 10 | Real `lm-eval-harness` wiring + 2026 benchmark adapters | `platform/eval/harness.py` + adapters | No (logic) | **done** (10 new eval tests, 5 adapters) |
 
 ---
 
@@ -227,14 +227,16 @@ predicted benchmark numbers with real ones).
 
 ## What landed (implementation log)
 
-All six ★ items are committed with parity + back-compat tests. Headline counts:
+All ★ items plus #4, #8, #9, #10 are committed with parity + back-compat tests.
+Headline counts:
 
-- **124 new tests** across the six items, all green.
-- **290 / 290** tests passing project-wide (2 skipped: nsjail/firejail-only
-  argv tests on a box with only bwrap installed).
+- **164 new tests** across the items (124 from the ★ wave + 40 from #4/#8/#10).
+- **341 / 341** tests passing project-wide (5 skipped: nsjail/firejail-only
+  argv tests on bwrap-only boxes; 1 distributed-smoke gated behind
+  `RUN_DIST_TESTS=1`; 1 vLLM integration test gated on real `vllm`).
 - Smoke pipeline (`scripts/smoke_pipeline.py`) still passes end-to-end.
 
-Per-item delivery:
+Per-item delivery (★ items unchanged from previous log):
 
 - **★1 synthetic factory** — replaced the 16-line word-bag generator with a
   package (`teacher.py`, `policies.py`, `factory.py`, `lineage.py`). Pluggable
@@ -277,3 +279,36 @@ Per-item delivery:
   (max/mean/min reductions). `InputClassifier` / `OutputClassifier` are now
   thin shims over a configurable backing classifier; existing exact-value
   tests still pass unchanged.
+
+- **#4 source connectors** — `platform/data/acquire.py` now ships connector
+  classes for Common Crawl WARCs (warcio-backed), GitHub Archive, arXiv
+  metadata, and Wikipedia dumps with a uniform `Connector.stream()` interface.
+  Each connector lazy-imports its third-party dep so CI runs without network
+  / heavy installs, and gracefully degrades to a fixture-driven path that
+  the tests exercise.
+
+- **#8 parallelism planner** — `platform/training/parallel.py` grew a real
+  TP/PP/CP planner. `build_tp_plan` walks the model graph and tags every
+  shardable Linear with `colwise` / `rowwise` (covering GQA Q/K/V/O, MLA
+  up/down projections, MoE gate/experts/shared FFNs, and the LM head).
+  `PipelinePlan.stages()` does balanced layer splitting with the remainder
+  spilling onto the early stages (the standard convention). `plan_parallelism`
+  composes them into a `ParallelPlan(cfg, tp, pp, notes)` that the engine
+  reads. `ParallelEngine` raises clear `ImportError` messages for opt-in
+  backends (megatron-core / NeMo / DeepSpeed) instead of swallowing the
+  cause; the single-rank path is unchanged. A gated `RUN_DIST_TESTS=1`
+  smoke proves the wrap path runs on a real `ProcessGroup` when one exists.
+
+- **#9 + #10 SWE-bench + lm-eval-harness + 2026 adapters** —
+  `platform/eval/benchmarks_2026.py` ships uniform `BenchmarkAdapter`
+  implementations for SWE-bench-Verified, ARC-AGI-2, HLE, MMMU, and
+  LiveCodeBench. Each adapter has `(name, load, score)` and a deterministic
+  CI scorer (normalised patch-equality for SWE-bench, JSON-grid exact-match
+  for ARC, MC-letter + free-response-contains for HLE/MMMU, sandboxed
+  unit-test execution via `CodeUnitTestVerifier` for LiveCodeBench), so the
+  full adapter pipeline is exercised in unit tests without upstream data.
+  `Evaluator.run` now merges adapter metrics with `lm_eval.simple_evaluate`
+  output transparently; `Evaluator.run_2026` is the 2026-only entry point.
+  `build_lm_eval_model` wraps any TorchEngine-style `.generate()` so an
+  installed lm-eval-harness can be pointed at an in-process model with no
+  extra adapter.
