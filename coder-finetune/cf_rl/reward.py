@@ -150,3 +150,56 @@ def soft_length_penalty(
             frac = min(1.0, (n - target_tokens) / max(1, max_tokens - target_tokens))
             out.append(-coef * frac)
     return out
+
+
+def group_standardize_advantages(
+    rewards,
+    group_size: int,
+    *,
+    eps: float = 1e-8,
+    scale_by_std: bool = True,
+) -> list[float]:
+    """Standardize rewards *within each group of ``group_size``* — the core of
+    GRPO's value-network-free advantage estimate.
+
+    GRPO (DeepSeekMath / DeepSeek-R1) drops PPO's learned value baseline. For
+    each prompt it samples a group of G completions, then uses the *group* mean
+    as the baseline and (optionally) the group std as the scale:
+
+        A_i = (r_i - mean(group)) / (std(group) + eps)
+
+    Two properties this pins, both load-bearing for stable GRPO:
+      * **Baseline-invariance.** Adding a constant to every reward in a group
+        leaves the advantages unchanged — so an absolute reward offset (e.g.
+        a format bonus applied uniformly) can't bias the policy gradient.
+      * **Sign structure.** With binary rewards ``[1, 0, 0, 1]`` and
+        ``scale_by_std=True`` the advantages come out symmetric
+        ``[+1, -1, -1, +1]`` (to float tolerance), so passing completions are
+        reinforced and failing ones suppressed by equal magnitude regardless
+        of the group's overall pass rate.
+
+    This is a *reference implementation for teaching/testing* — TRL computes the
+    same quantity internally on tensors. Reused here so the invariant can be
+    pinned without spinning up a trainer. ``len(rewards)`` must be a multiple of
+    ``group_size``.
+    """
+    n = len(rewards)
+    if group_size <= 0:
+        raise ValueError(f"group_size must be positive, got {group_size}")
+    if n % group_size != 0:
+        raise ValueError(
+            f"len(rewards)={n} is not a multiple of group_size={group_size} — "
+            "GRPO groups can't straddle the batch boundary."
+        )
+    out: list[float] = []
+    for start in range(0, n, group_size):
+        group = [float(r) for r in rewards[start:start + group_size]]
+        mean = sum(group) / group_size
+        centered = [r - mean for r in group]
+        if scale_by_std:
+            var = sum(c * c for c in centered) / group_size
+            std = var ** 0.5
+            out.extend(c / (std + eps) for c in centered)
+        else:
+            out.extend(centered)
+    return out

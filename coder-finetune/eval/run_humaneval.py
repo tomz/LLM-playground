@@ -289,7 +289,8 @@ def _eos_ids(tok) -> list[int]:
 
 def quick_eval(model_path: str, n_problems: int = 20, n_samples: int = 1,
                max_new_tokens: int = 384, temperature: float = 0.2,
-               seed: int | None = None) -> float:
+               seed: int | None = None, save_completions: str | None = None,
+               json_out: str | None = None) -> float:
     """Returns pass@k on the first `n_problems` of HumanEval.
 
     With ``n_samples=1`` (the default) this is pass@1. With ``n_samples>1`` the
@@ -299,6 +300,12 @@ def quick_eval(model_path: str, n_problems: int = 20, n_samples: int = 1,
     ``n_samples>1`` so the samples aren't identical.
 
     ``seed`` makes the run reproducible (was implicitly nondeterministic).
+
+    ``save_completions``: path to a JSONL file; one record per problem with the
+    prompt, every sampled completion, the extracted code, and pass/fail — so
+    you can actually *see* what the model wrote instead of just a score.
+    ``json_out``: path to a machine-readable summary (``{"pass@k": ..., "n":
+    ..., "passes": ...}``) so results are comparable across runs / commits.
     """
     from datasets import load_dataset
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -328,6 +335,7 @@ def quick_eval(model_path: str, n_problems: int = 20, n_samples: int = 1,
     n = min(n_problems, len(ds))
     eos_ids = _eos_ids(tok) or tok.eos_token_id
     passes = 0
+    records: list[dict] = []
     for i in range(n):
         ex = ds[i]
         prompt = ex["prompt"]
@@ -357,21 +365,87 @@ def quick_eval(model_path: str, n_problems: int = 20, n_samples: int = 1,
         any_pass = False
         last_msg = ""
         prompt_len = ids["input_ids"].shape[1]
+        samples: list[dict] = []
         for s in range(n_samples):
             completion = tok.decode(out[s, prompt_len:], skip_special_tokens=True)
             program = build_program(prompt, completion, ex["test"], ex["entry_point"])
             ok, msg = run_one(program)
             last_msg = msg
+            # Record every sample when dumping completions (so a failing-then-
+            # passing pass@k run is fully visible), else just enough to score.
+            if save_completions:
+                samples.append({
+                    "completion": completion,
+                    "extracted_code": extract_code(completion),
+                    "passed": bool(ok),
+                    "msg": msg,
+                })
             if ok:
                 any_pass = True
-                break  # short-circuit: one pass is enough for pass@k
+                if not save_completions:
+                    break  # short-circuit: one pass is enough for pass@k
         passes += int(any_pass)
+        if save_completions:
+            records.append({
+                "task_id": ex["task_id"],
+                "prompt": prompt,
+                "entry_point": ex["entry_point"],
+                "passed": bool(any_pass),
+                "samples": samples,
+            })
         marker = "✓" if any_pass else "✗"
         print(f"  [{i+1:3d}/{n}] {marker}  task={ex['task_id']}  {last_msg[:60]}")
     score = passes / n
     label = f"pass@{n_samples}" if n_samples > 1 else "pass@1"
     print(f"[eval] {label} = {passes}/{n} = {score*100:.1f}%")
+
+    if save_completions:
+        write_completions_jsonl(records, save_completions)
+        print(f"[eval] wrote {len(records)} completion records -> {save_completions}")
+    if json_out:
+        summary = build_eval_summary(model_path, n, passes, n_samples,
+                                     temperature, seed)
+        write_json_summary(summary, json_out)
+        print(f"[eval] wrote summary -> {json_out}")
     return score
+
+
+def build_eval_summary(model_path: str, n: int, passes: int, n_samples: int,
+                       temperature: float, seed: int | None) -> dict:
+    """Machine-readable eval summary. Pure function (no I/O) so it's unit-
+    testable; the ``pass@k`` key is named by ``n_samples`` so a downstream
+    diff tool can tell pass@1 from pass@5 runs apart."""
+    label = f"pass@{n_samples}" if n_samples > 1 else "pass@1"
+    return {
+        "model": model_path,
+        "n": n,
+        "passes": passes,
+        label: passes / n if n else 0.0,
+        "metric": label,
+        "n_samples": n_samples,
+        "temperature": temperature,
+        "seed": seed,
+    }
+
+
+def write_json_summary(summary: dict, path: str) -> None:
+    """Write the eval summary as a single JSON object."""
+    import json
+
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(json.dumps(summary, indent=2))
+
+
+def write_completions_jsonl(records: list[dict], path: str) -> None:
+    """Write one JSON object per line (JSONL) — one record per problem, each
+    carrying its sampled completions + extracted code + pass/fail. JSONL (not a
+    single array) so a long run streams and is greppable line-by-line."""
+    import json
+
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        for rec in records:
+            f.write(json.dumps(rec) + "\n")
 
 
 def main():
@@ -384,9 +458,15 @@ def main():
     ap.add_argument("--max-new-tokens", type=int, default=384)
     ap.add_argument("--seed", type=int, default=None,
                     help="seed for reproducible sampling (default: None = nondet)")
+    ap.add_argument("--save-completions", default=None,
+                    help="path to dump per-problem completions as JSONL "
+                         "(prompt + samples + extracted code + pass/fail)")
+    ap.add_argument("--json-out", default=None,
+                    help="path to write a machine-readable {pass@k, n, ...} summary")
     args = ap.parse_args()
     quick_eval(args.model, args.n_problems, args.n_samples,
-               args.max_new_tokens, args.temperature, seed=args.seed)
+               args.max_new_tokens, args.temperature, seed=args.seed,
+               save_completions=args.save_completions, json_out=args.json_out)
 
 
 if __name__ == "__main__":

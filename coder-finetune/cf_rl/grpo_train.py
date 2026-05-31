@@ -63,6 +63,32 @@ def build_reward_funcs(cfg: dict, tokenizer):
     return funcs
 
 
+def grpo_extra_kwargs(cfg: dict) -> dict:
+    """Optional GRPOConfig kwargs that are gated behind config flags (default
+    off). Factored out as a pure function so it can be unit-tested without
+    importing TRL or loading a model.
+
+    ``grpo.use_vllm: true`` delegates rollout generation to vLLM via TRL's
+    ``GRPOConfig(use_vllm=...)``. GRPO is generation-heavy (G samples/prompt
+    every step), and vLLM's paged-attention + continuous batching makes the
+    rollout phase ~3-8× faster on the same GPU — usually the single biggest
+    GRPO speedup. It costs an extra ``vllm`` dependency and a one-time engine
+    warm-up, so it stays opt-in. We pass it through only when truthy so older
+    TRL builds that lack the kwarg aren't handed an unexpected ``False``.
+    """
+    g = cfg.get("grpo", {})
+    extra: dict = {}
+    if g.get("use_vllm", False):
+        extra["use_vllm"] = True
+        # Only thread the GPU memory fraction through when explicitly set —
+        # leaving it unset lets TRL/vLLM pick its own default.
+        if g.get("vllm_gpu_memory_utilization") is not None:
+            extra["vllm_gpu_memory_utilization"] = float(
+                g["vllm_gpu_memory_utilization"]
+            )
+    return extra
+
+
 def build_grpo_trainer(model, tok, train_ds, reward_funcs, cfg: dict):
     from trl import GRPOConfig, GRPOTrainer
 
@@ -117,6 +143,10 @@ def build_grpo_trainer(model, tok, train_ds, reward_funcs, cfg: dict):
         temperature=g.get("temperature", 1.0),
         beta=g.get("beta", 0.04),                          # KL-to-reference coef
         num_iterations=g.get("num_iterations", 1),         # inner PPO epochs
+        # Opt-in speed knobs (vLLM rollouts) threaded in only when configured,
+        # so the default path is unchanged and old TRL builds aren't handed an
+        # unknown kwarg.
+        **grpo_extra_kwargs(cfg),
     )
     return GRPOTrainer(
         model=model,

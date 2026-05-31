@@ -63,6 +63,13 @@ grpo:
   temperature: 1.0
   beta: 0.04                # KL-to-reference coefficient
   num_iterations: 1         # inner optimization passes per batch
+  # Opt-in speed knob (default off): delegate rollout generation to vLLM via
+  # TRL's GRPOConfig.use_vllm — ~3-8× faster rollouts (paged attention +
+  # continuous batching), the single biggest GRPO speedup. Costs an extra
+  # `vllm` dependency + a one-time engine warm-up. See cf_rl/grpo_train.py:
+  # grpo_extra_kwargs. Leave false on tight 8 GB cards unless you've sized it.
+  use_vllm: false
+  # vllm_gpu_memory_utilization: 0.4   # optional; only threaded through if set
   # Optional reward shaping (default off; correctness verifier is always on):
   format_reward: true       # bonus for a single clean ```python``` block w/ a def
   length_penalty: false
