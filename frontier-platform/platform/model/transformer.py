@@ -247,6 +247,11 @@ class MoEFFN(nn.Module):
         self.n_shared = int(cfg.moe_shared_experts)
         self.balance = cfg.moe_balance
         self.bias_update_speed = float(cfg.moe_bias_update_speed)
+        self.dispatch_mode = getattr(cfg, "moe_dispatch", "batched")
+        if self.dispatch_mode not in ("batched", "loop"):
+            raise ValueError(
+                f"moe_dispatch must be 'batched' or 'loop', got {self.dispatch_mode!r}"
+            )
         assert self.n_experts > 0 and 1 <= self.top_k <= self.n_experts
         d_exp = cfg.expert_d_ffn
         self.gate = nn.Linear(cfg.d_model, self.n_experts, bias=False)
@@ -310,7 +315,33 @@ class MoEFFN(nn.Module):
                     self.routing_bias += self.bias_update_speed * torch.sign(target - load)
 
         out = torch.zeros_like(flat)
-        # Routed experts: per-expert mask + matmul. Fine for small/medium N.
+        # Routed experts: dispatch tokens to experts. Both backends are
+        # mathematically equivalent up to floating-point accumulation order.
+        if self.dispatch_mode == "batched":
+            self._dispatch_batched(flat, top_i, top_w, out)
+        else:
+            self._dispatch_loop(flat, top_i, top_w, out)
+
+        # Shared expert(s): always on for every token (weight 1.0 each).
+        for sh in self.shared:
+            out = out + sh(flat)
+        return out.view(B, T, D)
+
+    # ------------------------------------------------------------------
+    # Dispatch backends
+    # ------------------------------------------------------------------
+
+    def _dispatch_loop(
+        self,
+        flat: torch.Tensor,        # [N, D]
+        top_i: torch.Tensor,       # [N, k] expert indices
+        top_w: torch.Tensor,       # [N, k] combine weights (sum 1 per token)
+        out: torch.Tensor,         # [N, D] accumulator (mutated in-place)
+    ) -> None:
+        """Reference dispatch: one Python-level pass per expert.
+
+        Kept for parity testing and small-experiment ablations. Correctness is
+        easy to read here; production paths use :meth:`_dispatch_batched`."""
         for e in range(self.n_experts):
             mask = (top_i == e)                                   # [N, k]
             if not mask.any():
@@ -320,12 +351,66 @@ class MoEFFN(nn.Module):
             if not sel.any():
                 continue
             y_e = self.experts[e](flat[sel])
-            out[sel] += w_e[sel, None] * y_e
+            out[sel] = out[sel] + w_e[sel, None] * y_e
 
-        # Shared expert(s): always on for every token (weight 1.0 each).
-        for sh in self.shared:
-            out += sh(flat)
-        return out.view(B, T, D)
+    def _dispatch_batched(
+        self,
+        flat: torch.Tensor,        # [N, D]
+        top_i: torch.Tensor,       # [N, k]
+        top_w: torch.Tensor,       # [N, k]
+        out: torch.Tensor,         # [N, D]
+    ) -> None:
+        """Sort-by-expert dispatch (the shape EP all-to-all uses).
+
+        Each (token, slot) pair becomes one assignment. We sort assignments by
+        expert id so each expert sees a *contiguous* slab of tokens, run one
+        GEMM per expert on its slab, then scatter the weighted outputs back to
+        the source-token rows via ``index_add_``. This removes the per-expert
+        Python overhead and is the structure a real expert-parallel
+        implementation would dispatch over (sort then all-to-all the slabs).
+
+        Complexity: ``O(N*k * D + sum_e (n_e * D * d_ffn))`` GEMM FLOPs (same as
+        the loop) but with one launch per expert instead of one launch per
+        ``mask.any() + boolean-select + matmul + scatter``.
+        """
+        N, k = top_i.shape
+        device = flat.device
+        # Flatten the (N, k) routing table to (N*k,) "slots".
+        slot_expert = top_i.reshape(-1)                            # [N*k]
+        slot_weight = top_w.reshape(-1)                            # [N*k]
+        slot_src = torch.arange(N, device=device).repeat_interleave(k)  # [N*k]
+
+        # Drop zero-weight slots (rare unless top_w was zeroed).
+        keep = slot_weight > 0
+        if not bool(keep.any()):
+            return
+        slot_expert = slot_expert[keep]
+        slot_weight = slot_weight[keep]
+        slot_src = slot_src[keep]
+
+        # Count assignments per expert (for the contiguous slab layout).
+        counts = torch.bincount(slot_expert, minlength=self.n_experts)  # [E]
+        # Sort slots by expert id. ``stable=True`` keeps tokens in original
+        # order within each expert's slab, which makes the scatter deterministic.
+        order = torch.argsort(slot_expert, stable=True)
+        sorted_src = slot_src[order]                                # [M]
+        sorted_w = slot_weight[order]                               # [M]
+
+        # Per-expert slab boundaries.
+        offsets = torch.zeros(self.n_experts + 1, dtype=torch.long, device=device)
+        offsets[1:] = torch.cumsum(counts, dim=0)
+
+        # Gather the routed inputs once into the sorted layout, then run one
+        # GEMM per expert on its contiguous slab.
+        gathered = flat.index_select(0, sorted_src)                # [M, D]
+        for e in range(self.n_experts):
+            lo, hi = int(offsets[e].item()), int(offsets[e + 1].item())
+            if hi == lo:
+                continue
+            y = self.experts[e](gathered[lo:hi])
+            # Scale by combine weight and scatter-add back to the source rows.
+            y = y * sorted_w[lo:hi, None]
+            out.index_add_(0, sorted_src[lo:hi], y)
 
 
 class Block(nn.Module):

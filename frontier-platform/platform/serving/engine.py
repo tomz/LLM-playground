@@ -31,21 +31,18 @@ class GenRequest:
 
 
 class Engine:
-    """Dispatch wrapper. The actual code lives in `torch_engine.TorchEngine`."""
+    """Dispatch wrapper. The actual code lives in ``torch_engine.TorchEngine``
+    or ``vllm_engine.VLLMEngine``."""
 
-    def __init__(self, cfg: EngineConfig, model=None, tokenizer=None):
+    def __init__(self, cfg: EngineConfig, model=None, tokenizer=None, **kwargs):
         self.cfg = cfg
         if cfg.backend == "torch":
             from .torch_engine import TorchEngine
             self._impl = TorchEngine(cfg, model=model, tokenizer=tokenizer)
         elif cfg.backend == "vllm":
-            try:
-                import vllm  # noqa: F401
-            except ImportError as e:
-                raise NotImplementedError(
-                    "vllm backend requires `pip install vllm` (and an Ampere+ GPU)"
-                ) from e
-            raise NotImplementedError("vllm wrapper not wired in this blueprint")
+            from .vllm_engine import VLLMEngine
+            # `llm=` lets tests inject a stub without importing real vLLM.
+            self._impl = VLLMEngine(cfg, tokenizer=tokenizer, model=model, **kwargs)
         else:
             raise NotImplementedError(
                 f"backend {cfg.backend!r} not wired; use 'torch' (in-process) or 'vllm'"
@@ -54,3 +51,14 @@ class Engine:
     async def generate(self, req: GenRequest) -> AsyncIterator[dict]:
         async for chunk in self._impl.generate(req):
             yield chunk
+
+    def update_weights(self, state_dict: dict) -> None:
+        """Forward weight updates to the backend (used by the RL actor)."""
+        impl_update = getattr(self._impl, "update_weights", None)
+        if impl_update is None:
+            raise NotImplementedError(
+                f"{type(self._impl).__name__} does not support update_weights; "
+                "use the in-process TorchEngine (weights are the same object) "
+                "or upgrade vLLM."
+            )
+        impl_update(state_dict)

@@ -54,6 +54,11 @@ class ModelConfig:
     moe_balance: str = "aux_free"
     # Step size for the aux-free routing-bias update (per forward, training only).
     moe_bias_update_speed: float = 1e-3
+    # MoE dispatch backend: "batched" sorts tokens by expert id and runs each
+    # expert on a contiguous slice with one GEMM (the right shape for later
+    # expert-parallel all-to-all); "loop" is the original per-expert Python
+    # for-loop, kept for parity tests and ablations. Default "batched".
+    moe_dispatch: str = "batched"
     # Activation checkpointing: "none" or "selective" (wraps each Block in
     # torch.utils.checkpoint to trade compute for memory).
     activation_ckpt: str = "none"
