@@ -87,12 +87,20 @@ def _preexec(limits: SandboxLimits):  # pragma: no cover - runs in child
 
 
 def run_in_sandbox(solution_code: str, test_code: str,
-                   limits: SandboxLimits | None = None) -> SandboxResult:
+                   limits: SandboxLimits | None = None,
+                   *, jailer=None) -> SandboxResult:
     """Run ``solution_code`` then ``test_code`` in a limited subprocess.
 
     Tests should ``assert`` / raise on failure (pytest-free). Success is signalled
     by a clean exit-0 with the sentinel line printed. Returns a
     :class:`SandboxResult`.
+
+    Pass ``jailer=`` (a :class:`platform.rl.jail.Jailer`) to wrap the child in
+    a bubblewrap / nsjail / firejail process jail with filesystem + network
+    isolation. By default this stays at the original (rlimit-only) behaviour
+    so existing callers and tests are unchanged; new code should prefer
+    :func:`platform.rl.jail.run_in_jailed_sandbox`, which auto-detects the
+    best available jailer.
     """
     limits = limits or SandboxLimits()
     if not _HAS_RESOURCE:
@@ -121,9 +129,12 @@ def run_in_sandbox(solution_code: str, test_code: str,
             "OPENBLAS_NUM_THREADS": "1",
         }
         preexec = (lambda: _preexec(limits)) if _HAS_RESOURCE else None
+        argv = [sys.executable, "-I", "-S", path]   # -I isolate, -S no site
+        if jailer is not None:
+            argv = jailer.wrap(argv, workdir=tmp)
         try:
             proc = subprocess.run(
-                [sys.executable, "-I", "-S", path],   # -I isolate, -S no site
+                argv,
                 cwd=tmp,
                 env=env,
                 capture_output=True,

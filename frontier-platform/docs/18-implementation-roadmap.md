@@ -13,9 +13,9 @@ sequenced for follow-on work.
 | ★2 | Real red-team harness | `platform/safety/redteam.py` → `platform/safety/redteam/` | No | **done** (28 tests) |
 | ★6 | Batched MoE forward | `platform/model/transformer.py` (`MoEFFN.forward`) | No (single device test); GPU validates speedup | **done** (11 tests) |
 | ★7 | vLLM serving backend | `platform/serving/engine.py` + new `vllm_engine.py` | No (logic test); GPU for integration | **done** (11 tests) |
-| 3 | Real safety classifier interface | `platform/safety/classifiers.py` | No | planned |
+| ★5 | Jailed sandbox wrap (nsjail/firejail/bwrap) | `platform/rl/jail.py` + `sandbox.py` | No | **done** (24 tests, 2 skipped) |
+| ★3 | Real safety classifier interface | `platform/safety/classifiers.py` | No | **done** (26 tests) |
 | 4 | Real source connectors (warcio/GHArchive/arxiv/wiki) | `platform/data/acquire.py` | No | planned |
-| 5 | Jailed sandbox wrap (nsjail/firejail/bwrap) | `platform/rl/jail.py` + `sandbox.py` | No | planned |
 | 8 | FSDP2 + DTensor TP wrap | `platform/training/parallel.py` | Yes (real validation) | planned |
 | 9 | SWE-bench-Verified harness | `platform/eval/swebench.py` | No (logic); harness needs sandboxed code exec | planned |
 | 10 | Real `lm-eval-harness` wiring + 2026 benchmark adapters | `platform/eval/harness.py` + adapters | No (logic) | planned |
@@ -227,10 +227,11 @@ predicted benchmark numbers with real ones).
 
 ## What landed (implementation log)
 
-All four ★ items are committed with parity + back-compat tests. Headline counts:
+All six ★ items are committed with parity + back-compat tests. Headline counts:
 
-- **74 new tests** across the four items, all green.
-- **249 / 249** tests passing project-wide.
+- **124 new tests** across the six items, all green.
+- **290 / 290** tests passing project-wide (2 skipped: nsjail/firejail-only
+  argv tests on a box with only bwrap installed).
 - Smoke pipeline (`scripts/smoke_pipeline.py`) still passes end-to-end.
 
 Per-item delivery:
@@ -260,3 +261,19 @@ Per-item delivery:
   old `NotImplementedError`). Includes `update_weights(state_dict)` hook for
   the out-of-process RL actor path. Tested against a fake `vllm` module so the
   whole adapter is exercised without needing GPUs.
+- **★5 jailed sandbox** — new `platform/rl/jail.py` with `Jailer` protocol +
+  `BubblewrapJailer` / `NsjailJailer` / `FirejailJailer` / `NoJailer`,
+  auto-detection that prefers bwrap (least-privilege, no SUID needed), and
+  `run_in_jailed_sandbox` as a drop-in for `run_in_sandbox`. The sandbox grew
+  a `jailer=` kwarg so behaviour is unchanged for existing callers. Real
+  security assertions in the test suite: a child inside the jail cannot open
+  TCP sockets and cannot mutate host files (verified against a tmp canary
+  whose mtime is checked after the candidate "succeeds" at writing it).
+- **★3 safety classifier interface** — replaced the 30-line keyword counter
+  with a pluggable `Classifier` protocol + `KeywordClassifier` (kept as the
+  CI fallback) + `LlamaGuardClassifier` (HF lazy-load with a graceful
+  fallback-to-keyword on missing weights so the serving stack never goes
+  un-classified) + a `callable` backend for test injection + `ClassifierEnsemble`
+  (max/mean/min reductions). `InputClassifier` / `OutputClassifier` are now
+  thin shims over a configurable backing classifier; existing exact-value
+  tests still pass unchanged.
