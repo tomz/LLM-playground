@@ -43,7 +43,17 @@
   shipped: the full SFT → DPO → GRPO ladder in `coder-finetune` (DPO offline
   preference path + GRPO/RLVR with unit-test rewards), and a full RLVR stack
   (real GRPO objective, sandboxed + symbolic verifiers, async actor-learner
-  rollout) in `frontier-platform`.
+  rollout) in `frontier-platform`. **GRPO is already a moving target** — the
+  successor family (**DAPO**, **Dr. GRPO**, **GSPO**) fixes real instabilities
+  (entropy collapse, length bias, MoE-RL blow-ups) and is the live area to
+  track; see the expanded §8.
+- **The optimizer story matured fast.** Muon went from "promising at 124M" to
+  **proven at trillion-parameter scale**: Moonshot's *Muon is Scalable* result
+  (weight decay + per-param update scale → ~2× compute efficiency vs AdamW, with
+  an open memory-optimal **distributed Muon**), **MuonClip** (QK-clip attention-
+  logit stabilizer) training the 1T-param Kimi K2, and an **NVIDIA Megatron-Core**
+  integration. This upgrades our Tier-1 Muon entry from a sample-efficiency knob
+  to a scale-validated default.
 - **Serving is now part of the model recipe, not an afterthought:** PagedAttention
   / vLLM, prefix caching, speculative decoding (MTP/EAGLE), SGLang structured
   execution, and disaggregated prefill/decode should be tracked alongside
@@ -76,17 +86,30 @@ Replaces the Adam update for 2D weight matrices with the nearest semi-orthogonal
 matrix via a 5-step Newton-Schulz iteration (stable in bf16). Orthogonalizing
 amplifies the "rare directions" a near-low-rank momentum buffer drowns out.
 
-- **Win:** ~1.35× sample-efficiency over tuned AdamW; the modded-nanogpt 124M
-  speedrun (45 min → ~3 min on 8×H100) is largely Muon. Scales to 1.5B
-  (GPT-2-XL quality in 10 vs 13.3 8×H100-hours) and is being pushed toward the
-  7B+ regime.
+- **Win:** ~1.35× sample-efficiency over tuned AdamW at small scale; the
+  modded-nanogpt 124M speedrun (45 min → ~3 min on 8×H100) is largely Muon.
+  **Now proven at scale:** Moonshot's *Muon is Scalable* (Feb 2025) adds two
+  fixes — **weight decay** and a **per-parameter update-scale adjustment** —
+  that make Muon work out-of-the-box on large training with no HP tuning, and
+  reports **~2× compute efficiency vs compute-optimal AdamW**. They trained
+  **Moonlight** (3B/16B MoE, 5.7T tokens) on the Pareto frontier and released a
+  **memory-optimal, communication-efficient distributed Muon**.
+- **Stability at frontier scale — MuonClip.** Moonshot's Kimi K2 (1T-param MoE)
+  used **MuonClip**: Muon plus a **QK-clip** mechanism that rescales the query/
+  key projections when attention logits grow too large — directly fixing the
+  attention-logit blow-up that otherwise destabilizes Muon at scale. This is the
+  ideal-scale companion to our QK-Norm entry (§5).
 - **Scope rule:** Muon for hidden matmul weights; AdamW for embeddings, lm_head,
   MTP heads, all 1-D params.
 - **Min HW:** any (per-parameter, FSDP-safe). **Ideal:** the distributed Muon
-  variant amortizes the NS overhead across ranks on multi-node.
-- **Source:** [1], [2]  ·  **Harvest:** shipped → `nanogpt-edu`; ported →
-  `frontier-platform` (`45edfea`), `midgpt` (`optim.optimizer: muon`).
-  **Roadmap:** port to `distgpt` (distributed Muon).
+  variant amortizes the NS overhead across ranks; **NVIDIA has integrated Muon
+  into Megatron-Core / NeMo** (layer-wise distributed optimization + specialized
+  distributed Newton-Schulz modes) for Kimi-K2 / Qwen3-class training on GB300.
+- **Source:** [1], [2], [25], [26], [27]  ·  **Harvest:** shipped →
+  `nanogpt-edu`; ported → `frontier-platform` (`45edfea`), `midgpt`
+  (`optim.optimizer: muon`). **Roadmap:** port to `distgpt` (distributed Muon +
+  weight-decay/update-scale fixes); evaluate a **MuonClip QK-clip** option for
+  the `frontier-platform` scale path alongside the existing QK-Norm.
 
 ### 2. Multi-Token Prediction (MTP) — **shipped (nanogpt-edu)**
 
@@ -156,35 +179,60 @@ of them*.
 `midgpt`); bf16 by default, FP16 GradScaler path for older Tensor Core gens
 (present in `nanogpt-edu`). **Source:** [1]
 
-### 8. Reasoning post-training: RLVR + GRPO, then DPO/ORPO — **shipped (coder-finetune, frontier-platform)**
+### 8. Reasoning post-training: RLVR + GRPO (and its successors), then DPO/ORPO — **shipped (coder-finetune, frontier-platform)**
 
 DeepSeek-R1 reframed post-training around **reinforcement learning on
 verifiable rewards**: for math/code/STEM tasks, the reward can be computed by
 unit tests, exact answers, or validators instead of a learned reward model.
-DeepSeekMath introduced **GRPO**, a PPO variant that uses group-relative rewards
-to reduce PPO memory overhead; TRL now exposes `GRPOTrainer`, making small-scale
-replicas practical. For general preference alignment, **DPO** remains the
-simplest stable offline objective, while **ORPO** folds preference optimization
-into SFT without a separate reference model.
+DeepSeekMath introduced **GRPO**, a PPO variant that drops the critic and
+standardizes rewards *within a group* of G sampled completions per prompt; TRL
+exposes `GRPOTrainer`, making small-scale replicas practical. For general
+preference alignment, **DPO** remains the simplest stable offline objective,
+while **ORPO** folds preference optimization into SFT without a reference model.
 
+**GRPO is a moving target — track the successor family.** Vanilla GRPO has
+documented failure modes (entropy collapse, length/difficulty bias, unstable
+MoE-RL, a small per-token-length normalization bias). The 2025 variants worth
+knowing:
+
+| Variant | Origin | Key change | Why it matters |
+|---------|--------|-----------|----------------|
+| **DAPO** | ByteDance/Tsinghua 2025 | *Clip-Higher* (raise the upper PPO clip to stop entropy collapse), *dynamic sampling* (drop all-correct/all-wrong groups that give zero gradient), *token-level* policy-gradient loss, *overlong reward shaping* | Trained Qwen2.5-32B to **50 on AIME'24 with ~50% fewer steps** than DeepSeek-R1-Zero; fully open-sourced. The reference recipe for long-CoT RL. |
+| **Dr. GRPO** | 2025 | Removes GRPO's length & std normalization terms that bias toward longer wrong answers | Cleaner, unbiased advantage; the "no-std" variant we already pin in `coder-finetune` (`group_standardize_advantages(scale_by_std=False)`). |
+| **GSPO** | Qwen team, Jul 2025 | **Sequence-level** importance ratio + sequence-level clipping (vs GRPO's token-level ratio) | **Stabilizes MoE RL** (token-level ratios are noisy under expert routing), better efficiency; behind the latest **Qwen3** improvements. |
+
+- **Preference-optimization successors** (cheaper rungs below online RL):
+  **SimPO** (length-normalized implicit reward, **no reference model** — reports
+  +6.4 pts AlpacaEval-2 / +7.5 Arena-Hard over DPO), **KTO** (learns from binary
+  thumbs-up/down instead of pairs — matches abundant production "like/dislike"
+  signal), and **ORPO** (merges SFT + alignment into one objective, zero
+  external models). These are drop-in objectives on the same TRL stack as our
+  DPO path.
 - **Win:** reasoning capability can emerge from RL even without human-written
-  reasoning traces; smaller models can distill the resulting traces. DPO/ORPO
-  give cheap preference alignment for `coder-finetune` before full RL.
+  reasoning traces; smaller models distill the resulting traces. DeepSeek-R1
+  put the *R1-on-top-of-V3* post-train at ~$294K — RLVR turns post-training into
+  a compute-scalable lever, not a label-bottlenecked one.
 - **Scope rule:** start with verifier-backed code/math tasks (HumanEval+, unit
   tests, exact-answer math) before subjective chat rewards. Keep SFT → DPO/ORPO
-  as the default cheap path; add GRPO only when the reward is executable.
-- **Min HW:** single GPU for DPO/ORPO/QLoRA; GRPO is more generation-heavy but
-  works at 0.5B–7B with Accelerate/vLLM integration. **Ideal:** multi-GPU async
+  as the default cheap path; add GRPO (or a successor) only when the reward is
+  executable. Reach for **DAPO's clip-higher + dynamic sampling** the moment you
+  see entropy collapse or wasted all-pass/all-fail groups; reach for **GSPO** if
+  you're doing **MoE** RL.
+- **Min HW:** single GPU for DPO/ORPO/SimPO/KTO/QLoRA; GRPO is generation-heavy
+  but works at 0.5B–7B with Accelerate/vLLM. **Ideal:** multi-GPU async
   generation + training for frontier RLVR.
-- **Source:** [14], [15], [16], [17], [18]  ·  **Harvest:** shipped →
-  `coder-finetune` (GRPO/RLVR with verifiable unit-test rewards, `ab82617`);
-  shipped → `frontier-platform` (real GRPO objective with per-token clipped IS
-  ratio + k3 KL `f76cce0`, sandboxed code verifier `9abf163`, symbolic-math
-  verifier `680de83`, async actor-learner rollout engine `e3295ab`,
-  reasoning-SFT cold-start + composite reward shaping `374274d`). **DPO**
-  offline preference path shipped → `coder-finetune` (`cf_pref/dpo_train.py`,
-  `configs/dpo_3050.yaml`); ORPO available behind the same entry point on
-  `trl<0.12`. The post-training ladder is now SFT → DPO → GRPO end-to-end.
+- **Source:** [14], [15], [16], [17], [18], [28], [29], [30]  ·  **Harvest:**
+  shipped → `coder-finetune` (GRPO/RLVR with verifiable unit-test rewards,
+  `ab82617`; the **Dr. GRPO no-std advantage** pinned in `group_standardize_advantages`,
+  `ab03c83`); shipped → `frontier-platform` (real GRPO objective with per-token
+  clipped IS ratio + k3 KL `f76cce0`, sandboxed code verifier `9abf163`,
+  symbolic-math verifier `680de83`, async actor-learner rollout `e3295ab`,
+  reasoning-SFT cold-start + composite reward shaping `374274d`). **DPO** offline
+  path shipped → `coder-finetune` (`cf_pref/dpo_train.py`); ORPO available on
+  `trl<0.12`. **Roadmap:** add **DAPO** knobs (clip-higher + dynamic sampling) to
+  the `coder-finetune` GRPO trainer; evaluate **GSPO** for any MoE-RL in
+  `frontier-platform`; add a **SimPO**/**KTO** objective alongside DPO in
+  `cf_pref`.
 
 ### 9. Serving-aware training: vLLM/SGLang + prefix/speculative paths — **in progress**
 
@@ -212,6 +260,43 @@ latency at inference.
   (`simulate.py --spec-decode --mla-serving`); real vLLM/SGLang backend remains
   design-only there.
 
+### 10. Agentic post-training + synthetic self-play — **track → planned**
+
+The newest post-training frontier is **multi-step tool use and autonomous
+workflows**, which need RL *environments*, not static datasets — and **synthetic
+self-play** to escape the human-annotation bottleneck.
+
+- **Agentic RL environments.** NVIDIA's **NeMo Gym** provides interactive RL
+  environments (multi-turn rollouts, tool-call verification, decoupled
+  agent/env); **Nemotron 3 Super** trained across **21 environment configs →
+  1.2M rollouts** spanning math, code, tool use, and multi-turn chat.
+  **RLFactory** is a plug-and-play multi-round tool-use RL framework
+  (async calling, rule/model/tool reward signals) — Qwen3-4B trained on
+  Search-R1 beat larger models on Natural Questions with **6.8× throughput**.
+  The dominant 2026 agent recipe is **SFT (cold-start) → DPO/SimPO → GRPO/DAPO**.
+- **Synthetic self-play.** **SPIN** (self-play fine-tuning: distinguish own
+  outputs from human refs) matches/exceeds DPO with no extra annotation;
+  **SPICE** grounds self-play in retrieved documents (a Challenger mines docs
+  for tasks, a Reasoner solves them) to avoid model collapse — **+8.9% math,
+  +9.8% general reasoning**.
+- **Self-verification.** **RISE** trains problem-solving *and* self-verification
+  in one RL process so the model catches its own mistakes at inference;
+  companion work **de-biases noisy verifiers** so the policy can't exploit false
+  positives in an imperfect unit test / proof checker. Directly relevant to our
+  sandboxed unit-test reward (`coder-finetune` / `frontier-platform`).
+- **Safety in agentic training.** **MOSAIC** (Mar 2026) structures inference as
+  *plan → check → act-or-refuse* with trajectory-level preference learning,
+  cutting harmful behavior up to **50%** while preserving task performance.
+- **Min HW:** single GPU for SPIN-style self-play on small models; agentic
+  multi-turn RL is generation-heavy (async rollout helps). **Ideal:** an
+  environment fleet + async actor-learner, as in `frontier-platform`'s rollout
+  engine.
+- **Source:** [31], [32], [33], [34]  ·  **Harvest:** partial →
+  `frontier-platform` (agentic tool-use RL + 2026 eval suite `f1e6d23`, async
+  actor-learner rollout `e3295ab`). **Roadmap:** a small **self-play /
+  verifier-de-biasing** experiment on `coder-finetune`'s unit-test reward; a
+  documented agentic-RL environment interface for `frontier-platform`.
+
 ---
 
 ## Tier 2 — scale- or hardware-gated wins
@@ -225,6 +310,7 @@ blocked by any one machine.
 | **FlashAttention-3** | Hopper-optimized attention kernel | ~1.5× over SDPA on H100; warp-specialized + FP8 | Hopper+; long sequences | [11] | **ideal** | midgpt, distgpt |
 | **FlexAttention** | `torch.compile` lowers custom masks/biases to fused attention kernels | FlashAttention-like speed with custom masks; sparse masks can be faster than dense attention | PyTorch 2.5+; long context, packed docs, custom masks | [24] | **planned** | nanogpt-edu, midgpt |
 | **Multi-head Latent Attention (MLA)** | Low-rank KV compression | 5–10× smaller KV cache at near-equal quality | long-context training + any serving | [3] | **shipped** (frontier `ae66f1c`; incremental KV-cache decode for GQA+MLA `58f857a`) | distgpt, serving, frontier |
+| **Native / DeepSeek Sparse Attention (NSA / DSA)** | Trainable sparse attention — hardware-aligned block selection (NSA) or a lightweight "indexer" picking top-k tokens (DeepSeek V3.2's DSA) | near-linear long-context cost; DeepSeek V3.2-Exp roughly **halves long-context API cost** vs dense V3.1 at matched quality | long-context (≥32K) training + serving; pays off as context grows | [35], [36] | **track → planned** | midgpt, distgpt, frontier |
 | **Mixture-of-Experts** (fine-grained + shared expert) | Sparse FFN, more params at ~constant FLOPs | large quality/$ win | ≥3B active-equiv; needs expert parallelism | [3] | **shipped** (frontier recipe `1be0e7a`, aux-loss-free balancing) | distgpt, frontier |
 | **3D/5D parallelism + comms overlap** | FSDP2 + TP + PP + EP + SP, overlapped collectives | near-linear scaling to 1000s of GPUs | multi-node + fast interconnect | [12] | **partial** | distgpt, frontier |
 | **Unsloth fast-path** | Custom autograd kernels for LoRA/QLoRA | ~2× faster, ~70% less memory | single-GPU PEFT | [13] | **shipped** | coder-finetune |
@@ -244,6 +330,12 @@ blocked by any one machine.
 - **Hybrid thinking / non-thinking models** (Qwen3 style): expose an inference
   budget knob that lets users trade latency for reasoning depth. Track for
   `coder-finetune` and serving docs once we have reasoning datasets and evals.
+  Note Qwen3's RL itself moved to **GSPO** (sequence-level ratios) — see §8.
+- **Process / explanation-scoring rewards beyond final-answer RLVR.** DeepSeek-R1
+  found classic **process reward models (PRMs)** not worth the overhead at scale,
+  but **DeepSeekMath-V2** (late 2025) revives *explanation scoring* — judging the
+  reasoning, not just the final answer, with a second LLM as verifier. The likely
+  next step past pure final-answer RLVR; track before building.
 - **muP / hyperparameter transfer** at frontier scale: zero-shot HP transfer
   from small proxies — high value for `frontier-platform`'s scaling program.
 
@@ -258,8 +350,8 @@ Everything is on a roadmap, sized by hardware tier — nothing is "blocked."
 | nanogpt-edu | full-module MTP; FlexAttention long-context | minimal→ideal | keep the core legible; advanced bits opt-in. MTP draft-head serving benchmark shipped (`tools/bench_mtp_spec.py`, 1.48× lossless) |
 | midgpt | FP8 matmul; FA-3; vLLM export path | minimal→ideal | Muon + Liger fused-CE + QK-norm landed; FP8/FA-3 light up on 8× H100; serving benchmark closes the train→serve loop |
 | distgpt | Muon (distributed); FP8; MoE + expert parallelism; MLA | ideal | QK-norm + zero-init landed (`108f5a9`); the 3D-parallel showcase; validate at multi-node |
-| coder-finetune | Spectrum; full-FT 7B | minimal→ideal | SFT → DPO → GRPO/RLVR ladder now complete; remaining harvest is targeted full-FT (Spectrum) + full-FT of 7B |
-| frontier-platform | sparse attention (1M ctx); real vLLM/SGLang serving backend; synthetic+reasoning-trace data engine | ideal | RLVR, MLA, MoE, Muon+MTP, precision policy, **serving economics (MoE/FP8/MLA/spec-decode all priced)** implemented; remaining work is real backends + a data org |
+| coder-finetune | Spectrum; full-FT 7B; **DAPO knobs** (clip-higher + dynamic sampling); **SimPO/KTO** objectives | minimal→ideal | SFT → DPO → GRPO/RLVR ladder complete; next is targeted full-FT (Spectrum), full-FT of 7B, and the GRPO-successor knobs (DAPO) + reference-free preference objectives (SimPO/KTO) on the existing TRL stack |
+| frontier-platform | sparse attention (1M ctx, **NSA/DSA**); **GSPO** for MoE-RL; real vLLM/SGLang serving backend; synthetic+reasoning-trace data engine | ideal | RLVR, MLA, MoE, Muon+MTP, precision policy, **serving economics** implemented; remaining work is real backends, a data org, trainable sparse attention, and sequence-level RL (GSPO) for the MoE path |
 
 ---
 
@@ -365,11 +457,52 @@ Both core repos: ruff-clean, end-to-end train/resume/sample smoke-verified.
 24. PyTorch Team, *FlexAttention: The Flexibility of PyTorch with the
     Performance of FlashAttention* — custom attention masks/biases lowered via
     `torch.compile` to fused kernels. <https://pytorch.org/blog/flexattention/>
+25. Liu et al. (Moonshot AI), *Muon is Scalable for LLM Training* — weight decay
+    + per-param update-scale fixes; ~2× compute efficiency vs AdamW; Moonlight
+    3B/16B MoE @ 5.7T tokens; open distributed Muon; arXiv 2502.16982.
+    <https://github.com/MoonshotAI/Moonlight>
+26. Moonshot AI, *Kimi K2* — 1T-param MoE trained with **MuonClip** (Muon +
+    QK-clip attention-logit stabilizer) for stable large-scale training.
+27. NVIDIA, *Advancing Emerging Optimizers for Accelerated LLM Training with
+    Megatron* — Muon (+ MOP, REKLS) in Megatron-Core / NeMo; layer-wise
+    distributed optimization + distributed Newton-Schulz modes.
+    <https://developer.nvidia.com/blog/advancing-emerging-optimizers-for-accelerated-llm-training-with-nvidia-megatron/>
+28. Yu et al. (ByteDance/Tsinghua), *DAPO: an Open-Source LLM Reinforcement
+    Learning System at Scale* — clip-higher, dynamic sampling, token-level PG
+    loss, overlong reward shaping; Qwen2.5-32B → 50 on AIME'24; arXiv 2503.14476.
+29. Zheng et al. (Qwen Team), *Group Sequence Policy Optimization (GSPO)* —
+    sequence-level importance ratio + clipping; stabilizes MoE RL; behind Qwen3;
+    arXiv 2507.18071.
+30. Meng et al., *SimPO: Simple Preference Optimization with a Reference-Free
+    Reward* (length-normalized implicit reward; no reference model; arXiv
+    2405.14734); Ethayarajh et al., *KTO: Model Alignment as Prospect Theoretic
+    Optimization* (binary feedback; arXiv 2402.01306). Also *Understanding R1-Zero
+    -like Training / Dr. GRPO* (removes GRPO length & std bias; arXiv 2503.20783).
+31. NVIDIA, *NeMo Gym* + *Nemotron 3* — interactive agentic RL environments;
+    21 env configs → 1.2M rollouts.
+32. RLFactory — plug-and-play multi-round tool-use RL; async calling; Qwen3-4B
+    on Search-R1, 6.8× throughput.
+33. Chen et al., *SPIN: Self-Play Fine-Tuning* (arXiv 2401.01335); *SPICE:
+    document-grounded self-play* (+8.9% math / +9.8% general reasoning).
+34. *RISE: self-verification within RLVR*; and verifier-noise de-biasing for
+    RLVR rewards. *MOSAIC* (Mar 2026) — plan/check/act-or-refuse agentic safety.
+35. Yuan et al. (DeepSeek-AI), *Native Sparse Attention (NSA): Hardware-Aligned
+    and Natively Trainable Sparse Attention* — arXiv 2502.11089.
+36. DeepSeek-AI, *DeepSeek-V3.2-Exp* — DeepSeek Sparse Attention (DSA) via a
+    lightweight token indexer; ~2× long-context efficiency / cost reduction vs
+    dense V3.1 at matched quality. (See also Raschka, *From DeepSeek V3 to V3.2:
+    Architecture, Sparse Attention, and RL Updates*, Dec 2025.)
 
 > **Methodology note.** Merges `distgpt/docs/sota_review.md` with a
 > primary-source pass on the modded-nanogpt / Muon / Liger material, followed by
 > a fresh 2025–2026 pass over reasoning RL, preference optimization, Qwen3-style
-> thinking models, and serving systems. Where live search was rate-limited,
-> primary sources (repos, blog, papers, and framework docs) were fetched
+> thinking models, and serving systems. **Revision (post-publication research
+> pass):** added the scale-proven Muon story (Moonlight/MuonClip/Megatron, src
+> 25–27), the GRPO-successor family (DAPO/Dr. GRPO/GSPO) and reference-free
+> preference objectives (SimPO/KTO) in §8 (src 28–30), a new Tier-1 §10 on
+> agentic RL + synthetic self-play (src 31–34), and trainable sparse attention
+> (NSA/DSA) in Tier 2 (src 35–36). Sourced from arXiv primaries plus the
+> *Post-Training in 2026* (llm-stats) and Raschka *State of LLMs 2025* surveys;
+> where live search was rate-limited, primary repos/papers/blogs were fetched
 > directly. Hardware envelopes are aspirational sizing targets, not a constraint
 > from any one machine. Flag anything stale for the next edition.

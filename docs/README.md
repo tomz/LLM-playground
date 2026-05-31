@@ -13,7 +13,7 @@ diff month-over-month and so new findings slot into a predictable place.
 
 | Edition | Theme | Headline harvest |
 |---------|-------|------------------|
-| [2026-05](./2026-05-sota-llm-agi.md) | Cheaper/faster training on commodity GPUs | Muon optimizer, Multi-Token Prediction, Liger Kernel, DoRA/rsLoRA/NEFTune, FineWeb-Edu/DCLM data scaling |
+| [2026-05](./2026-05-sota-llm-agi.md) | Cheaper/faster training on commodity GPUs | Muon (now scale-proven: Moonlight/MuonClip/Megatron), Multi-Token Prediction, Liger Kernel, DoRA/rsLoRA/NEFTune, the GRPO-successor family (DAPO/Dr.GRPO/GSPO) + SimPO/KTO, agentic RL & self-play, NSA/DSA sparse attention, FineWeb-Edu/DCLM data scaling |
 
 ## Cadence & conventions
 
