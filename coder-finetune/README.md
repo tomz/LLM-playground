@@ -62,6 +62,41 @@ optional format / length shaping, mirroring frontier-platform's
 the reward — so run untrusted models inside Docker/gVisor.**
 
 
+## Sandbox & safety
+
+The HumanEval eval and the GRPO reward both `exec()` model-generated code
+locally — the eval to score it, GRPO *every step* because the verifier is the
+reward. The README has always said "not a security boundary, run untrusted
+models in Docker"; the in-process executor (`eval/run_humaneval.py`) is a
+**safety floor**, not a jail. Concretely, each program runs in its own
+subprocess with (POSIX, best-effort):
+
+| Bound | Default | What it stops |
+|-------|---------|---------------|
+| `RLIMIT_FSIZE` | `0` | writing files to disk |
+| `RLIMIT_NOFILE` | `64` | exhausting file descriptors |
+| `RLIMIT_CPU` | `2× timeout` | CPU-pegging busy loops (backstop under the wall-clock kill) |
+| `RLIMIT_AS` | `1 GiB` *(spawn only)* | runaway memory allocation |
+| wall-clock `timeout` | `5 s` | hangs / infinite loops (the primary kill) |
+| stdout/stderr | silenced | a chatty `print()` flooding the trainer log |
+
+What it does **not** do: it is not a syscall jail, not a network sandbox, and
+not a container. For *untrusted* models, two escalations:
+
+- **`mp_mode='spawn'`** (`run_one(..., mp_mode='spawn')`) — a fresh interpreter
+  that doesn't inherit the parent's heap / fds / imported modules. ~100 ms vs
+  ~10 ms per call; the default stays `fork` for speed since the rlimit floor
+  applies in both modes. Spawn also gets the `RLIMIT_AS` memory ceiling (a fork
+  child inherits the parent's multi-GiB address space, so bounding it would
+  SIGKILL before `exec()` even runs).
+- **Docker / gVisor / Firecracker** — the real boundary. Wrap the whole eval /
+  trainer for anything you didn't train yourself.
+
+Kill causes are surfaced in the result message (`"timeout"`,
+`"killed-SIGKILL"`, `"killed-SIGXFSZ"`, …) so a debugging run can tell an
+rlimit kill from a wall-clock timeout from an ordinary test failure.
+
+
 ## Speed & quality knobs (opt-in, config-driven)
 
 Recent SOTA add-ons that plug into the existing TRL/PEFT stack. All default
@@ -74,6 +109,7 @@ Recent SOTA add-ons that plug into the existing TRL/PEFT stack. All default
 | **rsLoRA** | `lora.use_rslora: true` | `alpha/sqrt(r)` scaling so higher ranks actually help. | free |
 | **NEFTune** | `train.neftune_noise_alpha: 5` | Embedding-noise regularizer; better instruction-following. | free, train-only |
 | **Unsloth** | `model.use_unsloth: true` | ~2× faster / ~70% less memory fast-path via custom kernels. Replaces the loader; great for the 7B QLoRA recipe. | heavier dep; `pip install unsloth` |
+| **vLLM rollouts (GRPO)** | `grpo.use_vllm: true` | Delegates GRPO's rollout generation to vLLM (paged attention + continuous batching). ~3–8× faster rollouts — the single biggest GRPO speedup, since the step is generation-heavy (G samples/prompt). | needs `pip install vllm`; one-time engine warm-up |
 
 ```bash
 # 5060 Ti recipe now ships with Liger + DoRA + rsLoRA + NEFTune enabled:
@@ -91,7 +127,7 @@ coder-finetune/
 ├── train.py        # SFT / LoRA / QLoRA via TRL SFTTrainer
 ├── eval/           # HumanEval+ runner with Docker sandbox (also the RL verifier)
 ├── infer/          # merge LoRA, export for vLLM
-└── tests/
+└── tests/          # 66 tests — bug regressions, sandbox, DPO/GRPO pins
 ```
 
 ## Quickstart
@@ -105,6 +141,12 @@ python -m venv .venv
 
 # 2. Eval HumanEval+ pass@1
 .venv/bin/python eval/run_humaneval.py --model out/tiny --n-samples 1
+
+# 2b. Reproducible pass@5, saving every completion + a machine-readable summary
+.venv/bin/python eval/run_humaneval.py --model out/tiny \
+    --n-samples 5 --temperature 0.8 --seed 0 \
+    --save-completions out/tiny/completions.jsonl \
+    --json-out out/tiny/eval.json
 
 # 3. Generate a sample
 .venv/bin/python infer/generate.py --model out/tiny --prompt 'def fib(n):'
@@ -134,3 +176,28 @@ CUDA_VISIBLE_DEVICES=0 .venv/bin/python train.py --config configs/lora_5060ti.ya
 - Not a from-scratch trainer (use `nanogpt-edu` / `midgpt` / `distgpt`).
 - Not multi-GPU (single 3050 / 4090 / A100; for 70B+ see `frontier-platform`).
 - Not safe to run untrusted generated code outside the provided Docker sandbox.
+
+## Recent changes (Tier 8)
+
+Hardening + frontier-toolbox pass, four hermetic commits (24 → 66 tests):
+
+- **8.1 — bug fixes** (+13): `extract_code` now recovers code from prose-prefixed
+  outputs (a correct answer used to score 0 on a `SyntaxError`); the format
+  reward credits `async def`; eval `--n-samples` actually does pass@k and passes
+  `eos_token_id`; `infer/generate.py` uses `torch_dtype=` for the pinned TRL
+  range; and a GRPO divisibility validator fails fast instead of letting an
+  opaque tensor-shape error surface minutes into a run.
+- **8.2 — subprocess sandbox hardening** (+13): `resource.setrlimit` floor,
+  two-layer stdout/stderr silencing, `mp_mode='spawn'` for untrusted models, and
+  a `q.get(timeout=...)` queue-drain fix that removed a ~5% reward flake. See
+  **Sandbox & safety** above. (A threaded parallel `run_many` was investigated
+  and reverted — real 4× speedup but a 20%+ fork-from-threads `mp.Queue` flake;
+  kept sequential with an order-preservation pin for any future safe rewrite.)
+- **8.3 — frontier opt-ins + pedagogical pins** (+16): `grpo.use_vllm` knob,
+  eval `--save-completions` (JSONL) + `--json-out` summary, and pins that assert
+  *what the algorithms do* — GRPO group standardization
+  (`[1,0,0,1] → [+1,-1,-1,+1]`, baseline-invariant), DPO margin monotonicity
+  (one step raises the chosen-vs-rejected margin, on a hand-built tiny Llama so
+  the suite needs no download), and an `extract_code` fence round-trip.
+- **8.4 — docs** — this section, the Sandbox & safety section, and the knob/CLI
+  tables above.
