@@ -126,7 +126,8 @@ def train(cfg: dict, data_dir_override: str | None = None) -> None:
     pp_schedule = None
     is_last_pp_rank = True
     if mesh is not None:
-        model = apply_tp(model, mesh["tp"])
+        model = apply_tp(model, mesh["tp"],
+                          sequence_parallel=pcfg.get("sequence_parallel", False))
         model, pp_schedule = build_pipeline(model, mesh["pp"], n_microbatches=cfg["train"]["grad_accum"])
         if pp_schedule is not None:
             pp_mesh = mesh["pp"]
