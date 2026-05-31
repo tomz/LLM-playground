@@ -66,8 +66,14 @@ def build_pref_trainer(model, tok, train_ds, cfg: dict):
         logging_steps=t["log_every"],
         save_steps=t["save_every"],
         save_total_limit=2,
-        bf16=(cfg["model"]["dtype"] == "bfloat16"),
-        fp16=(cfg["model"]["dtype"] == "float16"),
+        # bf16/fp16 are only valid with a capable GPU. transformers'
+        # TrainingArguments.__post_init__ raises ValueError("...doesn't support
+        # bf16/gpu") if you request bf16 on a CPU-only host — which broke CI
+        # (GPU-less runner) and would equally break any real CPU smoke run.
+        # Gate the request on actual hardware support so the config is valid
+        # everywhere; on a real GPU run the dtype still selects bf16/fp16.
+        bf16=(cfg["model"]["dtype"] == "bfloat16" and _bf16_supported()),
+        fp16=(cfg["model"]["dtype"] == "float16" and torch.cuda.is_available()),
         gradient_checkpointing=grad_ckpt,
         gradient_checkpointing_kwargs={"use_reentrant": False} if grad_ckpt else None,
         report_to="none",
@@ -103,6 +109,20 @@ def build_pref_trainer(model, tok, train_ds, cfg: dict):
             train_dataset=train_ds, processing_class=tok,
         )
     raise ValueError(f"unknown pref.objective: {objective!r} (use 'dpo' or 'orpo')")
+
+
+def _bf16_supported() -> bool:
+    """True only if a CUDA GPU that actually supports bf16 is present.
+
+    bf16 training requires Ampere+ (cc>=8.0). transformers validates this in
+    TrainingArguments.__post_init__ and raises on a CPU-only or pre-Ampere
+    host, so we must not request bf16 unless it's really available."""
+    if not torch.cuda.is_available():
+        return False
+    try:
+        return torch.cuda.is_bf16_supported()
+    except Exception:
+        return False
 
 
 def _make_config(config_cls, kwargs: dict):

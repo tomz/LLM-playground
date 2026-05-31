@@ -77,6 +77,12 @@ def test_make_config_filters_unknown_kwargs():
 
     cfg = _make_config(DPOConfig, {
         "output_dir": "out/x", "beta": 0.2,
+        # Explicit bf16=False: TRL's DPOConfig auto-enables bf16 when left at
+        # its None default, which transformers then rejects on a CPU-only host
+        # ("Your setup doesn't support bf16/gpu"). The real builder
+        # (build_pref_trainer) already passes an explicit hardware-gated bool;
+        # mirror that here so the unit test is hermetic on GPU-less CI.
+        "bf16": False,
         "this_field_does_not_exist": 123,   # must be dropped, not crash
     })
     assert cfg.beta == 0.2
