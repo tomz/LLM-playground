@@ -55,6 +55,7 @@ from ..utils.metrics import (
     compute_grad_norm, compute_param_norm, estimate_mfu, peak_tflops_for_device,
 )
 from .optim import build_optimizer, cosine_lr
+from .muon import build_muon_and_adamw
 from .checkpoint import CheckpointManager
 from .stability import SpikeMonitor, RewindController
 
@@ -136,8 +137,35 @@ def train(cfg: dict, data_dir_override: str | None = None) -> None:
     model = _maybe_compile(model, cfg["train"].get("compile", False),
                             pp_active=pp_schedule is not None)
 
-    optim = build_optimizer(model, cfg["optim"]["lr"], cfg["optim"]["betas"],
-                            cfg["optim"]["weight_decay"], fused=is_cuda)
+    optim_kind = cfg["optim"].get("optimizer", "adamw")
+    if optim_kind == "muon":
+        # Dual Muon (hidden 2D weights) + AdamW (embeddings / heads / 1-D)
+        # on one shared cosine schedule. ``muon_lr`` defaults to 20× the
+        # ``adamw_lr`` because Muon's update is scaled to RMS≈1 already
+        # (the modded-nanogpt convention; tune per-run if you change ndim).
+        muon_lr = cfg["optim"].get("muon_lr", cfg["optim"]["lr"] * 100)
+        optims = build_muon_and_adamw(
+            model,
+            muon_lr=muon_lr,
+            adamw_lr=cfg["optim"]["lr"],
+            muon_momentum=cfg["optim"].get("muon_momentum", 0.95),
+            adamw_betas=cfg["optim"]["betas"],
+            weight_decay=cfg["optim"]["weight_decay"],
+            fused=is_cuda,
+        )
+        if is_master():
+            n_muon = sum(1 for o in optims if o.__class__.__name__ == "Muon")
+            n_adam = sum(1 for o in optims if o.__class__.__name__ == "AdamW")
+            print(f"[optim] muon={n_muon} adamw={n_adam} (dual schedule)")
+    elif optim_kind == "adamw":
+        optims = [build_optimizer(
+            model, cfg["optim"]["lr"], cfg["optim"]["betas"],
+            cfg["optim"]["weight_decay"], fused=is_cuda,
+        )]
+    else:
+        raise ValueError(
+            f"unknown optim.optimizer={optim_kind!r}; expected 'adamw' or 'muon'"
+        )
 
     data_dir = data_dir_override or cfg["data"]["dir"]
     loader = StreamingLoader(
@@ -152,7 +180,14 @@ def train(cfg: dict, data_dir_override: str | None = None) -> None:
         cfg["log"].get("wandb_project"), cfg,
     )
 
-    start = ckpt.load(model, optim, loader, step="latest") if ckpt.latest() is not None else 0
+    # Snapshot the per-group base LRs so we can re-apply the schedule on top
+    # of them without losing per-optimizer scaling (Muon's LR is much higher
+    # than AdamW's; the cosine should preserve the ratio, not collapse them).
+    _base_lrs = [
+        [g["lr"] for g in o.param_groups] for o in optims
+    ]
+
+    start = ckpt.load(model, optims, loader, step="latest") if ckpt.latest() is not None else 0
     best_val = float("inf")
     if is_master() and start > 0:
         print(f"[resume] @ step {start}")
@@ -177,10 +212,16 @@ def train(cfg: dict, data_dir_override: str | None = None) -> None:
         base_lr = cosine_lr(step, cfg["optim"]["warmup_steps"], total,
                             cfg["optim"]["lr"], cfg["optim"]["min_lr"])
         eff_lr = base_lr * rewind.lr_multiplier()
-        for g in optim.param_groups:
-            g["lr"] = eff_lr
+        # Apply the cosine schedule by scaling each param group's *original*
+        # LR by the same factor — that way Muon (whose base is 100× AdamW's)
+        # keeps its relative LR through warmup/decay.
+        scale = eff_lr / max(cfg["optim"]["lr"], 1e-12)
+        for o_idx, o in enumerate(optims):
+            for g_idx, g in enumerate(o.param_groups):
+                g["lr"] = _base_lrs[o_idx][g_idx] * scale
 
-        optim.zero_grad(set_to_none=True)
+        for o in optims:
+            o.zero_grad(set_to_none=True)
         loss_acc = 0.0
         if pp_schedule is None:
             # No pipelining: regular gradient accumulation.
@@ -215,7 +256,8 @@ def train(cfg: dict, data_dir_override: str | None = None) -> None:
             grad_norm = float(gnorm) if isinstance(gnorm, torch.Tensor) else gnorm
         else:
             grad_norm = compute_grad_norm(model)
-        optim.step()
+        for o in optims:
+            o.step()
 
         # Aggregate loss across DP for accurate logging. PP intermediates have
         # 0.0 — we average only across the DP dim, not the PP dim, so they
@@ -227,7 +269,7 @@ def train(cfg: dict, data_dir_override: str | None = None) -> None:
         if is_last_pp_rank and spike.observe(loss_val):
             if is_master():
                 print(f"[spike] step={step} loss={loss_val:.3f} — rewinding")
-            step = rewind.on_spike(model, optim, loader, step)
+            step = rewind.on_spike(model, optims, loader, step)
             continue
 
         if step % log_every == 0:
@@ -254,7 +296,7 @@ def train(cfg: dict, data_dir_override: str | None = None) -> None:
             logger.log(step, **metrics)
 
         if step > 0 and step % ckpt_every == 0:
-            path = ckpt.save(model, optim, loader, step)
+            path = ckpt.save(model, optims, loader, step)
             if is_master():
                 print(f"[ckpt] saved → {path}")
 
@@ -266,7 +308,7 @@ def train(cfg: dict, data_dir_override: str | None = None) -> None:
             logger.log(step, eval_loss=ev)
             if ev == ev and ev < best_val:  # NaN-safe
                 best_val = ev
-                bp = ckpt.save(model, optim, loader, step)
+                bp = ckpt.save(model, optims, loader, step)
                 # Mark as "best" via a sibling sentinel file (DCP dirs are
                 # already step-named; we just leave a pointer).
                 if is_master():
@@ -284,7 +326,7 @@ def train(cfg: dict, data_dir_override: str | None = None) -> None:
     # gated the entire collective on rank-0 and deadlocked on rank-1+ as
     # soon as either side hit a barrier. Bug was invisible because no
     # multi-rank test ever exercised the final-save path.
-    ckpt.save(model, optim, loader, total)
+    ckpt.save(model, optims, loader, total)
     if is_master():
         if is_cuda:
             alloc = torch.cuda.max_memory_allocated(0) // (1024 * 1024)

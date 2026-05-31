@@ -2,11 +2,31 @@
 
 Each DP rank's loader cursor is recorded in `meta_rank{rank}.json`; the rank-0
 process additionally writes `meta.json` with the latest step and any extras.
+
+Optimizer storage
+-----------------
+``save`` / ``load`` accept either a single optimizer or a list of optimizers.
+The on-disk layout is:
+
+  * single optimizer → key ``"optim"`` (legacy; what existing checkpoints have)
+  * list of optimizers → keys ``"optim_0"``, ``"optim_1"``, ... (new in
+    distgpt-with-Muon, because Muon + AdamW = two optimizers).
+
+``load`` auto-detects: if the saved state has ``"optim"`` it routes that to
+the first optimizer in the list (or the lone optimizer in the legacy case);
+otherwise it looks for ``optim_N``.
 """
 from __future__ import annotations
 import os
 import torch.distributed as dist
 import torch.distributed.checkpoint as dcp
+
+
+def _as_list(opts):
+    """Normalize a single-optimizer or list-of-optimizers argument."""
+    if isinstance(opts, (list, tuple)):
+        return list(opts)
+    return [opts]
 
 
 class CheckpointManager:
@@ -21,20 +41,28 @@ class CheckpointManager:
     def save(self, model, optimizer, loader, step: int, extra: dict | None = None) -> str:
         path = self._path(step)
         os.makedirs(path, exist_ok=True)
-        state = {
-            "model": model.state_dict(),
-            "optim": optimizer.state_dict(),
-        }
+        opts = _as_list(optimizer)
+        state: dict = {"model": model.state_dict()}
+        if len(opts) == 1:
+            # Preserve the legacy on-disk key so older checkpoints stay
+            # readable. Only multi-optimizer (Muon+AdamW) saves use the
+            # numbered keys.
+            state["optim"] = opts[0].state_dict()
+        else:
+            for i, o in enumerate(opts):
+                state[f"optim_{i}"] = o.state_dict()
         dcp.save(state, checkpoint_id=path)
         # Each rank writes its own loader-state file (cursor differs per DP rank).
         from ..utils.dist import is_master
         rank = dist.get_rank() if dist.is_initialized() else 0
         import json
         with open(os.path.join(path, f"meta_rank{rank}.json"), "w") as f:
-            json.dump({"step": step, "loader": loader.state_dict()}, f)
+            json.dump({"step": step, "loader": loader.state_dict(),
+                       "n_optim": len(opts)}, f)
         if is_master():
             with open(os.path.join(path, "meta.json"), "w") as f:
-                json.dump({"step": step, **(extra or {})}, f)
+                json.dump({"step": step, "n_optim": len(opts),
+                           **(extra or {})}, f)
         # Synchronize so GC can run safely on rank 0 only.
         if dist.is_initialized():
             dist.barrier()
@@ -50,10 +78,31 @@ class CheckpointManager:
             if step is None:
                 return 0
         path = self._path(int(step))
-        state = {"model": model.state_dict(), "optim": optimizer.state_dict()}
+        opts = _as_list(optimizer)
+        state: dict = {"model": model.state_dict()}
+        if len(opts) == 1:
+            state["optim"] = opts[0].state_dict()
+        else:
+            for i, o in enumerate(opts):
+                state[f"optim_{i}"] = o.state_dict()
         dcp.load(state, checkpoint_id=path)
         model.load_state_dict(state["model"])
-        optimizer.load_state_dict(state["optim"])
+        # Back-compat: load "optim" into opts[0] if that's what was saved;
+        # otherwise route the numbered keys.
+        if "optim" in state and len(opts) >= 1:
+            opts[0].load_state_dict(state["optim"])
+            for i in range(1, len(opts)):
+                # Numbered keys exist only on multi-optim saves; if the
+                # checkpoint was single-optim and the user reloads into a
+                # multi-optim config, the extra optimizers start fresh.
+                key = f"optim_{i}"
+                if key in state:
+                    opts[i].load_state_dict(state[key])
+        else:
+            for i, o in enumerate(opts):
+                key = f"optim_{i}"
+                if key in state:
+                    o.load_state_dict(state[key])
         rank = dist.get_rank() if dist.is_initialized() else 0
         import json
         rank_meta = os.path.join(path, f"meta_rank{rank}.json")
