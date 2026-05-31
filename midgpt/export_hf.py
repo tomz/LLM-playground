@@ -193,6 +193,18 @@ def export_to_hf(model, cfg, out_dir: str | Path,
 
     # Weights. .detach().cpu() so we don't accidentally serialize CUDA tensors.
     sd_src = {k: v.detach().cpu() for k, v in model.state_dict().items()}
+    # Multi-Token Prediction heads are a train-time auxiliary (DeepSeek-V3
+    # §2.2). They're never fired at inference (the generation path only uses
+    # ``lm_head``) so they have no representation in stock GPT2LMHeadModel.
+    # Rather than erroring (the way we do for qk_norm, which would materially
+    # break inference) we strip them silently and log the count — by design,
+    # the exported model is exactly the main-head subset of the trained model.
+    mtp_keys = [k for k in sd_src if k.startswith("mtp_heads.")]
+    for k in mtp_keys:
+        del sd_src[k]
+    if mtp_keys:
+        print(f"[export_to_hf] dropped {len(mtp_keys)} MTP-head key(s) "
+              f"(train-only, not part of GPT2LMHeadModel)")
     sd_hf = _rename_state_dict(sd_src, cfg)
     try:
         from safetensors.torch import save_file

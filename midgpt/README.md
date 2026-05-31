@@ -19,6 +19,11 @@ GPT-2 scale (124M–1.5B). Real BPE tokenizer (`tiktoken`), WikiText-103 or Open
 | Optimizer                     | AdamW / Muon | AdamW / Muon (orthogonalized 2D-weight updates) |
 | QK-Norm stabilizer            | ✅ opt-in   | ✅ opt-in (`model.qk_norm`) |
 | Fused linear-CE (Liger)       | —          | ✅ opt-in (`fused_ce`, GPU+Triton) |
+| Loss-spike rewind             | —          | ✅ opt-in (`stability.spike_monitor`) |
+| HuggingFace export            | —          | ✅ (`export_hf.py` → `GPT2LMHeadModel`) |
+| `lm-evaluation-harness`       | —          | ✅ (`lm_eval_runner.py`) |
+| Llama-style arch knobs        | RoPE/RMSNorm/SwiGLU fixed | ✅ opt-in (`pos_kind`/`norm_kind`/`mlp_kind`) |
+| Multi-Token Prediction        | ✅ opt-in   | ✅ opt-in (`model.mtp_tokens`) |
 
 ## Quickstart
 
@@ -62,9 +67,11 @@ the others are napkin estimates at ~50 % MFU.
 
 ## Speed/quality knobs (opt-in, default-off for GPT-2 parity)
 
-Ported from the modded-nanogpt / Liger work harvested in
+Ported from the modded-nanogpt / Liger / DeepSeek-V3 work harvested in
 [`../docs/2026-05-sota-llm-agi.md`](../docs/2026-05-sota-llm-agi.md). All are
 config-gated and off by default so existing runs are bit-for-bit unchanged.
+
+### Training
 
 - **Muon optimizer** — set `optim.optimizer: muon`. Replaces the Adam update for
   2D *hidden* weight matrices (attn qkv/proj, MLP) with the nearest
@@ -77,12 +84,61 @@ config-gated and off by default so existing runs are bit-for-bit unchanged.
   `pip install liger-kernel` + a Triton GPU). Computes the `lm_head` matmul and
   the cross-entropy in one kernel *without* materializing the `[B·T, vocab]`
   logits — the largest forward activation. Exact (not an approximation),
-  ~20% faster / up to ~60% less memory. Loss-only on the train path; `eval.py`
-  / sampling use the standard logits path.
+  ~20% peak-VRAM saving. Throughput is hardware-dependent and can REGRESS on
+  Blackwell (5060 Ti measured ~26% slower than dense matmul + CE); treat as a
+  VRAM-headroom lever, not a speedup.
+- **Loss-spike rewind** — set `stability.spike_monitor: true`. A two-threshold
+  detector (z-score AND absolute jump) watches the per-step loss; on a spike
+  the trainer rewinds to the last `ckpt.pt` and halves the LR for a cooldown
+  window. Bounded by `max_rewinds` so a chronically-spiky model still
+  finishes. See `stability.py` for the bug history that motivated each guard.
+- **Multi-Token Prediction (MTP)** — set `model.mtp_tokens: N` (typical 2-4).
+  N extra `lm_head`-shaped heads predict tokens at offsets +2, +3, …, +(N+1)
+  from the same final hidden state, contributing a `mtp_weight`-scaled CE
+  auxiliary to the train loss. Train-only (eval/inference are unchanged),
+  ~5-10% sample-efficiency on the DeepSeek-V3 ablation.
+
+### Architecture (Llama-style flips)
+
+Three orthogonal flags on `GPTConfig` flip parts of the model from GPT-2
+defaults toward Llama. Existing recipes still train pure GPT-2 with the
+defaults; flip them for a head-to-head ablation on the same loop.
+
+| Flag | GPT-2 default | Llama-style | What it changes |
+|---|---|---|---|
+| `pos_kind`  | `learned`   | `rope`     | Drops `pos_emb` table; applies RoPE to Q/K per head |
+| `norm_kind` | `layernorm` | `rmsnorm`  | Replaces all block + final norms with RMSNorm (Llama weight-only) |
+| `mlp_kind`  | `gelu`      | `swiglu`   | Replaces GELU MLP with gated `proj(silu(w1 x) * w3 x)` |
+
+The recipe `configs/gpt2_350m_llamafied_fweb_5060ti.yaml` flips all three on
+for a direct A/B against the GPT-2 baseline at the same parameter count
+(d_ffn is reduced from 4096 to 2730 ≈ 8/3·d_model to keep SwiGLU's 3-matrix
+FFN iso-param with GELU's 2-matrix).
+
+### Eval
+
+- **HuggingFace export** (`export_hf.py`) — writes a trained midgpt
+  checkpoint as a `GPT2LMHeadModel`-shaped directory (config.json +
+  safetensors + tokenizer). Round-trip verified to bit-identical midgpt
+  weights and ~1e-4 fp32 logit-agreement vs `transformers.from_pretrained`.
+
+  ```bash
+  python export_hf.py --ckpt out/best.pt --out-dir out/hf_export --verify
+  ```
+
+- **`lm-evaluation-harness` runner** (`lm_eval_runner.py`) — wraps the export
+  above and hands the dir to EleutherAI's lm-eval. Supports MMLU, HellaSwag,
+  LAMBADA, ARC, all standard tasks. Lazy import so lm-eval stays optional.
+
+  ```bash
+  python lm_eval_runner.py \
+      --ckpt out/best.pt --tasks hellaswag,lambada_openai \
+      --device cuda --output results.json
+  ```
 
 ```bash
-# Muon + fused-CE on a single GPU
-python train.py --config configs/gpt2_124m.yaml   # edit: optimizer: muon, fused_ce: true
+# Stack-up: Muon + fused-CE + spike-rewind on a single 5060 Ti
+python train.py --config configs/gpt2_350m_fweb_5060ti_muon.yaml   # add stability.spike_monitor: true
 ```
 
 
@@ -91,6 +147,10 @@ python train.py --config configs/gpt2_124m.yaml   # edit: optimizer: muon, fused
 A full pretraining run from random init, with a clean loss curve and
 real sample completions:
 [`examples/5060ti_350m_fineweb.md`](examples/5060ti_350m_fineweb.md).
+
+For a narrative tour of the Tier 6 toolbox (bug fixes, spike-rewind,
+HF export, lm-eval, Llama-style flips, MTP) see
+[`examples/tier6_toolbox.md`](examples/tier6_toolbox.md).
 
 | | |
 |---|---|
@@ -112,16 +172,20 @@ model is undertrained-by-design (0.37× Chinchilla), not overfit.
 
 ```
 midgpt/
-├── model.py          # GPT-2 architecture (LayerNorm, learned posn, full attention)
-├── muon.py           # Muon optimizer (Newton-Schulz) + 2D-weight param split
-├── data.py           # tiktoken loader, packed sequences, mmap shards
-├── prepare.py        # download + tokenize WikiText / OpenWebText
-├── train.py          # DDP loop, AMP, grad-ckpt, grad-accum, resume
-├── eval.py           # ppl + HellaSwag zero-shot harness
-├── sample.py         # generation
-├── utils/            # logging, schedule, ckpt manager
-├── configs/          # YAML per model size
-└── tests/
+├── model.py              # GPT/Llama-style transformer (LayerNorm | RMSNorm,
+│                         # learned-posn | RoPE, GELU | SwiGLU, opt. MTP heads)
+├── muon.py               # Muon optimizer (Newton-Schulz) + 2D-weight param split
+├── stability.py          # SpikeMonitor + RewindController (loss-spike rewind)
+├── export_hf.py          # midgpt ⇄ HF GPT2LMHeadModel weight converter
+├── lm_eval_runner.py     # EleutherAI lm-evaluation-harness driver
+├── data.py               # tiktoken loader, packed sequences, mmap shards
+├── prepare.py            # download + tokenize WikiText / OpenWebText / FineWeb-Edu
+├── train.py              # DDP loop, AMP, grad-ckpt, grad-accum, resume, spike rewind
+├── eval.py               # ppl + HellaSwag zero-shot harness
+├── sample.py             # generation (greedy / top-k / top-p)
+├── utils/                # logging, schedule, ckpt manager
+├── configs/              # YAML per model size & flavor
+└── tests/                # 79 tests; CPU smoke + 2-rank gloo distributed
 ```
 
 ## Apple Silicon (MPS) support
@@ -153,6 +217,10 @@ A 200-iter smoke run on WikiText-103:
 > you hit the same hang, reduce `micro_batch`/`grad_accum` and/or
 > `block_size`, or set `grad_checkpoint: false`.
 
-## What's still omitted (see `distributed-trainer`)
+## What's still omitted (see `distgpt/`)
 
-FSDP / tensor parallelism / pipeline parallelism / multi-node orchestration / RLHF.
+FSDP / tensor parallelism / pipeline parallelism / multi-node orchestration /
+DCP (sharded reshardable checkpoints) / MoE / MLA / RLHF — anything that
+needs more than one node lives in [`distgpt/`](../distgpt). midgpt is
+deliberately single-node so that the full training loop fits on one screen
+of mental model.

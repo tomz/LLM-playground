@@ -38,6 +38,13 @@ class GPTConfig:
     # params for the same d_ffn; cut d_ffn to ⅔ of the GELU value for an
     # iso-param swap).
     mlp_kind: str = "gelu"
+    # Multi-Token Prediction (DeepSeek-V3 §2.2): extra auxiliary heads predict
+    # tokens at offsets +2, +3, … from the same final hidden state. Train-only
+    # (discarded at inference, so zero cost there) and doubles as a free
+    # speculative-decoding draft signal. ~5-10% sample-efficiency win on the
+    # DeepSeek-V3 ablation. 0 disables; typical setting is 2-4.
+    mtp_tokens: int = 0
+    mtp_weight: float = 0.3
 
     @property
     def head_dim(self) -> int:
@@ -235,6 +242,16 @@ class GPT(nn.Module):
         self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
         if cfg.tie_embeddings:
             self.lm_head.weight = self.tok_emb.weight
+        # Multi-Token Prediction auxiliary heads (DeepSeek-V3 §2.2). Head j
+        # predicts the token at offset (j+2) from the same final hidden state
+        # — the main lm_head already covers +1. Train-only: ``forward`` adds
+        # the averaged-per-head MTP CE × ``mtp_weight`` to the main loss when
+        # ``self.training``; the inference path doesn't fire these heads (and
+        # ``export_to_hf`` strips them silently — GPT-2 has no MTP). 0 disables.
+        self.mtp_heads = nn.ModuleList([
+            nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
+            for _ in range(int(cfg.mtp_tokens))
+        ])
         # RoPE cache. Built lazily so we know the right device/dtype to match
         # the activations (Blackwell bf16 needs bf16 tables for the SDPA kernel
         # to fuse; CPU smoke tests need fp32).
@@ -312,10 +329,41 @@ class GPT(nn.Module):
             # kernel so the [B*T, vocab] logits are never materialized. Returns
             # loss only (no logits) — callers needing logits must disable fused_ce.
             loss = self._liger_ce(self.lm_head.weight, x.reshape(-1, x.size(-1)), targets.reshape(-1))
-            return None, loss
-        logits = self.lm_head(x)
-        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-100)
-        return logits, loss
+            logits_out = None
+        else:
+            logits = self.lm_head(x)
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)),
+                                   targets.view(-1), ignore_index=-100)
+            logits_out = logits
+        # Multi-Token Prediction auxiliary loss (DeepSeek-V3 §2.2). Train-only:
+        # head ``j`` predicts the token at offset (j+2), i.e. ``targets`` shifted
+        # left by (j+1). Sequence positions in ``[T-(j+1), T)`` can't supervise
+        # their +(j+1) loss because the target slides off the end, so we just
+        # slice those positions away (no -100 mask needed — we never build
+        # the dropped predictions). Averaged over heads, scaled by mtp_weight.
+        # Uses the hidden state ``x`` (not ``logits_out``) so this works in
+        # both the dense lm_head + CE path and the fused-CE path. Gated on
+        # self.training so eval reports pure next-token CE and the heads
+        # contribute zero cost at inference.
+        if self.mtp_heads and self.training:
+            T = targets.size(1)
+            aux = x.new_zeros(())
+            used = 0
+            for j, head in enumerate(self.mtp_heads):
+                shift = j + 1
+                if T - shift <= 0:
+                    continue
+                pred = head(x[:, : T - shift, :])
+                tgt = targets[:, shift:]
+                aux = aux + F.cross_entropy(
+                    pred.float().reshape(-1, pred.size(-1)),
+                    tgt.reshape(-1),
+                    ignore_index=-100,
+                )
+                used += 1
+            if used:
+                loss = loss + self.cfg.mtp_weight * (aux / used)
+        return logits_out, loss
 
     def configure_optimizer(self, weight_decay: float, lr: float, betas, fused: bool):
         decay, no_decay = [], []
