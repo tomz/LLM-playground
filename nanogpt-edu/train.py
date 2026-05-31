@@ -27,15 +27,22 @@ def pick_device(want: str) -> str:
 
 
 def make_autocast(device: str, dtype: torch.dtype):
-    """Build an autocast context appropriate for the device.
+    """Build an autocast context appropriate for the device + dtype.
 
-    - cuda: native autocast for bf16/fp16/fp32.
-    - mps:  native autocast (PyTorch 2.4+ supports bf16/fp16 on Apple silicon).
+    - cuda: native autocast for bf16/fp16; fp32 is a nullcontext (autocast(fp32)
+      is a no-op but adds overhead).
+    - mps:  autocast for bf16/fp16 only — Apple's MPS autocast doesn't support
+      fp32 (passing it silently promotes to fp16). Fall back to nullcontext
+      when fp32 is requested.
     - cpu:  bf16 autocast if requested, else nullcontext.
     """
     if device.startswith("cuda"):
+        if dtype == torch.float32:
+            return contextlib.nullcontext()
         return torch.amp.autocast(device_type="cuda", dtype=dtype)
     if device == "mps":
+        if dtype == torch.float32:
+            return contextlib.nullcontext()
         return torch.amp.autocast(device_type="mps", dtype=dtype)
     if dtype == torch.bfloat16:
         return torch.amp.autocast(device_type="cpu", dtype=torch.bfloat16)
@@ -52,13 +59,23 @@ def cosine_lr(it: int, warmup: int, decay: int, lr: float, min_lr: float) -> flo
 
 
 @torch.no_grad()
-def evaluate(model, datasets, cfg, ctx) -> dict:
+def evaluate(model, datasets, cfg, ctx, *, eval_seed: int) -> dict:
+    """Compute mean loss over ``cfg['eval_iters']`` random batches per split.
+
+    Reproducibility: we always seed a *fresh* generator from ``eval_seed`` so
+    val loss is the same number on every call regardless of training history.
+    With the old code, ``ds.get_batch(...)`` consumed from ``torch.default_
+    generator`` which is also touched by dropout / model init — so val ppl
+    drifted between runs / resumes of the exact same config.
+    """
     model.eval()
     out = {}
     for split, ds in datasets.items():
+        eval_gen = torch.Generator()
+        eval_gen.manual_seed(eval_seed)
         losses = torch.zeros(cfg["eval_iters"])
         for k in range(cfg["eval_iters"]):
-            x, y = ds.get_batch(cfg["batch_size"])
+            x, y = ds.get_batch(cfg["batch_size"], generator=eval_gen)
             with ctx:
                 _, loss = model(x, y)
             losses[k] = loss.item()
@@ -93,6 +110,13 @@ def main():
     cfg = load_config(args.config)
     os.makedirs(cfg["out_dir"], exist_ok=True)
     torch.manual_seed(cfg["seed"])
+    # Dedicated training-batch generator so the data RNG is isolated from
+    # default_generator (which is also touched by dropout / model init /
+    # NS5 inside Muon). Without this, two runs of the same config produced
+    # different val batches on resume because torch.manual_seed had been
+    # consumed by other random ops in between.
+    train_gen = torch.Generator()
+    train_gen.manual_seed(cfg["seed"] + 1)
     device = pick_device(cfg["device"])
     is_cuda = device.startswith("cuda")
     dtype = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}[cfg["dtype"]]
@@ -159,7 +183,14 @@ def main():
     ckpt_path = os.path.join(cfg["out_dir"], "ckpt.pt")
     best_path = os.path.join(cfg["out_dir"], "ckpt_best.pt")
     if args.resume and os.path.exists(ckpt_path):
-        sd = torch.load(ckpt_path, map_location=device, weights_only=False)
+        # Load straight to CPU so saved RNG ByteTensors stay ByteTensors. The
+        # previous map_location=device crashed on CUDA resume: torch.load
+        # promoted the saved CPU ByteTensor RNG state to a CUDA tensor which
+        # then failed `torch.set_rng_state`'s ByteTensor type check
+        # (`TypeError: RNG state must be a torch.ByteTensor`). Per-rank model
+        # / optim state still ends up on the right device when load_state_dict
+        # copies into already-on-device parameters.
+        sd = torch.load(ckpt_path, map_location="cpu", weights_only=False)
         model.load_state_dict(sd["model"])
         # Backward-compatible: old checkpoints stored a single "optim"; new ones
         # store a list of optimizer state dicts under "optims".
@@ -171,9 +202,13 @@ def main():
         if "scaler" in sd and sd["scaler"] is not None:
             scaler.load_state_dict(sd["scaler"])
         if "rng_state" in sd:
-            torch.set_rng_state(sd["rng_state"])
+            torch.set_rng_state(sd["rng_state"].to("cpu", dtype=torch.uint8))
         if is_cuda and sd.get("cuda_rng_state") is not None:
-            torch.cuda.set_rng_state(sd["cuda_rng_state"])
+            torch.cuda.set_rng_state(sd["cuda_rng_state"].to("cpu", dtype=torch.uint8))
+        # Restore the data-loader generator state so the resumed run sees the
+        # same training batches it would have seen without the interruption.
+        if "train_gen_state" in sd and sd["train_gen_state"] is not None:
+            train_gen.set_state(sd["train_gen_state"].to("cpu", dtype=torch.uint8))
         start_iter = sd["iter"] + 1
         best_val = sd.get("best_val", best_val)
         print(f"resumed from iter {start_iter} (best_val={best_val:.4f})")
@@ -190,11 +225,13 @@ def main():
             "best_val": best_val,
             "rng_state": torch.get_rng_state(),
             "cuda_rng_state": torch.cuda.get_rng_state() if is_cuda else None,
+            "train_gen_state": train_gen.get_state(),
         }, tmp)
         os.replace(tmp, path)
 
     grad_accum = cfg["grad_accum"]
     base_lr = cfg["lr"]
+    tokens_per_step = cfg["batch_size"] * grad_accum * cfg["block_size"]
     t0 = time.time()
     for it in range(start_iter, cfg["max_iters"]):
         lr = cosine_lr(it, cfg["warmup_iters"], cfg["lr_decay_iters"], cfg["lr"], cfg["min_lr"])
@@ -210,7 +247,7 @@ def main():
             opt.zero_grad(set_to_none=True)
         loss_sum = 0.0
         for _ in range(grad_accum):
-            x, y = train_ds.get_batch(cfg["batch_size"])
+            x, y = train_ds.get_batch(cfg["batch_size"], generator=train_gen)
             with ctx:
                 _, loss = model(x, y)
                 loss = loss / grad_accum
@@ -229,11 +266,14 @@ def main():
             # Each micro-batch loss was already divided by grad_accum, so the sum
             # is the per-step average loss across all micro-batches.
             avg_loss = loss_sum
-            row = dict(iter=it, loss=avg_loss, lr=lr, ms=dt * 1000)
-            print(f"iter {it:6d} | loss {avg_loss:.4f} | lr {lr:.2e} | {row['ms']:.1f} ms/it")
+            tok_per_s = tokens_per_step / dt
+            row = dict(iter=it, loss=avg_loss, lr=lr, ms=dt * 1000, tok_per_s=tok_per_s)
+            print(f"iter {it:6d} | loss {avg_loss:.4f} | lr {lr:.2e} "
+                  f"| {row['ms']:.1f} ms/it | {tok_per_s/1e3:.1f}k tok/s")
             logger.log(**row)
         if it > 0 and it % cfg["eval_interval"] == 0:
-            ev = evaluate(model, {"train": train_ds, "val": val_ds}, cfg, ctx)
+            ev = evaluate(model, {"train": train_ds, "val": val_ds}, cfg, ctx,
+                          eval_seed=cfg["seed"] + 12345)
             print(f"           eval | train {ev['train']:.4f} | val {ev['val']:.4f}")
             logger.log(iter=it, eval_train=ev["train"], eval_val=ev["val"])
             if ev["val"] < best_val:

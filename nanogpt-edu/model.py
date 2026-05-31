@@ -184,20 +184,32 @@ class GPT(nn.Module):
             n -= self.tok_emb.weight.numel()
         return n
 
-    def forward(self, idx, targets: torch.Tensor | None = None):
-        B, T = idx.shape
-        assert T <= self.cfg.block_size, f"seq {T} > block_size {self.cfg.block_size}"
-        x = self.tok_emb(idx)
-        # Rebuild cache if device, dtype, or required seq_len has changed.
+    def _rope_for(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Build / retrieve the (cos, sin) RoPE cache for x's device + dtype.
+
+        Sized for ``block_size`` (the maximum seq we'll ever see), and reused
+        for every shorter sequence. The single source of truth for the RoPE
+        cache — both ``forward`` and ``hidden`` call this instead of
+        re-implementing the cache check (which used to drift if you tweaked
+        ``rope_base``).
+        """
         cache = self._rope_cache
+        T = x.shape[1]
         if (cache is None
                 or cache[0].device != x.device
                 or cache[0].dtype != x.dtype
                 or cache[0].shape[0] < T):
             self._rope_cache = build_rope_cache(
-                self.cfg.block_size, self.cfg.head_dim, self.cfg.rope_base, x.device, x.dtype
+                self.cfg.block_size, self.cfg.head_dim, self.cfg.rope_base,
+                x.device, x.dtype,
             )
-        cos, sin = self._rope_cache
+        return self._rope_cache
+
+    def forward(self, idx, targets: torch.Tensor | None = None):
+        B, T = idx.shape
+        assert T <= self.cfg.block_size, f"seq {T} > block_size {self.cfg.block_size}"
+        x = self.tok_emb(idx)
+        cos, sin = self._rope_for(x)
         for blk in self.blocks:
             x = blk(x, cos, sin)
         x = self.final_norm(x)
@@ -253,15 +265,7 @@ class GPT(nn.Module):
         B, T = idx.shape
         assert T <= self.cfg.block_size, f"seq {T} > block_size {self.cfg.block_size}"
         x = self.tok_emb(idx)
-        cache = self._rope_cache
-        if (cache is None
-                or cache[0].device != x.device
-                or cache[0].dtype != x.dtype
-                or cache[0].shape[0] < T):
-            self._rope_cache = build_rope_cache(
-                self.cfg.block_size, self.cfg.head_dim, self.cfg.rope_base, x.device, x.dtype
-            )
-        cos, sin = self._rope_cache
+        cos, sin = self._rope_for(x)
         for blk in self.blocks:
             x = blk(x, cos, sin)
         return self.final_norm(x)
