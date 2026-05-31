@@ -56,6 +56,7 @@ from ..utils.metrics import (
 )
 from .optim import build_optimizer, cosine_lr
 from .muon import build_muon_and_adamw
+from .precision import resolve_fp8_recipe, autocast_fp8_context, log_fp8_choice
 from .checkpoint import CheckpointManager
 from .stability import SpikeMonitor, RewindController
 
@@ -199,7 +200,20 @@ def train(cfg: dict, data_dir_override: str | None = None) -> None:
     eval_every = cfg["train"]["eval_every"]
     ckpt_every = cfg["train"]["ckpt_every"]
     tokens_per_step = cfg["train"]["micro_batch"] * accum * dp * cfg["data"]["seq_len"]
-    autocast = torch.amp.autocast("cuda", dtype=dtype) if is_cuda else contextlib.nullcontext()
+    bf16_autocast = torch.amp.autocast("cuda", dtype=dtype) if is_cuda else contextlib.nullcontext()
+    # FP8 (Transformer Engine) wraps the bf16 autocast when train.fp8 != "off".
+    # The recipe resolver downgrades to no-FP8 on unsupported HW/dtype with a
+    # warning, so a misconfigured run keeps training in bf16 instead of erroring.
+    fp8_recipe = resolve_fp8_recipe(cfg.get("train", {}).get("fp8", "off"), device, dtype)
+    if is_master():
+        log_fp8_choice(fp8_recipe, dtype)
+
+    @contextlib.contextmanager
+    def autocast():
+        """Combined fp8 (optional) + bf16 autocast. Re-entered every step
+        so TE's amax-history buffers update correctly per-iteration."""
+        with autocast_fp8_context(fp8_recipe), bf16_autocast:
+            yield
 
     # Peak device throughput for MFU. None on CPU / unrecognized GPU — MFU
     # is then omitted from the log rather than reported as a wrong number.
@@ -228,7 +242,7 @@ def train(cfg: dict, data_dir_override: str | None = None) -> None:
             # No pipelining: regular gradient accumulation.
             for _ in range(accum):
                 x, y = loader.next_batch()
-                with autocast:
+                with autocast():
                     _, loss = model(x, y)
                     loss = loss / accum
                 loss.backward()
@@ -239,7 +253,7 @@ def train(cfg: dict, data_dir_override: str | None = None) -> None:
             # n_microbatches (= accum). Pull a single concatenated batch.
             x, y = loader.next_batch()
             losses: list[torch.Tensor] = []
-            with autocast:
+            with autocast():
                 if is_last_pp_rank:
                     pp_schedule.step(x, target=y, losses=losses)
                 else:
@@ -358,7 +372,7 @@ def _eval_one_batch(model, loader, autocast, pp_schedule, is_last_pp_rank,
     try:
         with torch.no_grad():
             xs, ys = loader.next_batch()
-            with autocast:
+            with autocast():
                 if pp_schedule is None:
                     _, ev_loss = model(xs, ys)
                     ev = all_reduce_mean(ev_loss.detach().float()).item()
