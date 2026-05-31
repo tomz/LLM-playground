@@ -11,6 +11,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 from data import ShardDataset
 from model import GPT, GPTConfig
+from stability import RewindController, SpikeMonitor
 from utils import JsonlLogger, cosine_lr, save_ckpt
 
 
@@ -174,14 +175,15 @@ def main():
     best_val = float("inf")
     ckpt_path = os.path.join(cfg["out_dir"], "ckpt.pt")
     best_path = os.path.join(cfg["out_dir"], "ckpt_best.pt")
-    if args.resume and os.path.exists(ckpt_path):
-        # Load tensors straight to CPU so saved RNG ByteTensors stay ByteTensors
-        # (the previous map_location=device crashed on CUDA resume: torch.load
-        # promoted the CPU ByteTensor RNG state to a CUDA tensor which then
-        # failed `torch.set_rng_state`'s ByteTensor check). Per-rank model/optim
-        # state moves to the right device when load_state_dict copies into the
-        # already-on-device parameters.
-        sd = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+
+    def _load_ckpt(path: str) -> int:
+        """Reload model/optim/scaler/RNG state from ``path``. Returns the
+        iteration to resume from (= ``saved_iter + 1``). Shared between
+        ``--resume`` startup and the SpikeMonitor's rewind path."""
+        nonlocal best_val
+        # CPU-load: see Tier 6.1 bug — saved RNG ByteTensors must stay
+        # ByteTensors, so we don't ``map_location=device``.
+        sd = torch.load(path, map_location="cpu", weights_only=False)
         inner.load_state_dict(sd["model"])
         # Backward-compatible: old checkpoints stored a single "optim"; new ones
         # store a list of optimizer state dicts under "optims" (Muon + AdamW).
@@ -193,14 +195,16 @@ def main():
         if "scaler" in sd and sd["scaler"] is not None:
             scaler.load_state_dict(sd["scaler"])
         if "rng_state" in sd:
-            # torch.get_rng_state() returns a CPU ByteTensor; restore as-is.
             torch.set_rng_state(sd["rng_state"].to("cpu", dtype=torch.uint8))
         if is_cuda and sd.get("cuda_rng_state") is not None:
             torch.cuda.set_rng_state(sd["cuda_rng_state"].to("cpu", dtype=torch.uint8))
         if "gen_state" in sd and sd["gen_state"] is not None:
             gen.set_state(sd["gen_state"].to("cpu", dtype=torch.uint8))
-        start_iter = sd["iter"] + 1
         best_val = sd.get("best_val", best_val)
+        return sd["iter"] + 1
+
+    if args.resume and os.path.exists(ckpt_path):
+        start_iter = _load_ckpt(ckpt_path)
         if is_master:
             print(f"resumed @ iter {start_iter} (best_val={best_val:.4f})")
 
@@ -229,14 +233,42 @@ def main():
             gen_state=gen.get_state(),
         ))
 
+    # Loss-spike protection (default-off). When enabled the trainer monitors the
+    # per-step loss against a sliding window; on a 2-threshold spike (z-score AND
+    # absolute jump) it rewinds to the last good ``ckpt.pt`` and halves the LR
+    # for a cooldown window. See stability.py for the heuristics and bug history.
+    stab_cfg = cfg.get("stability") or {}
+    spike_monitor = None
+    rewinder = None
+    if stab_cfg.get("spike_monitor"):
+        spike_monitor = SpikeMonitor(
+            window=int(stab_cfg.get("spike_window", 200)),
+            sigma=float(stab_cfg.get("spike_sigma", 5.0)),
+            min_abs_jump=float(stab_cfg.get("spike_min_abs_jump", 2.0)),
+        )
+        rewinder = RewindController(
+            load_ckpt_fn=_load_ckpt,
+            last_ckpt_path_fn=lambda: ckpt_path if os.path.exists(ckpt_path) else None,
+            lr_floor=float(stab_cfg.get("rewind_lr_floor", 1e-3)),
+            max_rewinds=int(stab_cfg.get("max_rewinds", 5)),
+            cooldown_steps=int(stab_cfg.get("rewind_cooldown_steps", 1000)),
+        )
+        if is_master:
+            print(f"stability: SpikeMonitor(sigma={spike_monitor.sigma}, "
+                  f"min_abs_jump={spike_monitor.min_abs_jump}) "
+                  f"+ Rewinder(max={rewinder.max_rewinds})")
+
     t0 = time.time()
-    for it in range(start_iter, cfg["optim"]["max_iters"]):
+    it = start_iter
+    while it < cfg["optim"]["max_iters"]:
         lr = cosine_lr(it, cfg["optim"]["warmup_iters"], cfg["optim"]["lr_decay_iters"],
                        cfg["optim"]["lr"], cfg["optim"]["min_lr"])
         # Scale every optimizer's groups by the same cosine multiplier relative to
         # each group's own base LR (so Muon's higher LR and AdamW's lower LR decay
-        # on one shared schedule).
-        mult = lr / base_lr if base_lr else 1.0
+        # on one shared schedule). Apply the rewinder's per-step LR multiplier on
+        # top (= 1.0 outside a cooldown, < 1.0 during one).
+        rewind_mult = rewinder.lr_multiplier() if rewinder is not None else 1.0
+        mult = (lr / base_lr if base_lr else 1.0) * rewind_mult
         for opt in optimizers:
             for g in opt.param_groups:
                 g["lr"] = g["initial_lr"] * mult
@@ -299,6 +331,31 @@ def main():
         if is_master and it > 0 and it % ckpt_int == 0:
             _save(ckpt_path, it)
             print(f"           saved ckpt -> {ckpt_path}")
+
+        # Spike check (default-off). All ranks need to make the same decision
+        # so the loop progress stays in lockstep; we always broadcast the
+        # rank-0 spike verdict (the all-reduced ``step_loss`` is identical on
+        # every rank, but the SpikeMonitor's internal window is built from
+        # the same numbers so the verdict is identical anyway — broadcasting
+        # is belt-and-braces for floating-point edge cases).
+        if spike_monitor is not None:
+            spike = spike_monitor.observe(step_loss)
+            if use_ddp:
+                spike_t = torch.tensor(int(spike), device=device)
+                dist.broadcast(spike_t, src=0)
+                spike = bool(spike_t.item())
+            if spike:
+                if is_master:
+                    print(f"           ⚠ spike at iter {it} loss={step_loss:.4f}; "
+                          f"rewinding (n={rewinder.n_rewinds + 1}/{rewinder.max_rewinds})")
+                next_it = rewinder.on_spike(it)
+                if next_it != it:
+                    it = next_it
+                    continue
+                # No checkpoint to rewind to (we haven't saved one yet) or
+                # max_rewinds exhausted — fall through and continue training.
+
+        it += 1
 
     if is_master:
         _save(ckpt_path, cfg["optim"]["max_iters"] - 1)
