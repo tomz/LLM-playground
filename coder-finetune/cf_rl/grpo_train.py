@@ -71,6 +71,27 @@ def build_grpo_trainer(model, tok, train_ds, reward_funcs, cfg: dict):
     method = cfg["method"]
     grad_ckpt = bool(t.get("gradient_checkpointing", method != "full"))
 
+    # GRPO divisibility check — fail fast with an actionable message.
+    # TRL's GRPOTrainer requires the *effective* batch (per_device_batch_size
+    # × grad_accum × world_size) to be divisible by num_generations, because
+    # each step processes one group of G samples per prompt and groups can't
+    # straddle accumulation boundaries. Without this guard the failure mode is
+    # an opaque tensor-shape error deep inside trainer.train(), often after
+    # several minutes of model loading and dataset prep.
+    G = int(g.get("num_generations", 8))
+    per_dev = int(t["batch_size"])
+    accum = int(t["grad_accum"])
+    world = max(1, torch.cuda.device_count() if torch.cuda.is_available() else 1)
+    effective = per_dev * accum * world
+    if effective % G != 0:
+        raise SystemExit(
+            f"[grpo] config error: effective batch ({per_dev} × {accum} × world={world}"
+            f" = {effective}) is not divisible by num_generations (G={G}). "
+            f"Fix by adjusting one of: train.batch_size, train.grad_accum, "
+            f"grpo.num_generations so they line up (e.g. G={G} -> effective batch "
+            f"in {{{G}, {2*G}, {3*G}, ...}})."
+        )
+
     args = GRPOConfig(
         output_dir=cfg["out_dir"],
         num_train_epochs=t["epochs"],

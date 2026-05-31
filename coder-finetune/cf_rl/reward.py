@@ -86,7 +86,10 @@ def code_unit_test_reward(
 
 
 _FENCE_RE = re.compile(r"```(?:python)?\n(.*?)```", re.DOTALL)
-_DEF_RE = re.compile(r"^\s*def\s+\w+\s*\(", re.MULTILINE)
+# Must accept ``async def`` too — coder models legitimately emit async helpers
+# (HTTP clients, fetchers, asyncio examples) and they used to get zero credit
+# from the format bonus, dragging valid code below scoring noise.
+_DEF_RE = re.compile(r"^\s*(?:async\s+def|def)\s+\w+\s*\(", re.MULTILINE)
 
 
 def format_reward(

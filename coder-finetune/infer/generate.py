@@ -44,6 +44,11 @@ def _load(model_path: str, device: str, dtype):
     from transformers import AutoModelForCausalLM, AutoTokenizer
     p = Path(model_path)
     is_adapter = (p / "adapter_config.json").exists()
+    # transformers' load kwarg name changed: pre-4.46 only accepts ``torch_dtype``;
+    # 4.46+/5.x accept both (``dtype`` is the new spelling, ``torch_dtype`` still
+    # works as an alias). Our requirements.txt allows `>=4.45,<5.0`, so the older
+    # spelling is the safe one for the full pin range — merge_lora.py + train.py
+    # already use it. (The previous ``dtype=`` form would TypeError on 4.45.)
     if is_adapter:
         cfg = json.loads((p / "adapter_config.json").read_text())
         base_name = cfg.get("base_model_name_or_path")
@@ -51,11 +56,11 @@ def _load(model_path: str, device: str, dtype):
             raise ValueError(f"adapter at {p} has no base_model_name_or_path")
         from peft import PeftModel
         tok = AutoTokenizer.from_pretrained(model_path)
-        base = AutoModelForCausalLM.from_pretrained(base_name, dtype=dtype)
+        base = AutoModelForCausalLM.from_pretrained(base_name, torch_dtype=dtype)
         model = PeftModel.from_pretrained(base, model_path)
     else:
         tok = AutoTokenizer.from_pretrained(model_path)
-        model = AutoModelForCausalLM.from_pretrained(model_path, dtype=dtype)
+        model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=dtype)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
     return tok, model.to(device).eval()
