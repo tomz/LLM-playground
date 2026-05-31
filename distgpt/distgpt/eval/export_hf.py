@@ -156,6 +156,17 @@ def export_to_hf(model, cfg, out_dir: str | Path,
             "LlamaForCausalLM has no QK-norm layer. Use the Qwen2 export "
             "path (TODO) or retrain with qk_norm=False for HF eval."
         )
+    if getattr(cfg, "moe_enabled", False):
+        # Stock LlamaForCausalLM is dense; an MoE export needs the Mixtral
+        # or DeepSeek-V3 HF class with its own key layout and a router
+        # state. Rather than silently strip the experts (which would
+        # produce a tiny "first-expert-only" model with nonsense output)
+        # we raise. The exact-error contract is pinned in tests/test_moe.py.
+        raise NotImplementedError(
+            "export_to_hf does not support MoE (moe_num_experts > 1) yet — "
+            "the Mixtral / DeepSeek HF key layout is a separate exporter. "
+            "Run dense (moe_num_experts=0) for HF eval until that lands."
+        )
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 

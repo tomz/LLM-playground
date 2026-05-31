@@ -79,6 +79,18 @@ def apply_tp(model: nn.Module, tp_mesh,
     """
     if tp_mesh is None or tp_mesh.size() == 1:
         return model
+    # MoE + TP is real engineering: the routed-expert dispatch needs an
+    # expert-parallel sub-mesh and an all-to-all (not the colwise/rowwise
+    # plan below), and ``MoEFFN`` doesn't expose the per-expert shards that
+    # would let ``parallelize_module`` work on it. Rather than silently
+    # produce wrong gradients we refuse up front. Expert-parallel is a Tier
+    # 6 item; see ``tests/test_moe.py::test_moe_plus_tp_raises_not_implemented``.
+    if getattr(model.cfg, "moe_enabled", False):
+        raise NotImplementedError(
+            "MoE + tensor parallelism (tp_size > 1) is not yet supported by "
+            "apply_tp; expert-parallel dispatch lives in a future tier. Run "
+            "MoE with tp=1 (FSDP still works) or set model.moe_num_experts=0."
+        )
     from torch.distributed.tensor import Replicate, Shard
     from torch.distributed.tensor.parallel import (
         ColwiseParallel, RowwiseParallel, SequenceParallel, parallelize_module,
