@@ -1,0 +1,69 @@
+# Muon speedrun recipe: 1B model with Muon + QK-norm + zero-init-proj.
+#
+# Empirical observations from nanogpt-edu's modded-nanogpt-style runs:
+#   * Muon outperforms tuned AdamW by ~1.3–1.5× sample efficiency on the
+#     100M-class models we have measurements for. The dual-optimizer rule
+#     (Muon on 2D hidden weights; AdamW on embeddings/heads/1-D) is the
+#     safe default; see distgpt/training/muon.py:split_muon_params for the
+#     exact split.
+#   * QK-norm (per-head RMSNorm on Q and K before RoPE) lets you push LR
+#     higher without spikes. TP-safe: per-head local op, no cross-shard
+#     reduce.
+#   * zero-init-proj (zero init for the residual o_proj + ffn w2) gives
+#     identity-init blocks; the warmup curve is much smoother at higher LR.
+#
+# This recipe runs the 1B config with all three on. Sized for a 64×H100
+# node at ~1.5M tok/s — ~2 days wall-clock to a 1B-Chinchilla budget (20B
+# tokens).
+#
+run_id: gpt_1b_muon_speedrun
+out_dir: out/muon_speedrun_1b
+
+data: {dir: data/tiny, seq_len: 4096}
+seed: 1337
+dtype: bfloat16
+log: {jsonl: true, wandb_project: null}
+
+model:
+  vocab_size: 50304
+  n_layer: 24
+  n_head: 16
+  n_kv_head: 8
+  d_model: 2048
+  d_ffn: 5632
+  max_seq_len: 4096
+  rope_base: 10000.0
+  tie_embeddings: true
+  qk_norm: true        # per-head RMSNorm on Q/K (TP-safe, local)
+  zero_init_proj: true # identity-init blocks for stable high-LR warmup
+
+parallel:
+  dp: -1
+  tp: 1
+  pp: 1
+  zero: fsdp
+  activation_ckpt: selective
+
+optim:
+  optimizer: muon
+  # Muon scope: hidden 2D matmul weights only (attn q/k/v/o, MLP w1/w2/w3).
+  # Everything else (embeddings, lm_head, MTP heads, 1-D norms) goes through
+  # the AdamW group at `lr` with `betas`/`weight_decay`.
+  lr: 3.0e-4           # AdamW LR for embeddings/heads/1-D params
+  muon_lr: 0.02        # Muon LR (the modded-nanogpt 350M-class default)
+  muon_momentum: 0.95
+  min_lr: 3.0e-5
+  betas: [0.9, 0.95]
+  weight_decay: 0.1
+  grad_clip: 1.0
+  warmup_steps: 300
+  total_steps: 30000
+
+train:
+  micro_batch: 4
+  grad_accum: 8
+  log_every: 10
+  eval_every: 1000
+  ckpt_every: 2000
+  compile: true
+  fp8: off

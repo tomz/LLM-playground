@@ -113,6 +113,36 @@ class CheckpointManager:
         loader.load_state_dict(meta["loader"])
         return int(meta["step"]) + 1
 
+    @staticmethod
+    def load_weights_only(model, ckpt_dir: str) -> None:
+        """Warm-start path: load ONLY the model weights from an arbitrary
+        checkpoint dir. No optimizer state, no loader cursor, no step counter.
+
+        Used by recipes (cooldown / longctx fine-tune / domain adaptation)
+        that want to start from a pretrained base model with a fresh
+        optimizer + fresh LR schedule + fresh data cursor. The trainer
+        treats the step counter as 0 after this load.
+
+        `ckpt_dir` must point at a single step directory (e.g.
+        `out/1b/gpt_1b/ckpts/step_000060000`), NOT the parent ckpts/ dir.
+        Symmetric with what `save()` writes.
+
+        Raises:
+          FileNotFoundError if `ckpt_dir` doesn't exist. We validate up
+          front because DCP's own missing-path error is a `BaseException`
+          (`CheckpointException`) with a confusing "metadata is None"
+          message that's easy to misdiagnose as a save corruption.
+        """
+        if not os.path.isdir(ckpt_dir):
+            raise FileNotFoundError(
+                f"warm-start checkpoint not found: {ckpt_dir!r}. "
+                "load_ckpt: must point at a step directory like "
+                "`out/.../ckpts/step_000060000`."
+            )
+        state: dict = {"model": model.state_dict()}
+        dcp.load(state, checkpoint_id=ckpt_dir)
+        model.load_state_dict(state["model"])
+
     def latest(self) -> int | None:
         if not os.path.isdir(self.root):
             return None

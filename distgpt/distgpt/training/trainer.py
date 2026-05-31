@@ -189,10 +189,26 @@ def train(cfg: dict, data_dir_override: str | None = None) -> None:
         [g["lr"] for g in o.param_groups] for o in optims
     ]
 
-    start = ckpt.load(model, optims, loader, step="latest") if ckpt.latest() is not None else 0
+    # Resume / warm-start logic. Priority order:
+    #   1. Native resume: if `out_dir/run_id/ckpts/` has a step dir, pick up
+    #      where we left off (model + optim + loader cursor + step counter).
+    #   2. Warm start: `load_ckpt: path` in YAML loads weights only from an
+    #      external checkpoint and starts at step 0 with a fresh optim and
+    #      loader. Used by cooldown / longctx / domain-adapt recipes.
+    #   3. Cold start: brand-new model, step 0.
+    if ckpt.latest() is not None:
+        start = ckpt.load(model, optims, loader, step="latest")
+        if is_master():
+            print(f"[resume] @ step {start}")
+    elif cfg.get("load_ckpt"):
+        warm_path = cfg["load_ckpt"]
+        if is_master():
+            print(f"[warm-start] loading weights from {warm_path}")
+        ckpt.load_weights_only(model, warm_path)
+        start = 0
+    else:
+        start = 0
     best_val = float("inf")
-    if is_master() and start > 0:
-        print(f"[resume] @ step {start}")
 
     accum = cfg["train"]["grad_accum"]
     total = cfg["optim"]["total_steps"]
