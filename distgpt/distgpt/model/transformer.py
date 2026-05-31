@@ -110,6 +110,23 @@ class GPT(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.activation_ckpt = activation_ckpt
+        # Liger fused linear-cross-entropy: fuses the lm_head matmul + CE into
+        # one Triton kernel so the [B*T, vocab] logits tensor is never
+        # materialized — the single largest activation in the forward pass.
+        # Exact (matches dense CE to ~1.8e-3, grads to ~8e-3 rel in bf16).
+        # Lazily resolved so liger-kernel stays an OPTIONAL install; raises
+        # only when fused_ce=True is actually requested.
+        self._liger_ce = None
+        if cfg.fused_ce:
+            try:
+                from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss
+            except ImportError as e:
+                raise ImportError(
+                    "model.fused_ce=True requires `pip install liger-kernel` "
+                    "and a Triton-compatible GPU. Set fused_ce=False for the "
+                    "dense lm_head + cross_entropy path."
+                ) from e
+            self._liger_ce = LigerFusedLinearCrossEntropyLoss(ignore_index=-100)
         self.tok_emb = nn.Embedding(cfg.vocab_size, cfg.d_model)
         self.layers = nn.ModuleList([Block(cfg) for _ in range(cfg.n_layer)])
         self.final_norm = RMSNorm(cfg.d_model, cfg.rms_eps)
@@ -155,6 +172,18 @@ class GPT(nn.Module):
         x = self.final_norm(x)
         if targets is None:
             return self.lm_head(x[:, [-1], :]), None
+        if self._liger_ce is not None:
+            # Fused linear-CE path: hand the kernel hidden states + lm_head
+            # weight, get back loss directly. The [B*T, vocab] logits tensor
+            # is never built, which is where the VRAM saving comes from.
+            # Returns (None, loss) — callers that need logits must set
+            # model.fused_ce=False.
+            loss = self._liger_ce(
+                self.lm_head.weight,
+                x.reshape(-1, x.size(-1)),
+                targets.reshape(-1),
+            )
+            return None, loss
         logits = self.lm_head(x)
         loss = F.cross_entropy(logits.float().reshape(-1, logits.size(-1)), targets.reshape(-1))
         return logits, loss

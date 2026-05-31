@@ -23,6 +23,18 @@ class ModelConfig:
     zero_init_proj: bool = False  # zero-init the residual-write matrices (attn
                                  # o_proj + ffn down-proj) so each block starts as
                                  # identity → stable high-LR warmup at scale.
+    fused_ce: bool = False       # Liger fused linear-cross-entropy: fuse the
+                                 # lm_head matmul + CE into a single Triton
+                                 # kernel so the [B*T, vocab] logits tensor is
+                                 # never materialized. Exact (not approximate).
+                                 # Measured in midgpt: ~20% peak-VRAM saving on
+                                 # 350M GPT-2 (10.1 vs 12.8 GiB) but throughput
+                                 # depends on HW — on Blackwell (RTX 5060 Ti)
+                                 # it ran ~26% SLOWER than dense matmul + CE.
+                                 # Treat as a VRAM-headroom lever (fit bigger
+                                 # batch/vocab/model), not a speedup.
+                                 # Requires `pip install liger-kernel` + a
+                                 # Triton-compatible GPU.
 
     @property
     def head_dim(self) -> int:
