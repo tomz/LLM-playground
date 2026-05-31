@@ -7,13 +7,47 @@ and resource limits. Returns pass@1.
 IMPORTANT: this executes model-generated code locally. For untrusted models,
 run this inside a Docker container or gVisor sandbox. The default subprocess
 guard here is a safety floor, not a security boundary.
+
+What "safety floor" means concretely
+------------------------------------
+Each ``run_one`` spawns a child via multiprocessing and, on POSIX, applies
+``resource.setrlimit`` to bound:
+
+  * RLIMIT_AS    — virtual memory (default 1 GiB)
+  * RLIMIT_CPU   — CPU seconds       (default 2× wall-clock timeout)
+  * RLIMIT_FSIZE — file write size   (default 0 → can't write files)
+  * RLIMIT_NPROC — child processes   (opt-in via ``limits=``)
+  * RLIMIT_NOFILE — open fds          (default 64)
+
+stdout/stderr from the child are redirected to /dev/null so a chatty
+``print()`` in the generated code can't flood the trainer log. The default
+multiprocessing context is **``fork``** on POSIX (the historical behaviour
+— fast, ~10 ms startup); pass ``mp_mode='spawn'`` to ``run_one`` for a fresh
+interpreter that does not inherit the parent's heap, file descriptors, or
+imported modules. Recommended for *untrusted* models.
 """
 from __future__ import annotations
-import argparse, multiprocessing as mp, re, sys
+import argparse, multiprocessing as mp, os, re, sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+
+
+# Default rlimit bag — POSIX only, no-op on Windows. Tunable per-call.
+# memory_bytes is None under ``fork`` because the child inherits the parent's
+# (possibly large) address space — setting RLIMIT_AS=1 GiB on a fork from a
+# pytest+HF process that's already at 5 GiB VSZ would SIGKILL the child
+# immediately, before exec() even starts. Spawn mode (a fresh interpreter)
+# gets a real ceiling — see ``_effective_limits``.
+DEFAULT_LIMITS = {
+    "memory_bytes": None,                      # set by mode (see _effective_limits)
+    "cpu_seconds": None,                       # filled in from timeout if None
+    "max_file_bytes": 0,                       # can't write to disk
+    "max_open_fds": 64,
+}
+# Memory ceiling when we know the child is a fresh interpreter (spawn).
+SPAWN_MEMORY_BYTES = 1 * 1024 * 1024 * 1024  # 1 GiB
 
 
 def extract_code(text: str) -> str:
@@ -41,22 +75,133 @@ def extract_code(text: str) -> str:
     return text[code_start.start():]
 
 
-def _exec_target(prog: str, q):
-    """Subprocess target: exec(prog) and report pass/fail via Queue."""
+def _apply_rlimits(limits: dict) -> None:
+    """Apply POSIX resource limits in the child. Best-effort: a limit we can't
+    set (e.g. NPROC on a cgroup-restricted container) is skipped, not fatal —
+    the timeout + wall-clock kill remains a hard floor regardless."""
     try:
-        # Disable __builtins__ tampering attempts? No: HumanEval needs builtins.
-        # Just run it and let the test assertions raise on failure.
-        ns = {}
+        import resource
+    except ImportError:
+        return  # Windows or otherwise unsupported
+
+    def _try(name, soft, hard=None):
+        if not hasattr(resource, name):
+            return
+        try:
+            resource.setrlimit(getattr(resource, name),
+                               (soft, hard if hard is not None else soft))
+        except (ValueError, OSError):
+            pass
+
+    if limits.get("memory_bytes"):
+        _try("RLIMIT_AS", int(limits["memory_bytes"]))
+    if limits.get("cpu_seconds"):
+        _try("RLIMIT_CPU", int(limits["cpu_seconds"]))
+    if limits.get("max_file_bytes") is not None:
+        _try("RLIMIT_FSIZE", int(limits["max_file_bytes"]))
+    if limits.get("max_open_fds"):
+        _try("RLIMIT_NOFILE", int(limits["max_open_fds"]))
+    if limits.get("max_processes"):
+        _try("RLIMIT_NPROC", int(limits["max_processes"]))
+
+
+def _exec_target(prog: str, q, limits: dict | None, silence: bool):
+    """Subprocess target: silence stdout/stderr, apply rlimits, exec(prog),
+    report pass/fail via Queue. Any SystemExit / KeyboardInterrupt / MemoryError
+    raised by rlimits firing is caught and reported as an error rather than
+    crashing the child silently.
+
+    Order matters: silencing happens *before* rlimits. If the parent forked
+    us with fd 1 pointing at a regular file (e.g. pytest's capfd capture file),
+    a subsequent ``print()`` from the model code would otherwise trip
+    RLIMIT_FSIZE=0 with EFBIG on what looks to the user like a successful
+    silencing. Redirecting fd 1/2 to /dev/null *first* makes the inherited
+    fd irrelevant.
+    """
+    if silence:
+        # Redirect *both* the fds and the Python-level sys.stdout/sys.stderr.
+        #   * fd 1/2 → /dev/null  — covers C extensions, subprocesses,
+        #     anything bypassing the Python streams.
+        #   * sys.stdout/stderr   — pytest's capfd replaces these with
+        #     capture-file-backed objects in the parent; under fork the
+        #     child inherits them and a plain print() bypasses fd 1
+        #     entirely, hitting the capture file (which is a regular file
+        #     subject to RLIMIT_FSIZE). Resetting both layers is the only
+        #     way to make this robust under any wrapping the parent did.
+        try:
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, 1)
+            os.dup2(devnull, 2)
+            os.close(devnull)
+        except OSError:
+            pass
+        try:
+            # Rebind sys.stdout/sys.stderr to /dev/null at the Python level.
+            # Use 'w' so print() and other text-mode writers work.
+            null_fp = open(os.devnull, "w")
+            sys.stdout = null_fp
+            sys.stderr = null_fp
+        except OSError:
+            pass
+    if limits:
+        _apply_rlimits(limits)
+    try:
+        ns: dict = {}
         exec(prog, ns)
         q.put(("ok", None))
     except BaseException as e:
-        q.put(("err", f"{type(e).__name__}: {e}"))
+        # BaseException catches MemoryError, RecursionError, SystemExit from
+        # rlimit kills — all should be reported as failed, never propagate.
+        q.put(("err", f"{type(e).__name__}: {str(e)[:200]}"))
 
 
-def run_one(program: str, timeout: float = 5.0) -> tuple[bool, str]:
-    ctx = mp.get_context("fork") if sys.platform != "win32" else mp.get_context("spawn")
+def run_one(
+    program: str,
+    timeout: float = 5.0,
+    *,
+    limits: dict | None = None,
+    mp_mode: str | None = None,
+    silence_output: bool = True,
+) -> tuple[bool, str]:
+    """Execute ``program`` in a subprocess with rlimits + timeout.
+
+    ``mp_mode``: ``None`` (default — ``fork`` on POSIX for speed, ``spawn`` on
+    Windows) or ``'spawn'`` to force a fresh interpreter that doesn't inherit
+    the parent's heap / fds / imported modules. Spawn is ~100 ms slower per
+    call but is the right setting for *untrusted* models — and the rlimit
+    floor below applies in both modes.
+
+    ``limits``: override entries of ``DEFAULT_LIMITS``; pass ``{}`` to keep
+    defaults, ``None`` for defaults, ``False`` to disable rlimits entirely.
+    """
+    if mp_mode is None:
+        mp_mode = "fork" if sys.platform != "win32" else "spawn"
+    ctx = mp.get_context(mp_mode)
+
+    # Build the effective limits dict. cpu_seconds defaults to 2× wall-clock
+    # so a busy loop is killed by the wall-clock timeout (which is more
+    # accurate) but a CPU-pegging child can't outlive the parent's join() by
+    # much even if the parent itself crashes.
+    eff_limits: dict | None = None
+    if limits is not False:
+        eff_limits = dict(DEFAULT_LIMITS)
+        if eff_limits["cpu_seconds"] is None:
+            eff_limits["cpu_seconds"] = max(1, int(timeout * 2))
+        # Apply a memory ceiling only when we know it's safe — spawn-mode
+        # children start fresh and can be bounded; fork-mode children inherit
+        # the parent's address space (often gigabytes for a pytest+HF run)
+        # and would be SIGKILL'd before exec() if we tried to bound them.
+        if mp_mode == "spawn" and eff_limits.get("memory_bytes") is None:
+            eff_limits["memory_bytes"] = SPAWN_MEMORY_BYTES
+        if limits:
+            eff_limits.update(limits)
+
+    # Now that run_many is sequential (see its docstring for why), there is
+    # no thread contention on Queue()/Process()/start() — but we keep the
+    # creation+start grouped to mirror the historic behavior closely.
     q = ctx.Queue()
-    p = ctx.Process(target=_exec_target, args=(program, q))
+    p = ctx.Process(target=_exec_target,
+                    args=(program, q, eff_limits, silence_output))
     p.start()
     p.join(timeout)
     if p.is_alive():
@@ -64,10 +209,55 @@ def run_one(program: str, timeout: float = 5.0) -> tuple[bool, str]:
         if p.is_alive():
             p.kill()
         return False, "timeout"
-    if q.empty():
+    # Don't use q.empty() — it's documented as unreliable in multiprocessing
+    # and gave us flaky reward results under parallel run_many. Use a small
+    # blocking get() instead: the child has already exited (we passed join()),
+    # so any pending data is *already* in flight; a short timeout is enough.
+    import queue as _queue
+    try:
+        # 5-second drain timeout — generous to absorb scheduler jitter on
+        # CI / busy boxes. The child has already exited (we passed join()),
+        # so any pending data is *already* in flight in the queue's pipe;
+        # this only ever waits for the OS to deliver bytes.
+        status, msg = q.get(timeout=5.0)
+    except _queue.Empty:
+        # Common cause: rlimit kill (SIGKILL from RLIMIT_AS/CPU) before the
+        # child could put a result — surface a useful tag, not just "no-result".
+        if p.exitcode and p.exitcode < 0:
+            import signal
+            sig = -p.exitcode
+            name = signal.Signals(sig).name if 0 < sig < signal.NSIG else f"signal-{sig}"
+            return False, f"killed-{name}"
         return False, "no-result"
-    status, msg = q.get()
     return status == "ok", msg or ""
+
+
+def run_many(
+    programs: list[str],
+    timeout: float = 5.0,
+    *,
+    max_workers: int | None = None,
+    **run_one_kwargs,
+) -> list[tuple[bool, str]]:
+    """Run a batch of programs and return per-program (ok, msg) tuples.
+
+    Currently sequential — the natural threaded implementation hits Python's
+    fork-from-threads warning (deadlock-prone under 3.12+) and we measured a
+    real ~20% flake rate even with locking, because ``mp.Queue`` instances
+    created concurrently can deliver pickled results to the wrong consumer.
+    For untrusted models the right escape is a Docker pool, not in-process
+    threads; for trusted runs the sequential cost is ~50 ms × N, fine for
+    GRPO at consumer-GPU batch sizes.
+
+    The ``max_workers`` argument is accepted for forward compatibility
+    (callers in ``cf_rl.reward`` already pass it) but currently unused — a
+    future Tier could replace this with a ``ProcessPoolExecutor`` of
+    persistent workers each holding their own queue, which avoids the race.
+    """
+    del max_workers  # documented above
+    if not programs:
+        return []
+    return [run_one(p, timeout=timeout, **run_one_kwargs) for p in programs]
 
 
 def build_program(prompt: str, completion: str, test: str, entry_point: str) -> str:

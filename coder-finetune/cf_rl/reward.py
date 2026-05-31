@@ -32,7 +32,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from eval.run_humaneval import build_program, run_one  # noqa: E402
+from eval.run_humaneval import build_program, run_many  # noqa: E402
 
 
 def _completion_text(completion) -> str:
@@ -65,7 +65,8 @@ def code_unit_test_reward(
     sampled generations; ``test`` / ``entry_point`` / ``prompt_code`` are the
     per-example dataset columns broadcast as parallel lists. Each completion is
     assembled into a runnable program (prompt stub + completion + test harness)
-    and executed in the sandbox.
+    and executed in the rlimit-bounded sandbox via ``run_many`` (currently
+    sequential — see eval/run_humaneval.py:run_many for why).
     """
     assert completions is not None, "GRPO passes completions=..."
     n = len(completions)
@@ -73,15 +74,24 @@ def code_unit_test_reward(
     entries = entry_point if entry_point is not None else [""] * n
     stubs = prompt_code if prompt_code is not None else [""] * n
 
-    rewards: list[float] = []
-    for comp, tst, entry, stub in zip(completions, tests, entries, stubs):
-        text = _completion_text(comp)
+    # Two-pass: first build all programs (and mark which slots are invalid),
+    # then dispatch the runnable ones in one batch, then merge the results
+    # back. Keeps result order identical to the per-row loop and makes the
+    # batch path the single integration point should run_many ever go parallel.
+    programs: list[str] = []
+    runnable_idx: list[int] = []
+    for i, (comp, tst, entry, stub) in enumerate(zip(completions, tests, entries, stubs)):
         if not tst or not entry:
-            rewards.append(0.0)
             continue
-        program = build_program(stub or "", text, tst, entry)
-        ok, _msg = run_one(program, timeout=timeout)
-        rewards.append(1.0 if ok else 0.0)
+        text = _completion_text(comp)
+        programs.append(build_program(stub or "", text, tst, entry))
+        runnable_idx.append(i)
+
+    results = run_many(programs, timeout=timeout)
+
+    rewards: list[float] = [0.0] * n
+    for i, (ok, _msg) in zip(runnable_idx, results):
+        rewards[i] = 1.0 if ok else 0.0
     return rewards
 
 
