@@ -468,6 +468,16 @@ class GPT(nn.Module):
         self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
         if cfg.tie_embeddings:
             self.lm_head.weight = self.tok_emb.weight
+        # Multi-Token Prediction auxiliary heads (DeepSeek-V3 §2.2). Head j
+        # predicts the token at offset (j+2) from the same final hidden state
+        # — the main lm_head already covers +1. Train-only: ``forward`` adds
+        # the averaged-per-head MTP CE × ``mtp_weight`` to the main loss when
+        # ``self.training``; inference path doesn't fire these heads (and
+        # ``export_to_hf`` strips them silently). 0 disables.
+        self.mtp_heads = nn.ModuleList([
+            nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
+            for _ in range(int(cfg.mtp_tokens))
+        ])
         self._rope: tuple[torch.Tensor, torch.Tensor] | None = None
         self.apply(self._init)
         # Zero-init residual-write projections (attn o_proj + ffn down-proj) so
@@ -551,4 +561,32 @@ class GPT(nn.Module):
                     n += 1
             if n > 0:
                 loss = loss + self.cfg.moe_aux_loss_weight * aux
+        # Multi-Token Prediction auxiliary heads (DeepSeek-V3). Train-only:
+        # head j predicts the token at offset (j+2), i.e. targets shifted left
+        # by (j+1). Sequence positions in [T-(j+1), T) can't compute their
+        # +(j+1) loss because the target slides off the end, so we just slice
+        # those positions away (no -100 ignore-index mask needed — we never
+        # build the dropped predictions in the first place). Averaged over
+        # heads, scaled by ``mtp_weight``. Gated on ``self.training`` so eval
+        # reports pure next-token CE (and so the heads contribute zero cost at
+        # inference). Skipped when targets is None (caller wants generation
+        # logits only) and when the sequence is too short for any head.
+        if self.mtp_heads and self.training:
+            T = targets.size(1)
+            aux = x.new_zeros(())
+            used = 0
+            for j, head in enumerate(self.mtp_heads):
+                shift = j + 1
+                if T - shift <= 0:
+                    # T too short for this offset; skip this head this step.
+                    continue
+                pred = head(x[:, : T - shift, :])
+                tgt = targets[:, shift:]
+                aux = aux + F.cross_entropy(
+                    pred.float().reshape(-1, pred.size(-1)),
+                    tgt.reshape(-1),
+                )
+                used += 1
+            if used:
+                loss = loss + self.cfg.mtp_weight * (aux / used)
         return logits_out, loss

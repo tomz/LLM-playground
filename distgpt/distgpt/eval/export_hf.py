@@ -78,6 +78,32 @@ def _build_hf_config_dict(cfg) -> dict:
     }
 
 
+def _strip_mtp_keys(sd: dict[str, torch.Tensor]) -> tuple[dict[str, torch.Tensor], list[str]]:
+    """Drop any ``mtp_heads.*`` keys from a state_dict and return (clean_sd,
+    dropped_names).
+
+    MTP heads are a train-time auxiliary (DeepSeek-V3 §2.2): each head
+    predicts a future token from the same final hidden state, densifying
+    the gradient. They are never fired at inference (the generation path
+    only uses ``lm_head``) so they have no representation in stock HF
+    ``LlamaForCausalLM`` and there is nothing useful to map them onto.
+    Rather than erroring (the way we do for MoE / MLA, which would
+    materially break inference) we strip them silently and log the names
+    that were dropped — by design, the resulting model is exactly the
+    main-head subset of the trained model. The caller (``export_to_hf``)
+    prints the dropped count so a user runs ``export_to_hf`` on a
+    surprise-MTP checkpoint and notices.
+    """
+    dropped: list[str] = []
+    out: dict[str, torch.Tensor] = {}
+    for k, v in sd.items():
+        if k.startswith("mtp_heads."):
+            dropped.append(k)
+        else:
+            out[k] = v
+    return out, dropped
+
+
 def _rename_state_dict(sd: dict[str, torch.Tensor],
                          n_layer: int) -> dict[str, torch.Tensor]:
     """Apply the distgpt→HF key-rename table to a flat state_dict.
@@ -187,6 +213,18 @@ def export_to_hf(model, cfg, out_dir: str | Path,
     # is preferred if the user has the package, but importing it lazily so
     # `export_to_hf` doesn't pull a hard dep.
     sd_distgpt = {k: v.detach().cpu() for k, v in model.state_dict().items()}
+    # MTP heads are a train-time auxiliary; strip them before the rename so
+    # we don't try to map them onto a non-existent HF key. Logged (not
+    # raised) so a surprise MTP checkpoint exports as the main-head subset
+    # without making the user re-train. MoE / MLA, by contrast, would
+    # silently break inference and so raise earlier in this function.
+    sd_distgpt, dropped = _strip_mtp_keys(sd_distgpt)
+    if dropped:
+        print(
+            f"[export_to_hf] dropped {len(dropped)} MTP-head key(s) "
+            f"(train-only, not part of LlamaForCausalLM): "
+            f"{dropped[0]}{'...' if len(dropped) > 1 else ''}"
+        )
     sd_hf = _rename_state_dict(sd_distgpt, cfg.n_layer)
     # Tied embeddings: distgpt stores one tensor under both `tok_emb.weight`
     # and `lm_head.weight`, and our rename table promotes the duplicate into

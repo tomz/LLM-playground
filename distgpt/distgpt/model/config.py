@@ -77,6 +77,16 @@ class ModelConfig:
     # of 128). Must be < head_dim.
     mla_rope_head_dim: int = 0
 
+    # --- Multi-Token Prediction (DeepSeek-V3, default-off) ---
+    # Auxiliary lm heads predict tokens n+2, n+3, ... from the same final
+    # hidden state, densifying the gradient. Train-only (no inference cost
+    # — the extra heads are discarded by ``export_to_hf`` and never fired by
+    # the generation path) and a natural speculative-decoding draft signal.
+    # 0 disables; e.g. 2 adds two heads predicting +2 and +3 offsets.
+    mtp_tokens: int = 0
+    # Weight on the averaged-per-head MTP loss added to the main next-token CE.
+    mtp_weight: float = 0.3
+
     @property
     def head_dim(self) -> int:
         assert self.d_model % self.n_head == 0
