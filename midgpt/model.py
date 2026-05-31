@@ -104,9 +104,15 @@ class GPT(nn.Module):
         # Liger fused-linear-cross-entropy: computes the lm_head matmul and the
         # cross-entropy in one fused Triton kernel WITHOUT materializing the full
         # [B*T, vocab] logits tensor — the single largest activation in the
-        # forward pass. Exact (not an approximation); ~20% faster / up to ~60%
-        # less memory, decisive for large vocabs. Requires `pip install
-        # liger-kernel` + a Triton GPU; resolved lazily so import stays optional.
+        # forward pass. Exact (not an approximation): on this model the loss
+        # matches dense CE to ~1.8e-3 and grads to ~8e-3 rel (bf16 rounding).
+        # The win is MEMORY: measured peak VRAM ~10.1 vs ~12.8 GiB (-20%) on a
+        # 350M GPT-2. Throughput is hardware-dependent and can REGRESS where the
+        # dense path already hits a well-tuned matmul: on RTX 5060 Ti (Blackwell
+        # sm_120, torch 2.11) it ran ~26% slower (10.8k vs 14.5k tok/s). Treat
+        # fused_ce as a VRAM-headroom lever (fit bigger batch/vocab/model), not a
+        # speedup. Requires `pip install liger-kernel` + a Triton GPU; resolved
+        # lazily so import stays optional.
         self.fused_ce = fused_ce
         self._liger_ce = None
         if fused_ce:

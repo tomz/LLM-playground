@@ -1,20 +1,21 @@
-# 350M GPT-2 on a 1B-token FineWeb-Edu slice — *this-month's-harvest* variant of
-# gpt2_350m_fweb_5060ti.yaml. Identical architecture / data / iters / schedule;
-# the only deltas are the two shipped midgpt features turned ON:
+# 350M GPT-2 on a 1B-token FineWeb-Edu slice — feature-flag variant of
+# gpt2_350m_fweb_5060ti.yaml. Identical architecture / data / iters / schedule.
 #
-#   * optimizer: muon  — Newton-Schulz-orthogonalized updates on the 2D hidden
-#     weight matrices (attn qkv/proj, MLP); AdamW for embeddings, the learned
-#     pos_emb table, lm_head, and all 1-D params. muon_lr lives on a different
-#     scale than the AdamW lr; this 24-layer net needs muon_lr=0.002 (the 0.02
-#     tiny-recipe default is ~10x too hot here — see the optim block below).
-#   * fused_ce: true   — Liger fused-linear-cross-entropy: fuses the lm_head
-#     matmul + softmax-CE and never materializes the [B*T, vocab] logits.
-#     Mathematically EXACT (same loss), so it only moves throughput/VRAM, not
-#     the curve. Needs `pip install liger-kernel` + a Triton GPU.
+# STATUS: this file pairs a SHIPPED, working feature with a documented
+# KNOWN-UNSTABLE one — keep them straight:
 #
-# Tuned for RTX 5060 Ti 16 GB (Blackwell sm_120, native bf16). Head-to-head
-# against gpt2_350m_fweb_5060ti.yaml: same wall-budget, read the val curve for
-# Muon's sample-efficiency and the fused-CE throughput/VRAM win.
+#   * fused_ce: true   — ✅ SHIPPED. Liger fused-linear-cross-entropy fuses the
+#     lm_head matmul + softmax-CE and never materializes the [B*T, vocab]
+#     logits. Numerically EXACT (verified: loss diff 1.8e-3, grad rel-diff
+#     ~8e-3 = bf16 noise), so it only moves the cost axes, never the loss
+#     curve. The win is VRAM (~10.1 vs 12.8 GiB, -20%); on this sm_120 box it
+#     also costs ~26% throughput (10.8k vs 14.5k tok/s) — a headroom lever, not
+#     a speedup. Needs `pip install liger-kernel` + a Triton GPU.
+#     For the honest fused_ce showcase use gpt2_350m_fweb_5060ti_fusedce.yaml.
+#   * optimizer: muon  — ⚠ KNOWN-UNSTABLE on this 350M net (diverges; see the
+#     optim block). Kept here only as a reproducer. Do NOT treat as a recipe.
+#
+# Tuned for RTX 5060 Ti 16 GB (Blackwell sm_120, native bf16).
 #
 out_dir: out/gpt2_350m_fweb_5060ti_muon
 dataset: fineweb-edu
@@ -39,14 +40,20 @@ model:
 
 optim:
   optimizer: muon         # Muon on 2D hidden weights; AdamW for the rest
-  # muon_lr: 0.002 — the 0.02 single-GPU starting point (from the tiny
-  # 6-layer/d_ffn=1024 recipe) is ~10x too hot for THIS 24-layer/d_ffn=4096
-  # net and diverges (val ~7.5 vs baseline ~6.0). Because Muon's update is
-  # RMS-normalized to ~muon_lr per step (the sqrt(max(rows,cols)) scale in
-  # muon.py), the deeper/wider stack needs a proportionally smaller LR. A
-  # downward probe sweep {0.002, 0.005, 0.01} showed a clean monotonic cliff:
-  # only 0.002 tracks the AdamW baseline (val 6.42 vs ~6.5 @ iter 150).
-  muon_lr: 0.002          # Muon's own LR (orthogonalized-update scale)
+  # ⚠ KNOWN-UNSTABLE on THIS 350M net — kept as a documented reproducer, not a
+  # recommended recipe. Muon orthogonalizes each update to ~unit singular values
+  # then scales by muon_lr·sqrt(dim), so the per-step update RMS ≈ muon_lr
+  # *regardless of how small the weight is*. midgpt inits residual-proj weights
+  # tiny (GPT-2 1/sqrt(2·n_layer) → std≈0.0029 at n_layer=24), so even muon_lr
+  # 0.002 overwrites ~35% of the proj weight on step 0, and because
+  # orthogonalization re-inflates shrinking grads back to unit scale, the step
+  # never tapers near convergence. Result: loss descends through warmup then
+  # plateaus/climbs (val froze ~6.8 while AdamW reached 4.47 at iter 1800).
+  # Lower muon_lr only DELAYS divergence (0.002→0.10 all fail, just at different
+  # speeds). The byte-identical Muon works in nanogpt-edu's 6-layer tiny net;
+  # making it work here needs a recipe change (drop the tiny residual init for
+  # Muon matrices, or add update-norm decay), not an LR tweak. See git log.
+  muon_lr: 0.002          # least-bad value; still diverges after ~iter 300
   muon_momentum: 0.95
   lr: 3.0e-4              # AdamW LR for embeddings / pos_emb / lm_head / 1-D
   min_lr: 3.0e-5

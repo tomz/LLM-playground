@@ -1,0 +1,90 @@
+world_size=1  device=cuda:0  dtype=torch.bfloat16
+model: 353.55M non-emb params  [liger fused-CE]
+iter      0 | loss 11.0030 | lr 1.50e-06 | 424 ms | 77.4k tok/s
+iter     10 | loss 9.3498 | lr 1.65e-05 | 2953 ms | 11.1k tok/s
+iter     20 | loss 9.0046 | lr 3.15e-05 | 2962 ms | 11.1k tok/s
+iter     30 | loss 8.5534 | lr 4.65e-05 | 2967 ms | 11.0k tok/s
+iter     40 | loss 8.1943 | lr 6.15e-05 | 2968 ms | 11.0k tok/s
+iter     50 | loss 7.5669 | lr 7.65e-05 | 2969 ms | 11.0k tok/s
+iter     60 | loss 7.3403 | lr 9.15e-05 | 2970 ms | 11.0k tok/s
+iter     70 | loss 7.1527 | lr 1.07e-04 | 2970 ms | 11.0k tok/s
+iter     80 | loss 7.0925 | lr 1.21e-04 | 2970 ms | 11.0k tok/s
+iter     90 | loss 7.0476 | lr 1.36e-04 | 2970 ms | 11.0k tok/s
+iter    100 | loss 6.8941 | lr 1.51e-04 | 2970 ms | 11.0k tok/s
+iter    110 | loss 6.8617 | lr 1.66e-04 | 2971 ms | 11.0k tok/s
+iter    120 | loss 6.7811 | lr 1.81e-04 | 2971 ms | 11.0k tok/s
+iter    130 | loss 6.8319 | lr 1.96e-04 | 2971 ms | 11.0k tok/s
+iter    140 | loss 6.5946 | lr 2.11e-04 | 2971 ms | 11.0k tok/s
+iter    150 | loss 6.6559 | lr 2.26e-04 | 2971 ms | 11.0k tok/s
+iter    160 | loss 6.5407 | lr 2.41e-04 | 2971 ms | 11.0k tok/s
+iter    170 | loss 6.4812 | lr 2.57e-04 | 2971 ms | 11.0k tok/s
+iter    180 | loss 6.5962 | lr 2.71e-04 | 2971 ms | 11.0k tok/s
+iter    190 | loss 6.4956 | lr 2.86e-04 | 2971 ms | 11.0k tok/s
+iter    200 | loss 6.4457 | lr 3.00e-04 | 2971 ms | 11.0k tok/s
+           eval | val 6.5016 | ppl 666.20
+           best val 6.5016 → saved out/gpt2_350m_fweb_5060ti_fusedce/ckpt_best.pt
+iter    210 | loss 6.4016 | lr 3.00e-04 | 3842 ms | 8.5k tok/s
+iter    220 | loss 6.3849 | lr 3.00e-04 | 2971 ms | 11.0k tok/s
+iter    230 | loss 6.4357 | lr 3.00e-04 | 2971 ms | 11.0k tok/s
+iter    240 | loss 6.2984 | lr 3.00e-04 | 2971 ms | 11.0k tok/s
+iter    250 | loss 6.3490 | lr 3.00e-04 | 2971 ms | 11.0k tok/s
+iter    260 | loss 6.3033 | lr 3.00e-04 | 2971 ms | 11.0k tok/s
+iter    270 | loss 6.2842 | lr 3.00e-04 | 2971 ms | 11.0k tok/s
+iter    280 | loss 6.2542 | lr 3.00e-04 | 2971 ms | 11.0k tok/s
+iter    290 | loss 6.2782 | lr 3.00e-04 | 2971 ms | 11.0k tok/s
+iter    300 | loss 6.2162 | lr 3.00e-04 | 2971 ms | 11.0k tok/s
+iter    310 | loss 6.1818 | lr 2.99e-04 | 2971 ms | 11.0k tok/s
+iter    320 | loss 6.2041 | lr 2.99e-04 | 2971 ms | 11.0k tok/s
+iter    330 | loss 6.2648 | lr 2.99e-04 | 2971 ms | 11.0k tok/s
+iter    340 | loss 6.1728 | lr 2.99e-04 | 2970 ms | 11.0k tok/s
+iter    350 | loss 6.0874 | lr 2.99e-04 | 2971 ms | 11.0k tok/s
+iter    360 | loss 6.0720 | lr 2.99e-04 | 2970 ms | 11.0k tok/s
+iter    370 | loss 6.0019 | lr 2.99e-04 | 2971 ms | 11.0k tok/s
+iter    380 | loss 6.0045 | lr 2.99e-04 | 2971 ms | 11.0k tok/s
+iter    390 | loss 6.0045 | lr 2.98e-04 | 2971 ms | 11.0k tok/s
+iter    400 | loss 6.0458 | lr 2.98e-04 | 2972 ms | 11.0k tok/s
+           eval | val 6.0658 | ppl 430.86
+           best val 6.0658 → saved out/gpt2_350m_fweb_5060ti_fusedce/ckpt_best.pt
+iter    410 | loss 5.9689 | lr 2.98e-04 | 5212 ms | 6.3k tok/s
+iter    420 | loss 6.0950 | lr 2.98e-04 | 2971 ms | 11.0k tok/s
+iter    430 | loss 5.9154 | lr 2.98e-04 | 2972 ms | 11.0k tok/s
+iter    440 | loss 5.9075 | lr 2.97e-04 | 2973 ms | 11.0k tok/s
+iter    450 | loss 6.0347 | lr 2.97e-04 | 2972 ms | 11.0k tok/s
+iter    460 | loss 5.8307 | lr 2.97e-04 | 2972 ms | 11.0k tok/s
+iter    470 | loss 5.8425 | lr 2.97e-04 | 2972 ms | 11.0k tok/s
+iter    480 | loss 5.7375 | lr 2.96e-04 | 2971 ms | 11.0k tok/s
+iter    490 | loss 5.8309 | lr 2.96e-04 | 2971 ms | 11.0k tok/s
+iter    500 | loss 5.7974 | lr 2.96e-04 | 2971 ms | 11.0k tok/s
+iter    510 | loss 5.7339 | lr 2.96e-04 | 2972 ms | 11.0k tok/s
+iter    520 | loss 5.7952 | lr 2.95e-04 | 2971 ms | 11.0k tok/s
+iter    530 | loss 5.7317 | lr 2.95e-04 | 2971 ms | 11.0k tok/s
+iter    540 | loss 5.7157 | lr 2.95e-04 | 2972 ms | 11.0k tok/s
+iter    550 | loss 5.7998 | lr 2.94e-04 | 2971 ms | 11.0k tok/s
+iter    560 | loss 5.6503 | lr 2.94e-04 | 2972 ms | 11.0k tok/s
+iter    570 | loss 5.6200 | lr 2.94e-04 | 2974 ms | 11.0k tok/s
+iter    580 | loss 5.6483 | lr 2.93e-04 | 2978 ms | 11.0k tok/s
+iter    590 | loss 5.6605 | lr 2.93e-04 | 2976 ms | 11.0k tok/s
+iter    600 | loss 5.6691 | lr 2.93e-04 | 2976 ms | 11.0k tok/s
+           eval | val 5.6330 | ppl 279.50
+           best val 5.6330 → saved out/gpt2_350m_fweb_5060ti_fusedce/ckpt_best.pt
+iter    610 | loss 5.5364 | lr 2.92e-04 | 5573 ms | 5.9k tok/s
+iter    620 | loss 5.5117 | lr 2.92e-04 | 3011 ms | 10.9k tok/s
+iter    630 | loss 5.5196 | lr 2.92e-04 | 3010 ms | 10.9k tok/s
+iter    640 | loss 5.5539 | lr 2.91e-04 | 3006 ms | 10.9k tok/s
+iter    650 | loss 5.4086 | lr 2.91e-04 | 3010 ms | 10.9k tok/s
+iter    660 | loss 5.5119 | lr 2.90e-04 | 3006 ms | 10.9k tok/s
+iter    670 | loss 5.4696 | lr 2.90e-04 | 3007 ms | 10.9k tok/s
+iter    680 | loss 5.3701 | lr 2.90e-04 | 3009 ms | 10.9k tok/s
+iter    690 | loss 5.3736 | lr 2.89e-04 | 3006 ms | 10.9k tok/s
+iter    700 | loss 5.4503 | lr 2.89e-04 | 3004 ms | 10.9k tok/s
+iter    710 | loss 5.3435 | lr 2.88e-04 | 3006 ms | 10.9k tok/s
+iter    720 | loss 5.4355 | lr 2.88e-04 | 3005 ms | 10.9k tok/s
+iter    730 | loss 5.4188 | lr 2.87e-04 | 3005 ms | 10.9k tok/s
+iter    740 | loss 5.3512 | lr 2.87e-04 | 3005 ms | 10.9k tok/s
+iter    750 | loss 5.3494 | lr 2.86e-04 | 3003 ms | 10.9k tok/s
+iter    760 | loss 5.3607 | lr 2.86e-04 | 3005 ms | 10.9k tok/s
+iter    770 | loss 5.3246 | lr 2.85e-04 | 3003 ms | 10.9k tok/s
+iter    780 | loss 5.3655 | lr 2.85e-04 | 3003 ms | 10.9k tok/s
+iter    790 | loss 5.3094 | lr 2.84e-04 | 3003 ms | 10.9k tok/s
+done -> out/gpt2_350m_fweb_5060ti_fusedce/ckpt.pt  best val 5.6330 -> out/gpt2_350m_fweb_5060ti_fusedce/ckpt_best.pt
+[vram] peak_alloc=10116 MiB  peak_reserved=10150 MiB

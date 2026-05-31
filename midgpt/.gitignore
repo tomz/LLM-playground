@@ -16,3 +16,9 @@ out/gpt2_350m_fweb_5060ti/*
 !out/gpt2_350m_fweb_5060ti/loss.png
 !out/gpt2_350m_fweb_5060ti/log.jsonl
 !out/gpt2_350m_fweb_5060ti_train.log
+# fused-CE showcase (exact loss, -20% VRAM / -26% throughput on sm_120)
+!out/gpt2_350m_fweb_5060ti_fusedce/
+out/gpt2_350m_fweb_5060ti_fusedce/*
+!out/gpt2_350m_fweb_5060ti_fusedce/compare_fusedce.png
+!out/gpt2_350m_fweb_5060ti_fusedce/log.jsonl
+!out/gpt2_350m_fweb_5060ti_fusedce_train.log
