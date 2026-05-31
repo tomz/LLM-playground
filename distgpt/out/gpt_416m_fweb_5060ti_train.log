@@ -1,10 +1,10 @@
-/home/support/dev-macrohard/LLM-playground/distgpt/.venv/lib/python3.14/site-packages/torch/distributed/checkpoint/utils.py:483: UserWarning: torch.distributed is disabled, unavailable or uninitialized, assuming the intent is to save in a single process.
+<repo>/distgpt/.venv/lib/python3.14/site-packages/torch/distributed/checkpoint/utils.py:483: UserWarning: torch.distributed is disabled, unavailable or uninitialized, assuming the intent is to save in a single process.
   return func(*args, **kwargs)
-/home/support/dev-macrohard/LLM-playground/distgpt/.venv/lib/python3.14/site-packages/torch/distributed/checkpoint/utils.py:483: UserWarning: torch.distributed is disabled, unavailable or uninitialized, assuming the intent is to load in a single process.
+<repo>/distgpt/.venv/lib/python3.14/site-packages/torch/distributed/checkpoint/utils.py:483: UserWarning: torch.distributed is disabled, unavailable or uninitialized, assuming the intent is to load in a single process.
   return func(*args, **kwargs)
-/home/support/dev-macrohard/LLM-playground/distgpt/.venv/lib/python3.14/site-packages/torch/distributed/checkpoint/utils.py:483: UserWarning: torch.distributed is disabled, unavailable or uninitialized, assuming the intent is to load in a single process.
+<repo>/distgpt/.venv/lib/python3.14/site-packages/torch/distributed/checkpoint/utils.py:483: UserWarning: torch.distributed is disabled, unavailable or uninitialized, assuming the intent is to load in a single process.
   return func(*args, **kwargs)
-/home/support/dev-macrohard/LLM-playground/distgpt/.venv/lib/python3.14/site-packages/torch/distributed/checkpoint/utils.py:483: UserWarning: torch.distributed is disabled, unavailable or uninitialized, assuming the intent is to save in a single process.
+<repo>/distgpt/.venv/lib/python3.14/site-packages/torch/distributed/checkpoint/utils.py:483: UserWarning: torch.distributed is disabled, unavailable or uninitialized, assuming the intent is to save in a single process.
   return func(*args, **kwargs)
 [init] rank=0/1 device=cuda:0 dtype=torch.bfloat16
 [mesh] dp=1 tp=1 pp=1

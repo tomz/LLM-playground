@@ -1,9 +1,9 @@
 [cuda] device=NVIDIA GeForce RTX 5060 Ti
 [data] input.txt: 1089.3 KiB
 [data] train=1003854 chars, val=111540 chars
-[tok] reusing /home/support/dev-macrohard/LLM-playground/examples/01_pretrain_shakespeare/out/tok/tokenizer.json
+[tok] reusing <repo>/examples/01_pretrain_shakespeare/out/tok/tokenizer.json
 [tok] vocab_size=4096  bos=0 eos=1
-[shard] reusing /home/support/dev-macrohard/LLM-playground/examples/01_pretrain_shakespeare/out/shards/shakespeare
+[shard] reusing <repo>/examples/01_pretrain_shakespeare/out/shards/shakespeare
 [model] approx params: 16.12 M
 [model] actual params: 19.27 M
 [train] starting fit() for 3000 steps  (silent until done)
@@ -20,7 +20,7 @@
 [train] step  2700.. 2999  mean_loss= 1.088
 [train] tokens/sec: 38,949
 [train] loss first-100 mean=8.450  last-100 mean=1.035
-[ckpt] wrote /home/support/dev-macrohard/LLM-playground/examples/01_pretrain_shakespeare/out/final.pt
+[ckpt] wrote <repo>/examples/01_pretrain_shakespeare/out/final.pt
 [gen] running TorchEngine for 500 tokens from 'ROMEO:'
 [gen] first 300 chars:
     ROMEO:

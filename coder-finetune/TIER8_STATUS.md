@@ -256,7 +256,7 @@ coder-finetune/
 ## How to verify
 
 ```bash
-cd /home/support/dev-macrohard/LLM-playground/coder-finetune
+cd coder-finetune   # from the LLM-playground repo root
 .venv/bin/python -m pytest -q              # 66 passed
 git log --oneline -4                       # 8.1 → 8.4 commits
 ```

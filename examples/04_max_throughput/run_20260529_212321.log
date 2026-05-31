@@ -1,6 +1,6 @@
 [cuda] NVIDIA GeForce RTX 5060 Ti  total=15.48 GiB
 [peak] theoretical fp16 = 28.48 TFLOPS  (cc12.0 36SM x 128 x 3.09GHz)
-[data] reusing /home/support/dev-macrohard/LLM-playground/examples/04_max_throughput/out/tok/tokenizer.json and shards
+[data] reusing <repo>/examples/04_max_throughput/out/tok/tokenizer.json and shards
 [tok] vocab=8192
 [model] approx params: 381.68 M  (act_ckpt=selective, fp16)
 [autotune] probing batches [48, 40, 32, 24, 16, 12, 8, 6, 4, 3, 2, 1]
@@ -8,7 +8,7 @@
 [autotune] B=40 OK, peak=12.82 GiB
 [autotune] chosen micro_batch = 40
 [model] actual params: 381.73 M
-[nvsmi] sampling -> /home/support/dev-macrohard/LLM-playground/examples/04_max_throughput/out/nvsmi.log
+[nvsmi] sampling -> <repo>/examples/04_max_throughput/out/nvsmi.log
 [train] 1500 steps  seq=1024  micro_batch=40
 
 [result] steps=1500  train_wall=7001.6s

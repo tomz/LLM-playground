@@ -20,7 +20,7 @@ nvidia-smi --query-gpu=index,name,uuid,memory.total,driver_version --format=csv
 Expect a line like `GPU 0: NVIDIA GeForce RTX 5060 Ti ... (UUID: GPU-xxxx)`.
 
 - **Before reboot the only visible GPU was the Tesla P100**
-  (`GPU-8d50f734-1f9e-0c0d-07b4-ef8b15cb7254`). The 5060 Ti was NOT enumerated.
+  (`GPU-<p100-uuid>`). The 5060 Ti was NOT enumerated.
 - The torch build is ready: `frontier-platform/.venv` is **torch 2.11.0+cu130**
   with `sm_120` in its arch list (Blackwell-capable). No reinstall needed.
 - If `nvidia-smi` works but torch can't see the card:
@@ -31,7 +31,7 @@ Expect a line like `GPU 0: NVIDIA GeForce RTX 5060 Ti ... (UUID: GPU-xxxx)`.
 ## 1. Re-pin the GPU UUID in the example scripts
 
 Examples 01–04 hardcode `CUDA_VISIBLE_DEVICES=<uuid>` in their `run.sh`.
-The pre-reboot value was `GPU-bb18b9d3-...`, which **must be re-verified** — a
+The pre-reboot value was `GPU-<old-uuid>`, which **must be re-verified** — a
 GPU/driver change can issue a new UUID.
 
 ```bash

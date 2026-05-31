@@ -23,7 +23,7 @@ step      90 | loss 7.4472 | lr 1.82e-04 | 17580 ms | 0.00M tok/s
 step      95 | loss 7.2347 | lr 1.92e-04 | 17600 ms | 0.00M tok/s
 step     100 | loss 7.2269 | lr 2.02e-04 | 17599 ms | 0.00M tok/s
            eval | loss 7.3227
-/home/support/dev-macrohard/LLM-playground/distgpt/.venv-pascal/lib/python3.12/site-packages/torch/distributed/checkpoint/state_dict_saver.py:143: UserWarning: torch.distributed is unavailable or uninitialized, assuming the intent is to save in a single process.
+<repo>/distgpt/.venv-pascal/lib/python3.12/site-packages/torch/distributed/checkpoint/state_dict_saver.py:143: UserWarning: torch.distributed is unavailable or uninitialized, assuming the intent is to save in a single process.
   warnings.warn(
            best val 7.3227 → out/gpt_416m_fweb_p100/gpt_416m_fweb_p100/ckpts/step_000000100
 step     105 | loss 7.2525 | lr 2.12e-04 | 20500 ms | 0.00M tok/s
@@ -221,7 +221,7 @@ step     995 | loss 4.8617 | lr 2.46e-04 | 17555 ms | 0.00M tok/s
 step    1000 | loss 5.0306 | lr 2.45e-04 | 17513 ms | 0.00M tok/s
 [ckpt] saved → out/gpt_416m_fweb_p100/gpt_416m_fweb_p100/ckpts/step_000001000
            eval | loss 4.8203
-/home/support/dev-macrohard/LLM-playground/distgpt/.venv-pascal/lib/python3.12/site-packages/torch/distributed/checkpoint/filesystem.py:490: UserWarning: Detected an existing checkpoint in out/gpt_416m_fweb_p100/gpt_416m_fweb_p100/ckpts/step_000001000/.metadata, overwriting since self.overwrite=True. Past version 2.5 of PyTorch, `overwrite` will default to False. Set this variable to True to maintain this functionality or False to raise when an existing checkpoint is found.
+<repo>/distgpt/.venv-pascal/lib/python3.12/site-packages/torch/distributed/checkpoint/filesystem.py:490: UserWarning: Detected an existing checkpoint in out/gpt_416m_fweb_p100/gpt_416m_fweb_p100/ckpts/step_000001000/.metadata, overwriting since self.overwrite=True. Past version 2.5 of PyTorch, `overwrite` will default to False. Set this variable to True to maintain this functionality or False to raise when an existing checkpoint is found.
   warnings.warn(
            best val 4.8203 → out/gpt_416m_fweb_p100/gpt_416m_fweb_p100/ckpts/step_000001000
 step    1005 | loss 5.3041 | lr 2.44e-04 | 23982 ms | 0.00M tok/s

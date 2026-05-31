@@ -44,9 +44,12 @@ echo
 echo "== patching run.sh files -> $UUID =="
 for s in "${SCRIPTS[@]}"; do
   if [[ ! -f "$s" ]]; then echo "skip (missing): $s"; continue; fi
-  old="$(grep -oE 'CUDA_VISIBLE_DEVICES=GPU-[0-9a-fA-F-]+' "$s" || true)"
-  sed -i -E "s|CUDA_VISIBLE_DEVICES=GPU-[0-9a-fA-F-]+|CUDA_VISIBLE_DEVICES=$UUID|" "$s"
-  new="$(grep -oE 'CUDA_VISIBLE_DEVICES=GPU-[0-9a-fA-F-]+' "$s" || true)"
+  # Match the whole CUDA_VISIBLE_DEVICES assignment value, whether it's the
+  # portable default (`"${CUDA_VISIBLE_DEVICES:-0}"`) or a previously-pinned
+  # UUID/index, and replace it with the chosen UUID.
+  old="$(grep -oE 'CUDA_VISIBLE_DEVICES=[^[:space:]]+' "$s" | head -1 || true)"
+  sed -i -E "s|export CUDA_VISIBLE_DEVICES=.*|export CUDA_VISIBLE_DEVICES=$UUID|" "$s"
+  new="$(grep -oE 'CUDA_VISIBLE_DEVICES=[^[:space:]]+' "$s" | head -1 || true)"
   printf '  %-48s %s -> %s\n' "$(basename "$(dirname "$s")")/run.sh" "${old:-<none>}" "${new:-<none>}"
 done
 echo

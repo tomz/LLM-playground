@@ -2,9 +2,10 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-export CUDA_VISIBLE_DEVICES=GPU-4bbb23a6-e2e1-d0ed-ff91-7660dd9fff2a
-export PYTHONPATH=/home/support/dev-macrohard/LLM-playground/frontier-platform${PYTHONPATH:+:$PYTHONPATH}
-PY=/home/support/dev-macrohard/LLM-playground/frontier-platform/.venv/bin/python
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+export PYTHONPATH="$REPO_ROOT/frontier-platform"${PYTHONPATH:+:$PYTHONPATH}
+PY="$REPO_ROOT/frontier-platform/.venv/bin/python"
 
 if [ ! -x "$PY" ]; then
     echo "ERROR: frontier-platform venv not found at $PY" >&2
