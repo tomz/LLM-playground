@@ -65,6 +65,18 @@ class ModelConfig:
     # (per-expert Python loop, kept for parity tests + tiny ablations).
     moe_dispatch: str = "batched"
 
+    # --- Multi-head Latent Attention (DeepSeek-V2/V3, default-off) ---
+    # Replace GQA with MLA: KV cache shrinks 5-10× via a shared low-rank
+    # ``c_kv`` latent + a single decoupled-RoPE key per token. Long-context
+    # serving cost driver at near-equal quality. See ``MLAttention``.
+    attn_kind: str = "gqa"        # "gqa" | "mla"
+    mla_kv_latent_dim: int = 512  # dim of the cached KV latent (small)
+    mla_q_latent_dim: int = 0     # dim of the query latent; 0 => mla_kv_latent_dim
+    # Per-head dim carrying decoupled-RoPE position info; rest of the head
+    # dim is the content ("nope") part. 0 => head_dim // 2 (DeepSeek-V3 uses 64
+    # of 128). Must be < head_dim.
+    mla_rope_head_dim: int = 0
+
     @property
     def head_dim(self) -> int:
         assert self.d_model % self.n_head == 0
@@ -74,6 +86,36 @@ class ModelConfig:
     def expert_d_ffn(self) -> int:
         """Hidden dim of a single routed/shared MoE expert FFN."""
         return self.moe_expert_d_ffn if self.moe_expert_d_ffn else self.d_ffn
+
+    @property
+    def mla_rope_dim(self) -> int:
+        """Per-head decoupled-RoPE dim for MLA. Defaults to half the head dim."""
+        return self.mla_rope_head_dim if self.mla_rope_head_dim else self.head_dim // 2
+
+    @property
+    def mla_q_lat(self) -> int:
+        """Query latent dim for MLA. Defaults to the KV latent dim."""
+        return self.mla_q_latent_dim if self.mla_q_latent_dim else self.mla_kv_latent_dim
+
+    @property
+    def mla_enabled(self) -> bool:
+        """True iff attention should use MLA (not GQA). Single source of truth."""
+        return self.attn_kind == "mla"
+
+    def kv_bytes_per_token(self, dtype_bytes: int = 2) -> int:
+        """KV-cache size per token per layer, in bytes.
+
+        GQA caches K and V for ``n_kv_head`` heads of size ``head_dim``. MLA
+        caches only the shared low-rank latent (``mla_kv_latent_dim``) plus
+        the decoupled-RoPE key (``mla_rope_dim``) — the 5-10× compression
+        that makes long context affordable. Multiply by ``n_layer`` and
+        context length for the total cache.
+        """
+        if self.mla_enabled:
+            per_tok = self.mla_kv_latent_dim + self.mla_rope_dim
+        else:
+            per_tok = 2 * self.n_kv_head * self.head_dim   # K and V
+        return per_tok * dtype_bytes
 
     @property
     def moe_enabled(self) -> bool:

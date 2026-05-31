@@ -91,6 +91,16 @@ def apply_tp(model: nn.Module, tp_mesh,
             "apply_tp; expert-parallel dispatch lives in a future tier. Run "
             "MoE with tp=1 (FSDP still works) or set model.moe_num_experts=0."
         )
+    # MLA needs custom TP sharding too: the kv_down latent dim is small (~512)
+    # so you typically *replicate* the down-projections and shard the up-projs
+    # heads-wise — the colwise/rowwise plan below would try to split q_proj
+    # etc. that MLA doesn't have. Refuse rather than silently mis-shard.
+    if getattr(model.cfg, "mla_enabled", False):
+        raise NotImplementedError(
+            "MLA + tensor parallelism (tp_size > 1) is not yet supported by "
+            "apply_tp; the latent-down projections need a custom (replicate + "
+            "heads-wise shard) plan. Run MLA with tp=1 or set attn_kind='gqa'."
+        )
     from torch.distributed.tensor import Replicate, Shard
     from torch.distributed.tensor.parallel import (
         ColwiseParallel, RowwiseParallel, SequenceParallel, parallelize_module,

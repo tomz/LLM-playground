@@ -12,10 +12,14 @@ the rare directions a near low-rank momentum buffer drowns out.
 
 Scope rules
 -----------
-* Muon is for **2D hidden** weight matrices only (attn q/k/v/o, FFN w1/w2/w3).
+* Muon is for **2D hidden** weight matrices only (attn q/k/v/o, FFN w1/w2/w3,
+  MLA's _up projections, MoE expert + shared SwiGLU mats).
 * Embeddings, lm_head, MTP heads, all 1-D params (RMSNorm gains, biases),
-  routing gates and MLA latent projections that behave like IO layers must
-  be optimized by AdamW instead.
+  routing gates, and MLA latent down-projections (q_down / kv_down / k_rope)
+  must be optimized by AdamW instead. The down-projections are excluded
+  because they are IO-shaped (project to a small rank factor) and N-S
+  orthogonalization on a fat-skinny matrix bears no relation to the
+  full-rank-hidden case Muon is tuned for.
 
 distgpt-specific notes
 ----------------------
@@ -170,7 +174,19 @@ class Muon(torch.optim.Optimizer):
 
 # Substrings in a param's qualified name that mark it as an IO / non-hidden
 # layer to keep on AdamW even though it may be 2D.
-_IO_NAME_MARKERS = ("tok_emb", "lm_head", "mtp_heads", "gate", "routing_bias")
+#   * tok_emb / lm_head / mtp_heads  — vocab-side projections (IO)
+#   * gate / routing_bias            — MoE router (tiny, IO-shaped)
+#   * q_down / kv_down / k_rope      — MLA low-rank projections that go
+#       d_model → tiny latent. These behave like IO layers (small rank
+#       factor; not the "hidden weight matrix" that Muon's N-S targets) and
+#       frontier-platform's Muon docs route them to AdamW for the same
+#       reason. The corresponding *_up projections and o_proj are full-width
+#       hidden weights → Muon, as usual.
+_IO_NAME_MARKERS = (
+    "tok_emb", "lm_head", "mtp_heads",
+    "gate", "routing_bias",
+    "q_down", "kv_down", "k_rope",
+)
 
 
 def split_muon_params(model):

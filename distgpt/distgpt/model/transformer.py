@@ -80,6 +80,123 @@ class GQAttention(nn.Module):
         return self.o_proj(y)
 
 
+class MLAttention(nn.Module):
+    """Multi-head Latent Attention (DeepSeek-V2/V3) — KV-cache compression.
+
+    The KV cache is the dominant cost of long-context serving. MLA compresses
+    it by projecting the input to a small shared **latent** ``c_kv`` (of dim
+    ``mla_kv_latent_dim``, the only thing the cache would store), then
+    up-projecting to per-head K/V on the fly. Position information is carried
+    by a small **decoupled-RoPE** key (dim ``mla_rope_dim``) computed once
+    per token and shared across heads. Result: ~5-10× KV-cache compression at
+    near-equal quality, the frontier answer for long-context inference cost.
+
+    Per-head layout: ``head_dim = nope_dim (content, from the latent) +
+    rope_dim (position, decoupled)``. Queries get their own latent
+    down/up projection so the query-side latent is independent of the KV one
+    (frontier-platform's convention; we expose ``mla_q_latent_dim`` for
+    asymmetric setups but default to the same dim as KV for simplicity).
+
+    distgpt's training path computes on positions ``[0, T)`` every step (no
+    kv-cache decode loop — that's a serving concern), so the MLA forward is
+    a strict in-place replacement for ``GQAttention.forward(x, cos, sin)``
+    even though the cos/sin passed in are sized for ``head_dim`` (we re-derive
+    cos/sin at ``mla_rope_dim`` from those positions; see ``_rope_for``).
+    Ported from ``frontier-platform/platform/model/transformer.py:MLAttention``;
+    we drop the kv_cache / start_pos plumbing because training doesn't need it.
+
+    Naming convention used here is followed by the Muon split rules in
+    ``training/muon.py``: the ``_down`` projections (``q_down``, ``kv_down``,
+    ``k_rope``) are IO-shaped (project from ``d_model`` to a tiny rank), so
+    they are excluded from Muon and run through AdamW. The ``_up``
+    projections and ``o_proj`` are full-width 2D hidden weights → Muon.
+    """
+
+    def __init__(self, cfg: ModelConfig):
+        super().__init__()
+        self.cfg = cfg
+        H, D = cfg.n_head, cfg.head_dim
+        self.n_head = H
+        self.head_dim = D
+        self.rope_dim = cfg.mla_rope_dim
+        self.nope_dim = D - self.rope_dim
+        assert self.nope_dim > 0, "mla_rope_head_dim must be < head_dim"
+        self.kv_latent = cfg.mla_kv_latent_dim
+        self.q_latent = cfg.mla_q_lat
+
+        # Query: down-project to a small latent, then up to per-head (nope + rope).
+        self.q_down = nn.Linear(cfg.d_model, self.q_latent, bias=False)
+        self.q_up = nn.Linear(self.q_latent, H * D, bias=False)
+        # KV: down-project to the cached latent (the compressed quantity) ...
+        self.kv_down = nn.Linear(cfg.d_model, self.kv_latent, bias=False)
+        # ... then up-project to per-head K(nope) and V (full head_dim).
+        self.k_up = nn.Linear(self.kv_latent, H * self.nope_dim, bias=False)
+        self.v_up = nn.Linear(self.kv_latent, H * D, bias=False)
+        # Decoupled-RoPE key: one shared key per token (broadcast across heads).
+        self.k_rope = nn.Linear(cfg.d_model, self.rope_dim, bias=False)
+        self.o_proj = nn.Linear(H * D, cfg.d_model, bias=False)
+        # QK-Norm: per-head RMSNorm before attention (operates on full head_dim
+        # including the rope slice — matches frontier-platform's GQAttention
+        # behaviour). Default-off; on with cfg.qk_norm=True.
+        self.q_norm = RMSNorm(D, cfg.rms_eps) if cfg.qk_norm else None
+        self.k_norm = RMSNorm(D, cfg.rms_eps) if cfg.qk_norm else None
+        # Lazy cos/sin cache sized for the *rope* dim (smaller than head_dim).
+        # Built on first forward so we get the right device/dtype.
+        self._rope_cache: tuple[torch.Tensor, torch.Tensor] | None = None
+
+    def _rope_for_rope_dim(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        T = x.shape[-2]
+        if (self._rope_cache is None
+                or self._rope_cache[0].device != x.device
+                or self._rope_cache[0].dtype != x.dtype
+                or self._rope_cache[0].shape[0] < T):
+            self._rope_cache = build_rope(
+                max(T, self.cfg.max_seq_len), self.rope_dim,
+                self.cfg.rope_base, x.device, x.dtype,
+            )
+        return self._rope_cache
+
+    def forward(self, x, cos, sin):
+        # ``cos, sin`` are sized for the global head_dim; MLA's decoupled RoPE
+        # operates on ``rope_dim`` only, so we ignore the passed-in tables and
+        # build our own (or hit the cache).
+        B, T, _ = x.shape
+        H, D = self.n_head, self.head_dim
+        # Queries: down → up → split into nope/rope halves per head.
+        q = self.q_up(self.q_down(x)).view(B, T, H, D).transpose(1, 2)   # [B,H,T,D]
+        q_nope, q_rope = q[..., : self.nope_dim], q[..., self.nope_dim :]
+        # KV latent (the cached quantity in real serving).
+        c_kv = self.kv_down(x)                                           # [B,T,kv_latent]
+        # Decoupled-RoPE key, shared across heads.
+        k_rope = self.k_rope(x).view(B, T, 1, self.rope_dim).transpose(1, 2)  # [B,1,T,r]
+
+        # Re-expand per-head K(nope) and V from the latent (would be done from
+        # the cache during decode; here we do it from the just-computed latent).
+        k_nope = self.k_up(c_kv).view(B, T, H, self.nope_dim).transpose(1, 2)
+        v = self.v_up(c_kv).view(B, T, H, D).transpose(1, 2)
+
+        # RoPE on the rope slice of Q + on the (head-broadcast) rope key.
+        cos_r, sin_r = self._rope_for_rope_dim(x)
+        q_rope = apply_rope(q_rope, cos_r, sin_r)
+        k_rope = apply_rope(k_rope, cos_r, sin_r)
+        # Broadcast the single rope key to every head so we can concat with k_nope.
+        k_rope = k_rope.expand(B, H, T, self.rope_dim).contiguous()
+
+        # Reassemble per-head Q and K (content + position).
+        q_full = torch.cat([q_nope, q_rope], dim=-1)
+        k_full = torch.cat([k_nope, k_rope], dim=-1)
+        if self.q_norm is not None:
+            # Normalise after RoPE-reassembly so the rope-side rotation is
+            # preserved into attention (matches the frontier-platform call site,
+            # which also runs the per-head norm after the q_rope/k_rope split
+            # has been concatenated back).
+            q_full = self.q_norm(q_full)
+            k_full = self.k_norm(k_full)
+        y = F.scaled_dot_product_attention(q_full, k_full, v, is_causal=True)
+        y = y.transpose(1, 2).contiguous().view(B, T, H * D)
+        return self.o_proj(y)
+
+
 class SwiGLU(nn.Module):
     def __init__(self, d_model: int, d_ffn: int):
         super().__init__()
@@ -307,7 +424,10 @@ class Block(nn.Module):
     def __init__(self, cfg: ModelConfig):
         super().__init__()
         self.attn_norm = RMSNorm(cfg.d_model, cfg.rms_eps)
-        self.attn = GQAttention(cfg)
+        # MLA replaces GQA when attn_kind="mla". The forward signature is
+        # identical (x, cos, sin) → Tensor, so activation-checkpointing and
+        # the downstream residual + norm code don't care which attention ran.
+        self.attn = MLAttention(cfg) if cfg.mla_enabled else GQAttention(cfg)
         self.ffn_norm = RMSNorm(cfg.d_model, cfg.rms_eps)
         # Sparse-MoE FFN when configured, else dense SwiGLU. The signature of
         # ``ffn(x) -> Tensor`` is unchanged either way; MoE stashes its aux

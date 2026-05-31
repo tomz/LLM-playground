@@ -167,6 +167,15 @@ def export_to_hf(model, cfg, out_dir: str | Path,
             "the Mixtral / DeepSeek HF key layout is a separate exporter. "
             "Run dense (moe_num_experts=0) for HF eval until that lands."
         )
+    if getattr(cfg, "mla_enabled", False):
+        # No stock HF class has the MLA layout (latent down/up + decoupled
+        # RoPE key); a faithful export would need DeepSeek's custom
+        # modelling code, which is its own integration job. Refuse loudly.
+        raise NotImplementedError(
+            "export_to_hf does not support MLA (attn_kind='mla') yet — "
+            "no stock HF class has the latent down/up + decoupled-RoPE "
+            "layout. Train with attn_kind='gqa' for HF eval."
+        )
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
