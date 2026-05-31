@@ -1,6 +1,6 @@
 # coder-finetune Tier 8 — status & next steps
 
-_Generated: end of the Tier 8.2 session. Hand-off doc for resuming work._
+_Generated: end of the Tier 8.4 session. Tier 8 complete._
 
 ## Where we are
 
@@ -8,18 +8,17 @@ _Generated: end of the Tier 8.2 session. Hand-off doc for resuming work._
 frontier toolbox + pedagogical pins + structured docs" bar that
 `nanogpt-edu` / `midgpt` / `distgpt` reached in earlier sessions.
 
-**Plan:** four hermetic commits (Tier 8.1 → 8.4). Two of four done.
+**Plan:** four hermetic commits (Tier 8.1 → 8.4). **All four done.**
 
 | Tier | Commit | Δ tests | Subject |
 |------|---------|--------:|---------|
 | 8.1 | `14400df` | +13 | Bug fixes |
 | 8.2 | `766e3a1` | +13 | Subprocess sandbox hardening |
-| 8.3 | — | — | Frontier opt-ins + pedagogical pins |
-| 8.4 | — | — | README + docs refresh |
+| 8.3 | `ab03c83` | +16 | Frontier opt-ins + pedagogical pins |
+| 8.4 | `be2adb5` | +0  | README + docs refresh |
 
-Total so far: **24 → 50 tests** (+26). 14 consecutive full-suite runs
-green, zero flakes. Working tree clean. Branch `main` ahead of
-`origin/main` by 64 commits.
+Total: **24 → 66 tests** (+42). Full suite green across repeated runs,
+zero flakes. Working tree clean.
 
 ---
 
@@ -162,143 +161,123 @@ commit message.
 
 ---
 
-## Tier 8.3 — frontier opt-ins + pedagogical pins (planned)
+## Tier 8.3 — frontier opt-ins + pedagogical pins (`ab03c83`)
 
-Mirrors the structure of nanogpt-edu Tier 7.3. Two categories:
+Mirrors the structure of nanogpt-edu Tier 7.3. Three categories, +16 tests
+in `tests/test_pedagogy.py`.
 
-### A. Opt-in speed/quality knobs (config-gated, default off)
+### A. Opt-in speed knob (config-gated, default off)
 
 | Knob | Where | Effect | Cost |
 |------|-------|--------|------|
 | **vLLM rollouts for GRPO** | `grpo.use_vllm: true` | TRL's `GRPOConfig.use_vllm` delegates generation to vLLM — ~3–8× faster rollouts on the same GPU. Huge for the gen-heavy GRPO step. | extra vLLM dependency; warm-up cost |
 
-**Status:** verified during Tier 8.2 recon that TRL 1.3.0 (the version
-in this env) has `GRPOConfig(use_vllm=False)` as a real parameter, so
-the wiring is just "thread `cfg['grpo']['use_vllm']` into `GRPOConfig`
-+ doc the dep".
+Implemented as a **pure `grpo_extra_kwargs(cfg)` helper** in
+`cf_rl/grpo_train.py` so it's unit-testable without importing TRL or
+loading a model. Only threaded into `GRPOConfig` when truthy (old TRL
+builds aren't handed an unknown kwarg); optional
+`vllm_gpu_memory_utilization` passes through only when explicitly set.
+Documented + shipped `use_vllm: false` in `configs/grpo_3050.yaml`.
 
-### B. Eval CLI upgrades
+### B. Eval CLI surfacing (`eval/run_humaneval.py`)
 
-- `--save-completions <path>`: dump each problem's prompt + completion
-  + pass/fail + extracted code as JSONL. Lets the user actually see
-  what the model wrote.
-- `--json-out <path>`: machine-readable summary (`{"pass@k": ..., "n":
-  ...}`) so the eval is comparable between runs.
-- Eval is already deterministic given `--seed` (Tier 8.1); this just
-  surfaces the results properly.
+- `--save-completions <path>`: per-problem prompt + every sample +
+  extracted code + pass/fail as JSONL (greppable, streams on long runs).
+- `--json-out <path>`: machine-readable `{pass@k, n, passes, ...}` summary;
+  metric key named by `n_samples` so a diff tool tells pass@1 from pass@5.
+- Refactored into pure `build_eval_summary` / `write_json_summary` /
+  `write_completions_jsonl` helpers (no model load) so they're testable.
 
-### C. Pedagogical pins (the "this is what DPO/GRPO actually do" tests)
+### C. Pedagogical pins
 
-Mirroring nanogpt-edu 7.3's RoPE/causal-mask/SwiGLU pins:
-
-1. **DPO margin monotonicity**: after one optimizer step on a clean
-   `(prompt, chosen, rejected)` pair, the policy's
-   `logprob(chosen) - logprob(rejected)` margin must *increase*. Pins
-   the entire DPO machinery in ~30 lines (loads a tiny model, builds a
-   DPOTrainer, takes one step, compares margins).
-2. **GRPO group-standardization invariant**: rewards `[1, 0, 0, 1]`
-   standardized within a group of 4 must give advantages
-   `[+1, -1, -1, +1]` to within float tolerance, regardless of the
-   global mean. (Test the standardization, not the trainer — easier
-   and faster.)
-3. **`code_unit_test_reward` determinism across calls**: same
-   completion + same test → identical reward across N calls. Already
-   pinned end-to-end in Tier 8.2; could add a finer-grained per-row
-   version.
-4. **`extract_code` round-trip**: for every (chosen, rejected) pair in
-   the builtin set, `extract_code(fenced(code)) == code` modulo
-   whitespace. Pins the extractor against future fence-format drift.
-
-**Risk:** the DPO margin test requires loading a tiny model. The repo
-already pins `Qwen/Qwen2.5-Coder-0.5B` in `configs/dpo_3050.yaml`;
-that's ~1 GB download and several seconds of forward time per test.
-Tier 7.3 in nanogpt-edu got away with a hand-built 32-d model. For
-DPO/GRPO we may need to either (a) cache a smaller tokenizer + a
-2-layer 64-d transformers `LlamaForCausalLM` instance built from
-scratch (no download), or (b) mark the DPO/GRPO ledger tests as
-`@pytest.mark.slow` and skip by default. Recommend (a) — keeps the
-suite hermetic, downloadable in CI without a HuggingFace token.
-
-**Expected:** ~10 new tests, 50 → ~60.
+1. **GRPO group standardization** — new reference impl
+   `group_standardize_advantages` in `cf_rl/reward.py`. Pins binary rewards
+   `[1,0,0,1] → [+1,-1,-1,+1]`, baseline-invariance (uniform offset can't
+   bias the gradient), per-group independence, zero-signal constant groups
+   (no NaN), ragged-batch rejection, and the no-std (Dr. GRPO) variant.
+2. **DPO margin monotonicity** — one SGD step on a clean
+   `(prompt, chosen, rejected)` triple must raise the implicit-reward margin
+   `(logπ_c − logπref_c) − (logπ_r − logπref_r)`. **Resolved the
+   model-loading risk** flagged in the original plan by hand-building a
+   2-layer `LlamaForCausalLM` from scratch (~50k params, no HF download) —
+   the suite stays hermetic and CI-runnable without a token. Plus a
+   loss-shape companion pin.
+3. **`extract_code` round-trip** — every builtin (chosen/rejected) body
+   survives a fence-wrap → `extract_code` cycle, pinning the verifier's
+   code recovery against future fence-format drift.
 
 ---
 
-## Tier 8.4 — docs refresh (planned)
+## Tier 8.4 — docs refresh (`be2adb5`)
 
-Update the README to reflect the Tier 8 work, matching the structure
-the other projects use:
+README brought up to date with the Tier 8 work (docs only, no new tests):
 
-1. New "Sandbox & safety" section between "Three training tracks" and
-   "Speed & quality knobs":
-   - Document the rlimit floor (what's bounded, what isn't)
-   - Document the `mp_mode='spawn'` opt-in for untrusted models
-   - Re-state the "use Docker for real untrusted models" caveat
-2. Add `grpo.use_vllm` to the "Speed & quality knobs" table.
-3. Update the test count in the layout section (24 → 60 or whatever
-   8.3 settles on).
-4. Add a "Recent changes" / "Tier 8" summary section near the bottom,
-   matching the pattern in nanogpt-edu / midgpt READMEs.
-
-**Expected:** no new tests, just docs.
+1. New **"Sandbox & safety"** section between the training-tracks ladder
+   and the speed/quality knobs — rlimit floor table (what's bounded, what
+   isn't), fork-vs-spawn tradeoff + why `RLIMIT_AS` is spawn-only,
+   kill-cause message tags, and the "Docker is the real boundary" caveat.
+2. `grpo.use_vllm` added to the Speed & quality knobs table.
+3. New eval CLI flags documented in the quickstart with a reproducible
+   pass@5 example.
+4. Layout test count updated (24 → 66).
+5. "Recent changes (Tier 8)" summary near the bottom, matching the pattern
+   in the nanogpt-edu / midgpt READMEs.
 
 ---
 
-## Files touched so far
+## Files touched (Tier 8 total)
 
 ```
 coder-finetune/
 ├── cf_rl/
 │   ├── grpo_train.py        # 8.1: divisibility validator
+│   │                        # 8.3: grpo_extra_kwargs (vLLM opt-in)
 │   └── reward.py            # 8.1: async-def regex
 │                            # 8.2: route through run_many batch
+│                            # 8.3: group_standardize_advantages
 ├── configs/
 │   └── grpo_3050.yaml       # 8.1: num_generations 6 → 8
+│                            # 8.3: use_vllm knob (default off)
 ├── eval/
 │   └── run_humaneval.py     # 8.1: extract_code + pass@k + eos + --seed
 │                            # 8.2: rlimits, silencing, spawn opt-in, q.get fix
+│                            # 8.3: --save-completions, --json-out + helpers
 ├── infer/
 │   └── generate.py          # 8.1: dtype → torch_dtype
+├── README.md                # 8.4: sandbox section, vLLM knob, CLI, Tier 8 summary
 └── tests/
     ├── test_bugfixes.py     # 8.1: +13 tests
-    └── test_sandbox.py      # 8.2: +13 tests
+    ├── test_sandbox.py      # 8.2: +13 tests
+    └── test_pedagogy.py     # 8.3: +16 tests
 ```
-
-Untouched and still relevant: `cf_data/__init__.py`, `cf_pref/*`,
-`cf_rl/prompts.py`, `train.py`, `infer/merge_lora.py`, all configs
-except `grpo_3050.yaml`, all worked examples.
 
 ---
 
-## How to resume
+## How to verify
 
 ```bash
 cd /home/support/dev-macrohard/LLM-playground/coder-finetune
-.venv/bin/python -m pytest -q              # should be 50 passed
-git log --oneline -5                       # confirm 766e3a1 is at HEAD
+.venv/bin/python -m pytest -q              # 66 passed
+git log --oneline -4                       # 8.1 → 8.4 commits
 ```
 
-Then either:
+Tier 8 is complete. The post-training ladder (SFT → DPO → GRPO) is now
+bug-fixed, sandbox-hardened, opt-in-equipped, pinned, and documented to
+the same bar as the sibling projects.
 
-- `do 8.3` — pedagogical pins + vLLM. Estimated ~10 new tests, one
-  commit. Watch out for the DPO-margin-test model-loading issue
-  flagged above (recommend a hand-built tiny Llama, not a download).
-- `do 8.4` — README only, skip 8.3.
-- Pause / pivot — the 8.1 + 8.2 work stands on its own; both are
-  honest, bisectable, and the test bar is up from 24 → 50.
+## Open questions / decisions deferred (future Tier 9)
 
-## Open questions / decisions deferred
-
-1. **Parallel reward executor revisit.** The `ProcessPoolExecutor`
-   approach (one fork per worker up-front, persistent queue) avoids
-   the fork-from-threads race that killed the threaded attempt. Would
-   need ~30 minutes to wire and verify. Not on the current plan; flag
-   for a future Tier 9 if GRPO step time becomes a bottleneck on
-   someone's real run.
+1. **Parallel reward executor.** The `ProcessPoolExecutor` approach (one
+   fork per worker up-front, persistent queue) avoids the fork-from-threads
+   race that killed the threaded attempt. `run_many` keeps the batch API
+   shape so it'd be a drop-in. Flag for Tier 9 if GRPO step time becomes a
+   bottleneck on a real run.
 2. **`max_workers` kwarg in `run_many`.** Currently silently dropped
-   (`del max_workers`). Could either keep it as a forward-compat
-   hint or remove it entirely. Left for the future parallel
-   reimplementation to decide.
-3. **Spawn-mode performance for trusted runs.** Spawn is ~10× slower
-   per call than fork. If we ever want it as default for safety, we'd
-   need a worker-pool that pays the spawn cost once. Same as #1
-   really — future Tier.
+   (`del max_workers`). Keep as a forward-compat hint or remove — left for
+   the future parallel reimplementation.
+3. **Spawn-mode as default for safety.** ~10× slower per call than fork;
+   would need a warm worker-pool to amortize. Same family as #1.
+4. **Real vLLM rollout run.** The `use_vllm` wiring is unit-pinned but not
+   yet exercised end-to-end on a GPU (needs the `vllm` dep installed). A
+   future session could ship a measured before/after rollout-throughput
+   number, like the nanogpt-edu A/B charts.
