@@ -21,7 +21,15 @@ class ShardDataset:
     versions of `prepare.py` (`{split}_*.bin` in the same directory).
     """
     def __init__(self, shard_root: str, block_size: int, device: str,
-                 rank: int = 0, world_size: int = 1, split: str = "train"):
+                 split: str = "train"):
+        """Build a token-stream view over ``shard_root/<split>/*.bin``.
+
+        Sampling is *unsharded* — every caller draws from the same global
+        index space. Per-rank disjointness in DDP comes from each rank
+        seeding its own ``torch.Generator`` differently (see ``train.py``);
+        nothing in this class is rank-aware. The old ``rank=`` / ``world_size=``
+        kwargs were dead and were removed in Tier 6.1.
+        """
         sub = os.path.join(shard_root, split)
         if os.path.isdir(sub):
             files = sorted(glob.glob(os.path.join(sub, "*.bin")))
@@ -40,28 +48,40 @@ class ShardDataset:
         self.total = int(self.cumsum[-1])
         self.block_size = block_size
         self.device = device
-        self.rank = rank
-        self.world_size = world_size
 
-    def _locate(self, idx: int) -> tuple[int, int]:
+    def _locate(self, idx: int) -> tuple[int, int] | None:
+        """Map a global token index to (shard, offset). Returns None if the
+        landing spot doesn't have room for a full block — the caller should
+        re-sample. Returning None (instead of the old ``off = 0`` clamp) avoids
+        biasing the sample distribution toward the first ``block_size+1`` tokens
+        of every shard, which over a long run measurably skews the trained
+        token mix toward whatever happens to live at each shard's start.
+        """
         # O(log num_shards) instead of O(num_shards).
         s = int(np.searchsorted(self.cumsum, idx, side="right") - 1)
         s = max(0, min(s, len(self.shards) - 1))
         off = idx - int(self.cumsum[s])
         if off + self.block_size + 1 > len(self.shards[s]):
-            # Fall back to the start of this shard if we landed too close to end.
-            off = 0
+            return None
         return s, off
 
     def get_batch(self, batch_size: int, generator: torch.Generator):
-        ix = torch.randint(0, max(1, self.total - self.block_size - 1),
-                           (batch_size,), generator=generator).tolist()
+        hi = max(1, self.total - self.block_size - 1)
         xs, ys = [], []
-        for i in ix:
-            s, off = self._locate(i)
-            buf = self.shards[s][off : off + self.block_size + 1].astype(np.int64)
-            xs.append(torch.from_numpy(buf[:-1]))
-            ys.append(torch.from_numpy(buf[1:]))
+        # Re-sample any index that lands in the last `block_size+1` tokens of
+        # some shard (where _locate would otherwise return None). At the typical
+        # shard sizes (>=1M tokens) this rejects <0.1% of samples per shard end.
+        while len(xs) < batch_size:
+            need = batch_size - len(xs)
+            ix = torch.randint(0, hi, (need,), generator=generator).tolist()
+            for i in ix:
+                loc = self._locate(i)
+                if loc is None:
+                    continue
+                s, off = loc
+                buf = self.shards[s][off : off + self.block_size + 1].astype(np.int64)
+                xs.append(torch.from_numpy(buf[:-1]))
+                ys.append(torch.from_numpy(buf[1:]))
         x = torch.stack(xs); y = torch.stack(ys)
         if self.device.startswith("cuda"):
             x = x.pin_memory().to(self.device, non_blocking=True)

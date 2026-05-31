@@ -15,28 +15,63 @@ from utils import JsonlLogger, cosine_lr, save_ckpt
 
 
 def setup_ddp() -> tuple[bool, int, int, int]:
+    """Initialize the process group iff torchrun gave us WORLD_SIZE > 1.
+
+    Backend selection: CUDA → NCCL (the default). Set ``MIDGPT_BACKEND=gloo``
+    to force a CPU-friendly backend — useful in CI / multi-rank CPU smoke
+    tests where NCCL is unavailable, and matches how ``distgpt`` exposes the
+    same knob (``DISTGPT_BACKEND``).
+    """
     if int(os.environ.get("WORLD_SIZE", 1)) == 1:
         return False, 0, 0, 1
-    dist.init_process_group(backend="nccl")
+    backend = os.environ.get("MIDGPT_BACKEND",
+                             "nccl" if torch.cuda.is_available() else "gloo")
+    dist.init_process_group(backend=backend)
     rank = dist.get_rank()
     local_rank = int(os.environ["LOCAL_RANK"])
     world = dist.get_world_size()
-    torch.cuda.set_device(local_rank)
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
     return True, rank, local_rank, world
 
 
 @torch.no_grad()
-def evaluate(model, datasets, eval_iters, batch_size, ctx, gen):
+def evaluate(model, datasets, eval_iters, batch_size, ctx, *,
+             eval_seed: int, world: int = 1, device: str = "cpu"):
+    """Compute mean loss over ``eval_iters`` random batches per split.
+
+    Reproducibility: we always seed a *fresh* generator from ``eval_seed`` so
+    val loss is the same number on every call regardless of training history
+    (with the old code, val ppl drifted between runs / resumes because the
+    training generator's state was the seed source).
+
+    DDP-correct: when ``world > 1`` every rank runs the eval (each on its own
+    rank-offset shuffle of the val set) and the losses are mean-all-reduced
+    across ranks, so the reported val ppl reflects the full val set rather
+    than just rank-0's slice. With ``world == 1`` it's a plain mean over
+    ``eval_iters`` batches.
+    """
+    import torch.distributed as dist
     model.eval()
     out = {}
     for split, ds in datasets.items():
+        eval_gen = torch.Generator()
+        # Per-rank seed offset so each rank scans different val windows; the
+        # cross-rank average then covers ``world * eval_iters`` distinct batches.
+        rank = dist.get_rank() if (world > 1 and dist.is_initialized()) else 0
+        eval_gen.manual_seed(eval_seed + 7919 * rank)
         losses = torch.zeros(eval_iters)
         for k in range(eval_iters):
-            x, y = ds.get_batch(batch_size, gen)
+            x, y = ds.get_batch(batch_size, eval_gen)
             with ctx:
                 _, loss = model(x, y)
             losses[k] = loss.item()
-        out[split] = losses.mean().item()
+        local_mean = losses.mean()
+        if world > 1 and dist.is_initialized():
+            t = local_mean.to(device)
+            dist.all_reduce(t, op=dist.ReduceOp.SUM)
+            local_mean = (t / world).cpu()
+        out[split] = local_mean.item()
     model.train()
     return out
 
@@ -79,9 +114,9 @@ def main():
 
     shard_dir = os.path.join("data", cfg["dataset"])
     train_ds = ShardDataset(shard_dir, cfg["model"]["block_size"], device,
-                            rank=rank, world_size=world, split="train")
+                            split="train")
     val_ds = ShardDataset(shard_dir, cfg["model"]["block_size"], device,
-                          rank=rank, world_size=world, split="val")
+                          split="val")
 
     mcfg = GPTConfig(**cfg["model"])
     # Liger fused-linear-CE (optional, GPU+Triton only). Returns loss-only, so we
@@ -124,9 +159,15 @@ def main():
             g["initial_lr"] = g["lr"]
     scaler = torch.amp.GradScaler("cuda", enabled=(dtype == torch.float16 and is_cuda))
 
-    # Wrap in DDP AFTER optimizer construction (params are the same tensors)
+    # Wrap in DDP AFTER optimizer construction (params are the same tensors).
+    # device_ids=[local_rank] is required for CUDA but must be None for CPU/gloo
+    # (DDP would otherwise try to look up a CUDA device that doesn't exist on
+    # CPU CI runners and crash before the first forward).
     if use_ddp:
-        model = DDP(model, device_ids=[local_rank], gradient_as_bucket_view=True)
+        ddp_kwargs = dict(gradient_as_bucket_view=True)
+        if is_cuda:
+            ddp_kwargs["device_ids"] = [local_rank]
+        model = DDP(model, **ddp_kwargs)
     inner = model.module if use_ddp else model
 
     start_iter = 0
@@ -134,7 +175,13 @@ def main():
     ckpt_path = os.path.join(cfg["out_dir"], "ckpt.pt")
     best_path = os.path.join(cfg["out_dir"], "ckpt_best.pt")
     if args.resume and os.path.exists(ckpt_path):
-        sd = torch.load(ckpt_path, map_location=device, weights_only=False)
+        # Load tensors straight to CPU so saved RNG ByteTensors stay ByteTensors
+        # (the previous map_location=device crashed on CUDA resume: torch.load
+        # promoted the CPU ByteTensor RNG state to a CUDA tensor which then
+        # failed `torch.set_rng_state`'s ByteTensor check). Per-rank model/optim
+        # state moves to the right device when load_state_dict copies into the
+        # already-on-device parameters.
+        sd = torch.load(ckpt_path, map_location="cpu", weights_only=False)
         inner.load_state_dict(sd["model"])
         # Backward-compatible: old checkpoints stored a single "optim"; new ones
         # store a list of optimizer state dicts under "optims" (Muon + AdamW).
@@ -146,11 +193,12 @@ def main():
         if "scaler" in sd and sd["scaler"] is not None:
             scaler.load_state_dict(sd["scaler"])
         if "rng_state" in sd:
-            torch.set_rng_state(sd["rng_state"])
+            # torch.get_rng_state() returns a CPU ByteTensor; restore as-is.
+            torch.set_rng_state(sd["rng_state"].to("cpu", dtype=torch.uint8))
         if is_cuda and sd.get("cuda_rng_state") is not None:
-            torch.cuda.set_rng_state(sd["cuda_rng_state"])
+            torch.cuda.set_rng_state(sd["cuda_rng_state"].to("cpu", dtype=torch.uint8))
         if "gen_state" in sd and sd["gen_state"] is not None:
-            gen.set_state(sd["gen_state"])
+            gen.set_state(sd["gen_state"].to("cpu", dtype=torch.uint8))
         start_iter = sd["iter"] + 1
         best_val = sd.get("best_val", best_val)
         if is_master:
@@ -231,15 +279,22 @@ def main():
             logger.log(**row)
             if wb: wb.log(row, step=it)
 
-        if is_master and it > 0 and it % eval_int == 0:
-            ev = evaluate(inner, {"val": val_ds}, cfg["train"]["eval_iters"], micro_bs, ctx, gen)
-            print(f"           eval | val {ev['val']:.4f} | ppl {torch.tensor(ev['val']).exp().item():.2f}")
-            logger.log(iter=it, **{f"eval_{k}": v for k, v in ev.items()})
-            if wb: wb.log({f"eval/{k}": v for k, v in ev.items()}, step=it)
-            if ev["val"] < best_val:
-                best_val = ev["val"]
-                _save(best_path, it)
-                print(f"           best val {best_val:.4f} → saved {best_path}")
+        if it > 0 and it % eval_int == 0:
+            # Eval runs on EVERY rank (mean is all-reduced across DP) so the
+            # reported val loss covers the full val set rather than rank-0's
+            # slice. Old code ran eval inside `if is_master:` on a rank-sharded
+            # val set → val ppl was measured on only 1/world of the val set.
+            ev = evaluate(inner, {"val": val_ds}, cfg["train"]["eval_iters"],
+                          micro_bs, ctx, eval_seed=cfg["seed"] + 12345,
+                          world=world, device=device)
+            if is_master:
+                print(f"           eval | val {ev['val']:.4f} | ppl {torch.tensor(ev['val']).exp().item():.2f}")
+                logger.log(iter=it, **{f"eval_{k}": v for k, v in ev.items()})
+                if wb: wb.log({f"eval/{k}": v for k, v in ev.items()}, step=it)
+                if ev["val"] < best_val:
+                    best_val = ev["val"]
+                    _save(best_path, it)
+                    print(f"           best val {best_val:.4f} → saved {best_path}")
 
         if is_master and it > 0 and it % ckpt_int == 0:
             _save(ckpt_path, it)

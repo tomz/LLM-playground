@@ -191,14 +191,41 @@ class GPT(nn.Module):
         return torch.optim.AdamW(groups, lr=lr, betas=betas, fused=fused)
 
     @torch.no_grad()
-    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
+    def generate(self, idx, max_new_tokens, temperature: float = 1.0,
+                 top_k: int | None = None, top_p: float | None = None):
+        """Autoregressive sampling.
+
+        * ``temperature == 0`` → greedy (argmax). Skips softmax/multinomial.
+        * ``top_k``  → keep only the top-k logits before sampling.
+        * ``top_p``  → nucleus: keep the smallest prefix whose probability mass
+          sums to ``top_p`` (after sort). Combinable with ``top_k``; nucleus is
+          applied second.
+        """
         for _ in range(max_new_tokens):
             idx_cond = idx[:, -self.cfg.block_size:]
             logits, _ = self(idx_cond)
-            logits = logits[:, -1, :] / max(temperature, 1e-6)
+            logits = logits[:, -1, :]
+            if temperature == 0:
+                nxt = logits.argmax(dim=-1, keepdim=True)
+                idx = torch.cat([idx, nxt], dim=1)
+                continue
+            logits = logits / max(temperature, 1e-6)
             if top_k is not None:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-                logits[logits < v[:, [-1]]] = -float("inf")
+                logits = logits.masked_fill(logits < v[:, [-1]], -float("inf"))
+            if top_p is not None and 0.0 < top_p < 1.0:
+                sorted_logits, sorted_idx = torch.sort(logits, descending=True, dim=-1)
+                cumprobs = sorted_logits.softmax(dim=-1).cumsum(dim=-1)
+                # Mask out tokens whose cumulative prob exceeds top_p, but
+                # always keep the very top token (cumprobs > top_p shifted right
+                # by 1 so the first crossing token is still admitted).
+                mask = cumprobs > top_p
+                mask[..., 1:] = mask[..., :-1].clone()
+                mask[..., 0] = False
+                sorted_logits = sorted_logits.masked_fill(mask, -float("inf"))
+                # Scatter back to original vocab order.
+                logits = torch.full_like(logits, -float("inf"))
+                logits.scatter_(1, sorted_idx, sorted_logits)
             probs = F.softmax(logits, dim=-1)
             nxt = torch.multinomial(probs, num_samples=1)
             idx = torch.cat([idx, nxt], dim=1)
