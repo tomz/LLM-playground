@@ -8,10 +8,39 @@ its `n_microbatches` configured at construction time, so we set
 no outer `for _ in range(accum)` loop nor a manual `loss.backward()`. The
 schedule reports per-microbatch losses on the last PP rank only; intermediate
 ranks see no loss tensor.
+
+Eval under PP
+-------------
+The old code returned ``nan`` for any pipelined eval, which silently disabled
+``best.txt`` tracking. We now build a separate Schedule1F1B with
+``n_microbatches=1`` and run it once at eval time; the last PP rank produces
+the loss, gathers across DP, and broadcasts to all ranks so logging /
+best-checkpoint logic works the same as in the non-PP case.
+
+Compilation
+-----------
+``train.compile: true`` runs ``torch.compile(model, mode='reduce-overhead')``
+on the wrapped model (after TP/PP/FSDP composition). Skipped when PP > 1
+because ``Schedule1F1B``'s graph-capture doesn't currently round-trip with
+``torch.compile`` cleanly.
+
+Metrics
+-------
+Every log step records:
+  * ``loss``: DP-averaged cross-entropy
+  * ``lr``: cosine-with-warmup schedule value × rewind multiplier
+  * ``ms``, ``tok_per_s``, ``tok_per_s_per_gpu``: wall-clock throughput
+  * ``mfu``: model-FLOPs-utilization vs the device's peak (when known)
+  * ``grad_norm`` (pre-clip): the single best early-warning signal for
+    divergence — a diverging run usually announces itself in grad-norm
+    100+ steps before the loss spikes.
+  * ``param_norm``: aggregate L2 of model parameters (sanity check that
+    weight-decay is doing what you expect).
 """
 from __future__ import annotations
 import contextlib, os, time
 import torch
+import torch.distributed as dist
 
 from ..model.config import ModelConfig
 from ..model.transformer import GPT
@@ -22,11 +51,51 @@ from ..parallel.pipeline import build_pipeline
 from ..data.streaming import StreamingLoader
 from ..utils.dist import init as dist_init, destroy as dist_destroy, is_master, all_reduce_mean
 from ..utils.logging import Logger
+from ..utils.metrics import (
+    compute_grad_norm, compute_param_norm, estimate_mfu, peak_tflops_for_device,
+)
 from .optim import build_optimizer, cosine_lr
 from .checkpoint import CheckpointManager
 from .stability import SpikeMonitor, RewindController
 
 DTYPES = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}
+
+
+def _maybe_compile(model, enabled: bool, pp_active: bool) -> object:
+    """Wrap with ``torch.compile`` when requested and safe.
+
+    ``pp_active=True`` skips compilation because PyTorch's pipelining schedule
+    captures its own graph and the two layers of graph capture don't currently
+    compose. We log the decision so users notice when their compile=true got
+    quietly ignored under PP.
+
+    We use ``mode="default"`` rather than ``"reduce-overhead"`` because the
+    latter enables CUDA Graph trees, which interact badly with the lazy RoPE
+    cache (``GPT._rope`` is overwritten across steps and CUDA Graph trees
+    treat it as a live output between calls). ``"default"`` still gets the
+    inductor kernel fusion speedup at the cost of a few extra CPU launches
+    per step. If you need cudagraphs, either pre-allocate RoPE in
+    ``GPT.__init__`` as a buffer or use ``"reduce-overhead"`` after that
+    refactor.
+    """
+    if not enabled:
+        return model
+    if pp_active:
+        if is_master():
+            print("[compile] disabled (PP active; torch.compile + Schedule1F1B "
+                  "don't compose yet)")
+        return model
+    try:
+        compiled = torch.compile(model, mode="default", fullgraph=False)
+        if is_master():
+            print("[compile] torch.compile(mode='default') applied")
+        return compiled
+    except Exception as e:
+        # If compile fails (older torch / unsupported op), fall back gracefully
+        # rather than killing a multi-day run.
+        if is_master():
+            print(f"[compile] failed: {type(e).__name__}: {e}; running uncompiled")
+        return model
 
 
 def train(cfg: dict, data_dir_override: str | None = None) -> None:
@@ -64,6 +133,9 @@ def train(cfg: dict, data_dir_override: str | None = None) -> None:
         if pcfg["zero"] == "fsdp":
             model = apply_fsdp(model, mesh["dp"], dtype)
 
+    model = _maybe_compile(model, cfg["train"].get("compile", False),
+                            pp_active=pp_schedule is not None)
+
     optim = build_optimizer(model, cfg["optim"]["lr"], cfg["optim"]["betas"],
                             cfg["optim"]["weight_decay"], fused=is_cuda)
 
@@ -92,6 +164,12 @@ def train(cfg: dict, data_dir_override: str | None = None) -> None:
     ckpt_every = cfg["train"]["ckpt_every"]
     tokens_per_step = cfg["train"]["micro_batch"] * accum * dp * cfg["data"]["seq_len"]
     autocast = torch.amp.autocast("cuda", dtype=dtype) if is_cuda else contextlib.nullcontext()
+
+    # Peak device throughput for MFU. None on CPU / unrecognized GPU — MFU
+    # is then omitted from the log rather than reported as a wrong number.
+    peak_tflops = peak_tflops_for_device(dtype)
+    if is_master() and peak_tflops is not None:
+        print(f"[mfu] peak {peak_tflops:.1f} TFLOP/s @ {dtype}")
 
     t0 = time.time()
     step = start
@@ -129,8 +207,14 @@ def train(cfg: dict, data_dir_override: str | None = None) -> None:
             else:
                 step_loss = 0.0  # non-tail PP ranks don't see a loss tensor
 
+        # Pre-clip grad norm: the single best early-warning signal for
+        # divergence. clip_grad_norm_ returns the (pre-clip) total norm so
+        # we get it for free; expose it in the log.
         if cfg["optim"]["grad_clip"]:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg["optim"]["grad_clip"])
+            gnorm = torch.nn.utils.clip_grad_norm_(model.parameters(), cfg["optim"]["grad_clip"])
+            grad_norm = float(gnorm) if isinstance(gnorm, torch.Tensor) else gnorm
+        else:
+            grad_norm = compute_grad_norm(model)
         optim.step()
 
         # Aggregate loss across DP for accurate logging. PP intermediates have
@@ -149,9 +233,25 @@ def train(cfg: dict, data_dir_override: str | None = None) -> None:
         if step % log_every == 0:
             dt = (time.time() - t0) / max(1, log_every); t0 = time.time()
             tps = tokens_per_step / dt
+            tps_per_gpu = tps / max(1, world)
+            metrics = dict(loss=loss_val, lr=eff_lr, ms=dt * 1000,
+                            tok_per_s=tps, tok_per_s_per_gpu=tps_per_gpu,
+                            grad_norm=grad_norm)
+            # Param norm is a few hundred ms per call on large models; sample
+            # every 10× log_every to keep it cheap.
+            if (step // log_every) % 10 == 0:
+                metrics["param_norm"] = compute_param_norm(model)
+            if peak_tflops is not None:
+                mfu = estimate_mfu(mcfg, tokens_per_step, dt, peak_tflops,
+                                    world_size=world)
+                if mfu is not None:
+                    metrics["mfu"] = mfu
             if is_master():
-                print(f"step {step:7d} | loss {loss_val:.4f} | lr {eff_lr:.2e} | {dt*1000:.0f} ms | {tps/1e6:.2f}M tok/s")
-            logger.log(step, loss=loss_val, lr=eff_lr, ms=dt * 1000, tok_per_s=tps)
+                mfu_str = f" | mfu {metrics.get('mfu', 0)*100:.1f}%" if "mfu" in metrics else ""
+                print(f"step {step:7d} | loss {loss_val:.4f} | lr {eff_lr:.2e} "
+                       f"| gnorm {grad_norm:.3f} | {dt*1000:.0f} ms "
+                       f"| {tps/1e6:.2f}M tok/s{mfu_str}")
+            logger.log(step, **metrics)
 
         if step > 0 and step % ckpt_every == 0:
             path = ckpt.save(model, optim, loader, step)
@@ -159,18 +259,8 @@ def train(cfg: dict, data_dir_override: str | None = None) -> None:
                 print(f"[ckpt] saved → {path}")
 
         if step > 0 and step % eval_every == 0:
-            # quick held-out loss estimate using current loader (for brevity).
-            model.eval()
-            with torch.no_grad():
-                xs, ys = loader.next_batch()
-                with autocast:
-                    if pp_schedule is None:
-                        _, ev_loss = model(xs, ys)
-                        ev = all_reduce_mean(ev_loss.detach().float()).item()
-                    else:
-                        # Skip pipelined eval; held-out loss isn't well-defined
-                        # for the schedule. Real eval should run after training.
-                        ev = float("nan")
+            ev = _eval_one_batch(model, loader, autocast, pp_schedule,
+                                  is_last_pp_rank, accum, mesh, device, world)
             if is_master():
                 print(f"           eval | loss {ev:.4f}")
             logger.log(step, eval_loss=ev)
@@ -188,11 +278,71 @@ def train(cfg: dict, data_dir_override: str | None = None) -> None:
         step += 1
 
     if is_master():
-        ckpt.save(model, optim, loader, total)
         print("[done]")
+    # `ckpt.save` is a collective (dcp.save + dist.barrier) — every rank
+    # must participate, not just rank-0. The old `if is_master(): ckpt.save`
+    # gated the entire collective on rank-0 and deadlocked on rank-1+ as
+    # soon as either side hit a barrier. Bug was invisible because no
+    # multi-rank test ever exercised the final-save path.
+    ckpt.save(model, optim, loader, total)
+    if is_master():
         if is_cuda:
             alloc = torch.cuda.max_memory_allocated(0) // (1024 * 1024)
             resv = torch.cuda.max_memory_reserved(0) // (1024 * 1024)
             print(f"[vram] peak_alloc={alloc} MiB  peak_reserved={resv} MiB")
     logger.close()
+    # Synchronize one last time so every rank exits dist together; without
+    # this rank-0's slower final FS writes (DCP fsync, JSONL flush) can
+    # outlive rank-1's destroy() and rank-1 already-destroyed group makes
+    # rank-0's destroy() take a slow path.
+    if dist.is_initialized():
+        dist.barrier()
     dist_destroy()
+
+
+def _eval_one_batch(model, loader, autocast, pp_schedule, is_last_pp_rank,
+                     accum, mesh, device, world) -> float:
+    """Single-batch held-out loss that works under both non-PP and PP.
+
+    Under PP we build a side eval schedule with ``n_microbatches=1`` (a real
+    PP eval pass) so the last rank produces the loss; we then DP-average
+    and broadcast back so every rank logs the same value. Under non-PP this
+    is just ``model(x, y)`` like before.
+    """
+    from torch.distributed.pipelining import Schedule1F1B
+
+    model.eval()
+    try:
+        with torch.no_grad():
+            xs, ys = loader.next_batch()
+            with autocast:
+                if pp_schedule is None:
+                    _, ev_loss = model(xs, ys)
+                    ev = all_reduce_mean(ev_loss.detach().float()).item()
+                    return ev
+                # PP path: build a 1-microbatch eval schedule on the same
+                # stage. We reuse the existing stage attached to pp_schedule.
+                stage = pp_schedule._stage  # private but stable across 2.4-2.7
+                eval_schedule = Schedule1F1B(stage, n_microbatches=1)
+                losses: list[torch.Tensor] = []
+                if is_last_pp_rank:
+                    eval_schedule.step(xs, target=ys, losses=losses)
+                    ev_loss = (sum(l.float() for l in losses) / max(1, len(losses)))
+                    ev_t = ev_loss.detach()
+                else:
+                    eval_schedule.step(xs)
+                    ev_t = torch.tensor(0.0, device=device)
+                # DP-average over DP ranks only; then broadcast from the
+                # last PP rank so every rank in the world logs the same
+                # value (rank-0 might not be the last PP rank).
+                ev_t = all_reduce_mean(ev_t)
+                if mesh is not None and "pp" in mesh.mesh_dim_names:
+                    pp_mesh = mesh["pp"]
+                    src = pp_mesh.size() - 1  # last PP rank within pp dim
+                    # Use the pp-dim subgroup for the broadcast so we only
+                    # talk to peers along the pp axis.
+                    if pp_mesh.size() > 1:
+                        dist.broadcast(ev_t, src=src, group=pp_mesh.get_group())
+                return float(ev_t.item())
+    finally:
+        model.train()

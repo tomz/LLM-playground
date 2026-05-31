@@ -53,16 +53,26 @@ class GQAttention(nn.Module):
 
     def forward(self, x, cos, sin):
         B, T, _ = x.shape
-        H, Hk, D = self.cfg.n_head, self.cfg.n_kv_head, self.cfg.head_dim
-        q = self.q_proj(x).view(B, T, H, D).transpose(1, 2)
-        k = self.k_proj(x).view(B, T, Hk, D).transpose(1, 2)
-        v = self.v_proj(x).view(B, T, Hk, D).transpose(1, 2)
+        D = self.cfg.head_dim
+        # Under tensor parallelism the q/k/v projections are column-sharded,
+        # so each rank produces a slice of the heads. Reshape by the *local*
+        # head count (output_features // head_dim), not the global one;
+        # otherwise the view() call shape-asserts on TP > 1. The same logic
+        # naturally yields the global head count when TP == 1.
+        q_proj = self.q_proj(x)
+        k_proj = self.k_proj(x)
+        v_proj = self.v_proj(x)
+        H = q_proj.shape[-1] // D
+        Hk_local = k_proj.shape[-1] // D
+        q = q_proj.view(B, T, H, D).transpose(1, 2)
+        k = k_proj.view(B, T, Hk_local, D).transpose(1, 2)
+        v = v_proj.view(B, T, Hk_local, D).transpose(1, 2)
         if self.q_norm is not None:
             q = self.q_norm(q)
             k = self.k_norm(k)
         q, k = apply_rope(q, cos, sin), apply_rope(k, cos, sin)
-        if Hk != H:
-            rep = H // Hk
+        if Hk_local != H:
+            rep = H // Hk_local
             k = k.repeat_interleave(rep, dim=1)
             v = v.repeat_interleave(rep, dim=1)
         y = F.scaled_dot_product_attention(q, k, v, is_causal=True)

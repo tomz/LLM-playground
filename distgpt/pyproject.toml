@@ -12,3 +12,6 @@ include = ["distgpt*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "timeout: per-test timeout in seconds (requires pytest-timeout to enforce)",
+]
