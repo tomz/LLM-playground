@@ -69,11 +69,29 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+def _worker_entry(rank: int, world: int, port: int, fn) -> None:
+    """Run the real worker, then hard-exit on clean success.
+
+    Some torch/gloo point releases SIGABRT ("terminate called without an
+    active exception") in C++ static destructors during interpreter shutdown
+    when CPU FSDP2/TP (DTensor) state is torn down under mp.spawn on a GPU-less
+    runner. The worker's assertions have already passed by then, so it's a
+    teardown abort, not a logic failure. os._exit(0) skips those destructors
+    and reports clean success to mp.spawn's exit-code check.
+
+    If ``fn`` raises (a genuine assertion failure), the exception propagates
+    out of this wrapper before os._exit is reached, the child exits non-zero,
+    and mp.spawn re-raises on the parent — so real regressions still fail.
+    """
+    fn(rank, world, port)
+    os._exit(0)
+
+
 def _spawn(fn, world: int) -> None:
     """Spawn `world` processes running `fn(rank, world)`. Failures in any
     child re-raise on the parent."""
     port = _free_port()
-    mp.spawn(fn, args=(world, port), nprocs=world, join=True)
+    mp.spawn(_worker_entry, args=(world, port, fn), nprocs=world, join=True)
 
 
 def _tiny_cfg(**overrides):

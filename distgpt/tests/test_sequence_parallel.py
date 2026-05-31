@@ -164,6 +164,14 @@ def _sp_tp2_worker(rank: int, world: int, port: int, return_dict) -> None:
         return_dict[rank] = (min(vals), max(vals))
     finally:
         dist.destroy_process_group()
+    # Hard-exit on clean success: the result is already in return_dict and the
+    # process group is down. This dodges a gloo/DTensor C++ teardown SIGABRT
+    # ("terminate called without an active exception") seen on some torch point
+    # releases during interpreter shutdown, which would otherwise make exitcode
+    # negative and fail the parent's `p.exitcode != 0` check. A real assertion
+    # failure above still propagates before this line, so exitcode stays
+    # non-zero on genuine regressions.
+    os._exit(0)
 
 
 @pytest.mark.skipif(not _has_gloo(), reason="gloo backend not available")
