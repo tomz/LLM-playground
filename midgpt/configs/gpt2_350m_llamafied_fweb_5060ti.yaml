@@ -1,0 +1,75 @@
+# 350M Llama-flavored GPT trained on a 1B-token FineWeb-Edu slice. Same
+# model size and parameter budget as gpt2_350m_fweb_5060ti.yaml, but with
+# the three Llama-style architecture flags flipped on:
+#
+#   * pos_kind:  rope        (rotary position embeddings, no learned table)
+#   * norm_kind: rmsnorm     (Llama's RMSNorm instead of LayerNorm)
+#   * mlp_kind:  swiglu      (gated FFN: w2(silu(w1 x) * w3 x))
+#
+# Same training corpus and step budget as the GPT-2 baseline so the val ppl
+# at 4000 iters is a direct A/B against the Llama-style architecture.
+# The d_ffn is reduced from 4096 (GPT-2 baseline) to 2730 ≈ 8/3*1024 so the
+# SwiGLU MLP (which has 3 matmuls instead of 2) lands at roughly the same
+# parameter count: 3 * d_model * d_ffn = 8.4M per layer × 24 = 201M, vs the
+# baseline's 2 * 1024 * 4096 = 8.4M × 24 = 201M. (Plus identical embeddings,
+# attention, and lm_head, so total param count differs by < 1%.)
+#
+# Throughput estimate: similar to baseline (~14.9k tok/s on 5060 Ti). RoPE
+# adds a small per-step overhead from the apply_rope kernel but RMSNorm is
+# a touch cheaper than LayerNorm so it roughly cancels out. Wall-clock target:
+# the same ~2 h 30 min as the GPT-2 baseline run.
+#
+out_dir: out/gpt2_350m_llamafied_fweb_5060ti
+dataset: fineweb-edu
+tokenizer: gpt2
+seed: 1337
+dtype: bfloat16
+compile: false
+grad_checkpoint: false
+log: {jsonl: true, wandb_project: null}
+
+model:
+  vocab_size: 50304
+  block_size: 1024
+  n_layer: 24
+  n_head: 16
+  d_model: 1024
+  d_ffn: 2730              # 8/3 * 1024, rounded — iso-param with d_ffn=4096 GELU
+  dropout: 0.0
+  bias: false
+  tie_embeddings: true
+  pos_kind: rope
+  norm_kind: rmsnorm
+  mlp_kind: swiglu
+  rope_base: 10000.0
+  qk_norm: true            # cheap stability for the higher Llama-style LR
+
+optim:
+  optimizer: adamw         # try `muon` for the modded-nanogpt speedup
+  lr: 3.0e-4
+  min_lr: 3.0e-5
+  betas: [0.9, 0.95]
+  weight_decay: 0.1
+  grad_clip: 1.0
+  warmup_iters: 200
+  lr_decay_iters: 4000
+  max_iters: 4000
+
+train:
+  micro_batch: 4
+  grad_accum: 8            # eff batch = 32 sequences = 32,768 tok/step
+  eval_interval: 200
+  eval_iters: 50
+  log_interval: 10
+  ckpt_interval: 500
+
+# Default-off spike protection. The Llama-style LR is no hotter than the
+# GPT-2 baseline so we don't expect spikes, but this is the right spot to
+# enable it for longer runs / harder data.
+# stability:
+#   spike_monitor: true
+#   spike_window: 200
+#   spike_sigma: 5.0
+#   spike_min_abs_jump: 2.0
+#   max_rewinds: 5
+#   rewind_cooldown_steps: 1000

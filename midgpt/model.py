@@ -22,6 +22,22 @@ class GPTConfig:
     # RMSNorm on Q and K before attention. Keeps attention-logit scale bounded so
     # you can train at higher LR without loss spikes. Adds 2 tiny norms per block.
     qk_norm: bool = False
+    # ----- Llama-flavored architecture knobs (default-off; existing GPT-2
+    # recipes are bit-identical when these stay at their defaults) -----
+    #
+    # ``pos_kind``:  positional encoding. "learned" = GPT-2 learned table;
+    # "rope" = Rotary Position Embedding (Llama / GPT-NeoX). RoPE is applied
+    # per-head to Q and K before attention; the ``pos_emb`` table is dropped.
+    pos_kind: str = "learned"
+    rope_base: float = 10_000.0   # RoPE θ (Llama-2 uses 10k, Llama-3 uses 500k)
+    # ``norm_kind``: "layernorm" (GPT-2; has weight + bias) or "rmsnorm"
+    # (Llama; weight only, fewer FLOPs, no learnable mean shift).
+    norm_kind: str = "layernorm"
+    # ``mlp_kind``: "gelu" = GPT-2's `proj(gelu(fc(x)))` (3·d_ffn·d_model params)
+    # or "swiglu" = Llama's gated `w2(silu(w1(x)) * w3(x))` (4·d_ffn·d_model
+    # params for the same d_ffn; cut d_ffn to ⅔ of the GELU value for an
+    # iso-param swap).
+    mlp_kind: str = "gelu"
 
     @property
     def head_dim(self) -> int:
@@ -30,16 +46,56 @@ class GPTConfig:
 
 
 class RMSNorm(nn.Module):
-    """Minimal RMSNorm (fp32 reduction) — only used for optional QK-norm."""
+    """Minimal RMSNorm (fp32 reduction). Used for optional QK-norm and as the
+    ``norm_kind="rmsnorm"`` block norm. Llama-style: weight only, no bias."""
 
-    def __init__(self, dim: int, eps: float = 1e-5):
+    def __init__(self, dim: int, eps: float = 1e-5, bias: bool = False):
         super().__init__()
         self.eps = eps
         self.weight = nn.Parameter(torch.ones(dim))
+        # ``bias`` parameter is accepted for the LayerNorm-compatible
+        # construction signature but ignored; RMSNorm has no learnable bias.
+        if bias:
+            raise ValueError("RMSNorm has no learnable bias; pass bias=False")
 
     def forward(self, x):
         n = x.float() * torch.rsqrt(x.float().pow(2).mean(-1, keepdim=True) + self.eps)
         return n.type_as(x) * self.weight
+
+
+def _make_norm(kind: str, dim: int, bias: bool, eps: float = 1e-5):
+    """Block-norm factory dispatching on ``cfg.norm_kind``. Keeps the Block's
+    constructor short and gives the two norm types a uniform signature."""
+    if kind == "layernorm":
+        return nn.LayerNorm(dim, bias=bias, eps=eps)
+    if kind == "rmsnorm":
+        # RMSNorm has no bias; silently pass bias=False (the YAML's `bias`
+        # flag controls the linear layers, not the norm, so this is the
+        # intended behavior — a Llama-style RMSNorm model has bias=False
+        # everywhere and we don't want to refuse the config).
+        return RMSNorm(dim, eps=eps, bias=False)
+    raise ValueError(f"unknown norm_kind={kind!r}; want 'layernorm' or 'rmsnorm'")
+
+
+def _build_rope(seq_len: int, head_dim: int, base: float, device, dtype):
+    """Precompute (cos, sin) tables for RoPE. Standard Llama layout: split
+    head_dim into pairs, rotate each pair by an angle that grows geometrically
+    with the dim index."""
+    inv_freq = 1.0 / (base ** (torch.arange(0, head_dim, 2, device=device).float() / head_dim))
+    t = torch.arange(seq_len, device=device).float()
+    f = torch.outer(t, inv_freq)
+    return f.cos().to(dtype), f.sin().to(dtype)
+
+
+def _apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    """Apply RoPE to a [B, H, T, D] tensor. The Llama convention pairs the
+    first and second halves of the head dim (not adjacent pairs); we follow
+    that convention so a future weight-export to LlamaForCausalLM round-trips
+    without a rotation rewrite."""
+    x1, x2 = x[..., : x.shape[-1] // 2], x[..., x.shape[-1] // 2 :]
+    cos = cos[None, None, : x.shape[-2], :]
+    sin = sin[None, None, : x.shape[-2], :]
+    return torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
 
 
 class CausalSelfAttention(nn.Module):
@@ -51,8 +107,13 @@ class CausalSelfAttention(nn.Module):
         self.dropout = cfg.dropout
         self.q_norm = RMSNorm(cfg.head_dim) if cfg.qk_norm else None
         self.k_norm = RMSNorm(cfg.head_dim) if cfg.qk_norm else None
+        # When pos_kind="rope" we apply RoPE per-head to Q/K right before SDPA.
+        # The cache is built lazily on first use (so the device/dtype can be
+        # inferred from the actual activations); GPT.forward keeps it pinned
+        # at the model level so all blocks share one (cos, sin) buffer.
+        self.use_rope = cfg.pos_kind == "rope"
 
-    def forward(self, x):
+    def forward(self, x, rope: tuple[torch.Tensor, torch.Tensor] | None = None):
         B, T, C = x.shape
         H, D = self.cfg.n_head, self.cfg.head_dim
         q, k, v = self.qkv(x).split(C, dim=-1)
@@ -62,6 +123,11 @@ class CausalSelfAttention(nn.Module):
         if self.q_norm is not None:
             q = self.q_norm(q)
             k = self.k_norm(k)
+        if self.use_rope:
+            assert rope is not None, "GPT.forward must pass (cos, sin) when pos_kind='rope'"
+            cos, sin = rope
+            q = _apply_rope(q, cos, sin)
+            k = _apply_rope(k, cos, sin)
         # SDPA chooses Flash / mem-efficient automatically
         y = F.scaled_dot_product_attention(
             q, k, v, dropout_p=self.dropout if self.training else 0.0, is_causal=True
@@ -71,6 +137,10 @@ class CausalSelfAttention(nn.Module):
 
 
 class MLP(nn.Module):
+    """GPT-2 GELU MLP: proj(gelu(fc(x))). Keeps the ``proj.weight`` name so
+    the GPT-2 residual-init rescale (1/sqrt(2N)) and the HF export rename
+    table both keep working."""
+
     def __init__(self, cfg: GPTConfig):
         super().__init__()
         self.fc = nn.Linear(cfg.d_model, cfg.d_ffn, bias=cfg.bias)
@@ -81,16 +151,45 @@ class MLP(nn.Module):
         return self.dropout(self.proj(F.gelu(self.fc(x), approximate="tanh")))
 
 
+class SwiGLU(nn.Module):
+    """Llama-style gated FFN: proj(silu(w1(x)) * w3(x)).
+
+    Output projection is named ``proj`` (not ``w2``) to share the residual-
+    init rescale hook with :class:`MLP`. The gate (w1) and value (w3) follow
+    the Llama naming convention so the future ``export_to_hf`` extension
+    for ``LlamaForCausalLM`` has a one-line rename for each.
+    """
+
+    def __init__(self, cfg: GPTConfig):
+        super().__init__()
+        self.w1 = nn.Linear(cfg.d_model, cfg.d_ffn, bias=cfg.bias)
+        self.w3 = nn.Linear(cfg.d_model, cfg.d_ffn, bias=cfg.bias)
+        self.proj = nn.Linear(cfg.d_ffn, cfg.d_model, bias=cfg.bias)
+        self.dropout = nn.Dropout(cfg.dropout)
+
+    def forward(self, x):
+        return self.dropout(self.proj(F.silu(self.w1(x)) * self.w3(x)))
+
+
+def _make_mlp(cfg: GPTConfig) -> nn.Module:
+    """Block-MLP factory dispatching on ``cfg.mlp_kind``."""
+    if cfg.mlp_kind == "gelu":
+        return MLP(cfg)
+    if cfg.mlp_kind == "swiglu":
+        return SwiGLU(cfg)
+    raise ValueError(f"unknown mlp_kind={cfg.mlp_kind!r}; want 'gelu' or 'swiglu'")
+
+
 class Block(nn.Module):
     def __init__(self, cfg: GPTConfig):
         super().__init__()
-        self.ln1 = nn.LayerNorm(cfg.d_model, bias=cfg.bias)
+        self.ln1 = _make_norm(cfg.norm_kind, cfg.d_model, bias=cfg.bias)
         self.attn = CausalSelfAttention(cfg)
-        self.ln2 = nn.LayerNorm(cfg.d_model, bias=cfg.bias)
-        self.mlp = MLP(cfg)
+        self.ln2 = _make_norm(cfg.norm_kind, cfg.d_model, bias=cfg.bias)
+        self.mlp = _make_mlp(cfg)
 
-    def forward(self, x):
-        x = x + self.attn(self.ln1(x))
+    def forward(self, x, rope: tuple[torch.Tensor, torch.Tensor] | None = None):
+        x = x + self.attn(self.ln1(x), rope=rope)
         x = x + self.mlp(self.ln2(x))
         return x
 
@@ -119,16 +218,33 @@ class GPT(nn.Module):
             from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss
             self._liger_ce = LigerFusedLinearCrossEntropyLoss(ignore_index=-100)
         self.tok_emb = nn.Embedding(cfg.vocab_size, cfg.d_model)
-        self.pos_emb = nn.Embedding(cfg.block_size, cfg.d_model)
+        # Position encoding: learned table (GPT-2) OR RoPE applied per-head to
+        # Q/K inside attention. When RoPE is on, the pos_emb table is not built
+        # at all — it would be dead weight and confuse the optimizer split.
+        if cfg.pos_kind == "learned":
+            self.pos_emb = nn.Embedding(cfg.block_size, cfg.d_model)
+        elif cfg.pos_kind == "rope":
+            self.pos_emb = None  # type: ignore[assignment]
+        else:
+            raise ValueError(
+                f"unknown pos_kind={cfg.pos_kind!r}; want 'learned' or 'rope'"
+            )
         self.drop = nn.Dropout(cfg.dropout)
         self.blocks = nn.ModuleList([Block(cfg) for _ in range(cfg.n_layer)])
-        self.ln_f = nn.LayerNorm(cfg.d_model, bias=cfg.bias)
+        self.ln_f = _make_norm(cfg.norm_kind, cfg.d_model, bias=cfg.bias)
         self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
         if cfg.tie_embeddings:
             self.lm_head.weight = self.tok_emb.weight
+        # RoPE cache. Built lazily so we know the right device/dtype to match
+        # the activations (Blackwell bf16 needs bf16 tables for the SDPA kernel
+        # to fuse; CPU smoke tests need fp32).
+        self._rope_cache: tuple[torch.Tensor, torch.Tensor] | None = None
 
         self.apply(self._init)
-        # GPT-2 paper: scale residual-projection init by 1/sqrt(2*N)
+        # GPT-2 paper: scale residual-projection init by 1/sqrt(2*N). The hook
+        # matches on the trailing ``proj.weight`` name, which is preserved
+        # across both MLP (GELU) and SwiGLU MLPs so this still works for
+        # llamafied recipes.
         for n, p in self.named_parameters():
             if n.endswith("proj.weight"):
                 nn.init.normal_(p, mean=0.0, std=0.02 / (2 * cfg.n_layer) ** 0.5)
@@ -144,10 +260,25 @@ class GPT(nn.Module):
     def num_params(self, non_embedding: bool = True) -> int:
         n = sum(p.numel() for p in self.parameters())
         if non_embedding:
-            n -= self.pos_emb.weight.numel()
+            # pos_emb is None when pos_kind="rope"; skip the subtraction.
+            if self.pos_emb is not None:
+                n -= self.pos_emb.weight.numel()
             if not self.cfg.tie_embeddings:
                 n -= self.lm_head.weight.numel()
         return n
+
+    def _rope_for(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Build / retrieve the RoPE (cos, sin) cache for the current device/dtype.
+        Sized for ``block_size`` and reused for every shorter sequence."""
+        T = x.shape[1]
+        c = self._rope_cache
+        if (c is None or c[0].device != x.device
+                or c[0].dtype != x.dtype or c[0].shape[0] < T):
+            self._rope_cache = _build_rope(
+                self.cfg.block_size, self.cfg.head_dim, self.cfg.rope_base,
+                x.device, x.dtype,
+            )
+        return self._rope_cache
 
     def forward(self, idx, targets=None, return_full_logits: bool = False):
         """Forward pass. By default returns last-position logits when no targets
@@ -156,13 +287,21 @@ class GPT(nn.Module):
         """
         B, T = idx.shape
         assert T <= self.cfg.block_size
-        pos = torch.arange(T, device=idx.device)
-        x = self.drop(self.tok_emb(idx) + self.pos_emb(pos))
+        # Position encoding: either the learned pos_emb is added to tok_emb
+        # (GPT-2) or RoPE is built and threaded into each block's attention
+        # (Llama). When RoPE is on, the embedding is just tok_emb (no add).
+        if self.pos_emb is not None:
+            pos = torch.arange(T, device=idx.device)
+            x = self.drop(self.tok_emb(idx) + self.pos_emb(pos))
+            rope = None
+        else:
+            x = self.drop(self.tok_emb(idx))
+            rope = self._rope_for(x)
         for blk in self.blocks:
             if self.grad_checkpoint and self.training:
-                x = checkpoint(blk, x, use_reentrant=False)
+                x = checkpoint(blk, x, rope, use_reentrant=False)
             else:
-                x = blk(x)
+                x = blk(x, rope=rope)
         x = self.ln_f(x)
         if targets is None:
             if return_full_logits:
