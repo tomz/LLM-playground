@@ -22,7 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 
-RECIPES = ["cooldown.yaml", "longctx_finetune.yaml", "muon_speedrun_1b.yaml"]
+RECIPES = ["cooldown.yaml", "longctx_finetune.yaml", "muon_speedrun_1b.yaml",
+           "deepseek_v3_style.yaml"]
 REQUIRED_TOP = {"run_id", "out_dir", "data", "model", "parallel", "optim", "train"}
 
 
@@ -241,3 +242,58 @@ def test_warm_start_with_missing_ckpt_path_errors_clearly(tmp_path: Path):
                             load_ckpt="/nonexistent/path/step_000000099")
     with pytest.raises(FileNotFoundError, match="warm-start"):
         train(cfg)
+
+
+# ---------- Tier 5 frontier recipe (MoE + MLA + MTP) ----------
+
+
+def test_deepseek_v3_style_recipe_enables_all_three_frontier_features():
+    """The Tier 5 showcase recipe must turn on MoE, MLA and MTP at once
+    so a regression that disables any one of them is loud — the recipe's
+    whole point is to prove they compose."""
+    with open(ROOT / "configs" / "recipes" / "deepseek_v3_style.yaml") as f:
+        cfg = yaml.safe_load(f)
+    m = cfg["model"]
+    assert m["attn_kind"] == "mla", "deepseek_v3_style must use MLA"
+    assert m["moe_num_experts"] >= 2, "deepseek_v3_style must use sparse MoE"
+    assert m["moe_shared_experts"] >= 1, (
+        "deepseek_v3_style uses an always-on shared expert (DeepSeek-V3 §2.1)"
+    )
+    assert m["moe_balance"] == "aux_free", (
+        "deepseek_v3_style uses the 2025-frontier aux-loss-free balancer"
+    )
+    assert m["mtp_tokens"] >= 1, "deepseek_v3_style must enable MTP"
+    # And the recipe must stay at tp=1 — MoE/MLA + tp>1 raises NotImplementedError.
+    assert cfg["parallel"]["tp"] == 1, (
+        "deepseek_v3_style must run at tp=1 until expert-parallel + MLA-TP land"
+    )
+
+
+def test_deepseek_v3_style_recipe_runs_a_few_steps(tmp_path: Path):
+    """End-to-end smoke: load the recipe, point it at a fresh data dir,
+    run its (small) total_steps. This is the integration test that the
+    three Tier-5 primitives (MoE + MLA + MTP) actually compose under the
+    trainer — any one of them silently breaking would fire here."""
+    import json
+    from distgpt.training.trainer import train
+
+    with open(ROOT / "configs" / "recipes" / "deepseek_v3_style.yaml") as f:
+        cfg = yaml.safe_load(f)
+    # Override the data + output paths so we don't depend on data/tiny existing.
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    rng = np.random.default_rng(0)
+    rng.integers(
+        0, cfg["model"]["vocab_size"], size=8_000, dtype=np.uint16,
+    ).tofile(str(data_dir / "shard_0.bin"))
+    cfg["data"]["dir"] = str(data_dir)
+    cfg["out_dir"] = str(tmp_path / "out")
+    cfg["log"]["jsonl"] = True
+
+    train(cfg)
+    log = (Path(cfg["out_dir"]) / "log.jsonl").read_text().splitlines()
+    losses = [json.loads(line)["loss"] for line in log if '"loss"' in line]
+    assert losses, "recipe didn't produce any logged loss"
+    assert all(np.isfinite(l) for l in losses), (
+        f"recipe produced non-finite losses: {losses}"
+    )

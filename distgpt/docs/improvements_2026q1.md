@@ -258,6 +258,176 @@ The 2 skips:
   because liger-kernel IS installed in this venv (the test only runs
   in environments without it).
 
+## Tier 5 — 2025 frontier architecture (MoE + MLA + MTP)
+
+Three commits (5.12, 5.13, 5.14) that port the architectural primitives
+behind the 2025 frontier (DeepSeek-V3 in particular) from
+`frontier-platform/platform/model/transformer.py` into distgpt's
+`distgpt/model/transformer.py`. All default-off — running with the
+existing 1B/7B/70B configs is bit-identical to pre-Tier-5 — but the
+moving parts now exist, the Muon split rules know about them, the
+parallel + export paths refuse the unsafe combinations loudly, and a
+showcase recipe wires the three together end-to-end.
+
+### 5.12 Sparse MoE FFN (DeepSeek-V3 style)
+
+`MoEFFN` replaces `SwiGLU` per-block when `cfg.moe_num_experts > 1`.
+Top-k routed experts + optional always-on shared expert(s) + the 2025
+default of **aux-loss-free** load balancing — a per-expert routing bias
+gets nudged each training step to equalize load, instead of adding a
+quality-degrading auxiliary loss to the main objective. The Switch-style
+`aux_loss` mode is also available for ablations.
+
+Two dispatch backends, both correct and mathematically equivalent up to
+floating-point accumulation order (pinned by a parity test):
+* **`batched`** (default): sort (token, slot) pairs by expert id, run
+  one GEMM per expert slab, scatter back. This is the shape an
+  expert-parallel all-to-all would dispatch over.
+* **`loop`**: original per-expert Python loop. Kept for parity tests +
+  small ablations.
+
+`GPT.forward` sums each block's stashed `last_aux_loss`, weights by
+`moe_aux_loss_weight`, adds to the main CE. Trainer code is unchanged.
+
+Muon split: router `gate.weight` and `routing_bias` route to AdamW
+(IO-shaped); expert + shared SwiGLU mats route to Muon as normal hidden
+weights. The existing `_IO_NAME_MARKERS` table already had `"gate"` and
+`"routing_bias"` in it from the original docstring intent; an explicit
+test now pins this.
+
+Deliberately out of scope (Tier 6):
+* **MoE + tensor parallelism**. `apply_tp` raises a
+  `NotImplementedError` with a pinned test; expert-parallel dispatch
+  lives in a follow-up.
+* **MoE HF export**. `export_to_hf` raises rather than silently
+  drop experts — would otherwise produce a one-expert-only ghost
+  model. Pinned.
+
+13 tests in `tests/test_moe.py`.
+
+### 5.13 Multi-head Latent Attention (DeepSeek-V2/V3)
+
+`MLAttention` replaces `GQAttention` per-block when `cfg.attn_kind ==
+"mla"`. The KV cache is the dominant long-context serving cost; MLA
+compresses it ~5–10× by caching only a small shared latent (`c_kv`,
+`mla_kv_latent_dim` wide) and a single decoupled-RoPE key per token,
+re-expanding per-head K/V from the latent on demand. Per-head layout
+is `head_dim = nope_dim + rope_dim`; `rope_dim` defaults to
+`head_dim // 2`.
+
+distgpt's training path computes on positions `[0, T)` every step (no
+kv-cache decode loop — that's a serving concern), so MLA's forward is
+a strict in-place replacement for `GQAttention.forward(x, cos, sin)`.
+The cos/sin tables the model passes in are sized for the global
+`head_dim`, but MLA's decoupled-RoPE operates on `rope_dim` only, so
+each `MLAttention` builds its own (cos, sin) cache sized to
+`mla_rope_dim`.
+
+`ModelConfig.kv_bytes_per_token(dtype_bytes=2)` returns the per-token
+per-layer cache cost: `2 * n_kv_head * head_dim` for GQA versus
+`mla_kv_latent_dim + mla_rope_dim` for MLA. Pin the compression with
+an explicit-numbers test.
+
+Muon split rule for MLA:
+* **`_down` projections** (`q_down`, `kv_down`, `k_rope`) are
+  IO-shaped: they project `d_model → tiny latent`. Newton-Schulz
+  orthogonalization on a fat-skinny matrix has nothing to do with the
+  full-rank-hidden case Muon is tuned for, so these go to AdamW. Added
+  the names to `_IO_NAME_MARKERS` and pinned with a test.
+* **`_up` projections + `o_proj`** are full-width hidden weights →
+  Muon, same as GQA's q/k/v/o.
+
+Deliberately out of scope (Tier 6):
+* **MLA + TP**. Needs a custom plan (replicate the small down-projs;
+  shard the up-projs heads-wise). `apply_tp` raises
+  `NotImplementedError("MLA + tensor parallelism")` with a pinned test.
+* **MLA HF export**. No stock HF class has the layout. `export_to_hf`
+  raises rather than producing a model with the wrong attention.
+
+10 tests in `tests/test_mla.py`.
+
+### 5.14 Multi-Token Prediction (DeepSeek-V3 §2.2)
+
+`mtp_tokens=k` adds k auxiliary lm heads to `GPT`. Head j predicts the
+token at offset (j+2) from the same final hidden state — the main
+lm_head already covers +1. The aux loss is the per-head CE averaged
+over heads, weighted by `mtp_weight`, added to the main loss only when
+`self.training` (eval-mode loss is pure next-token CE so logged eval
+loss is the same metric as a non-MTP run).
+
+Edge case: positions in `[T-(j+1), T)` can't compute the +(j+1) loss
+because the target shifts off the end. We just slice those positions
+away rather than build the prediction and then mask with `ignore_index=
+-100`. Heads whose offset exceeds the batch's T are silently skipped.
+
+Composes with everything: works under MoE (aux losses add), under MLA
+(attention is unchanged), under `fused_ce` (the lm_head fused path
+leaves the hidden state `x` available for MTP heads).
+
+HF export behaviour for MTP differs from MoE/MLA:
+* MoE/MLA would **silently break inference** if exported as a Llama,
+  so `export_to_hf` raises.
+* MTP heads are **train-only auxiliaries** — never fired at inference.
+  `export_to_hf` strips any `mtp_heads.*` keys via the new
+  `_strip_mtp_keys` helper and prints a one-line notice listing the
+  dropped count, so a surprise MTP checkpoint exports as the
+  main-head subset (a valid Llama).
+
+Muon split: MTP heads route to AdamW (IO-shaped, like `lm_head`). The
+existing `_IO_NAME_MARKERS` table already had `"mtp_heads"` in it; the
+new test pins this so a name-table edit can't silently move them onto
+Muon.
+
+9 tests in `tests/test_mtp.py`.
+
+### 5.15 DeepSeek-V3-style recipe + this section
+
+`configs/recipes/deepseek_v3_style.yaml` is a laptop-runnable
+integration recipe with MoE + MLA + MTP all on at tiny scale. It is the
+end-to-end proof that the three Tier-5 primitives compose under the
+trainer; a regression in any one of them fires the recipe smoke test
+(`tests/test_recipes.py::test_deepseek_v3_style_recipe_runs_a_few_steps`).
+The recipe is parametrically validated by the existing
+`test_recipe_yaml_parses_with_required_keys` and a new
+`test_deepseek_v3_style_recipe_enables_all_three_frontier_features`
+which pins that none of the three feature flags can silently flip off
+during a config refactor.
+
+---
+
+## Final test count (Tier 5)
+
+```
+119 passed, 2 skipped in ~24s
+```
+
+* +13 in `tests/test_moe.py`
+* +10 in `tests/test_mla.py`
+* +9 in `tests/test_mtp.py`
+* +3 in `tests/test_recipes.py` (1 from the parametrized recipe list,
+  2 new tests for the DeepSeek-V3-style recipe)
+
+Same 2 skips as before (gloo PP collectives, liger-missing import path).
+
+## Frontier-feature integration matrix (after Tier 5)
+
+| Feature              | Default | TP > 1                | HF export             | Muon split target               |
+|----------------------|:-------:|-----------------------|-----------------------|---------------------------------|
+| GQA                  | on      | works (standard plan) | LlamaForCausalLM      | q/k/v/o → Muon                  |
+| MLA                  | off     | **NotImplementedError** | **NotImplementedError** | `_up`/o_proj → Muon; `_down`/`k_rope` → AdamW |
+| Dense SwiGLU         | on      | works                 | works                 | w1/w2/w3 → Muon                 |
+| Sparse MoE           | off     | **NotImplementedError** | **NotImplementedError** | expert w1/w2/w3 + shared → Muon; gate/routing_bias → AdamW |
+| QK-norm              | off     | works (per-head local)| **ValueError**        | (1-D weights) → AdamW           |
+| MTP heads            | off     | works                 | silently stripped     | mtp_heads.* → AdamW             |
+| zero_init_proj       | off     | works                 | works                 | (init only)                     |
+| fused_ce             | off     | works                 | works                 | (loss kernel only)              |
+
+The bold "NotImplementedError" cells are the deliberate Tier-6 holds —
+each has a pinned test so the moment the underlying mesh / exporter
+lands, the corresponding test fires and we remove the raise.
+
+---
+
 ## Real bugs caught by writing tests
 
 | # | Where | Symptom | Fix |

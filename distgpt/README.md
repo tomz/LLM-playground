@@ -21,7 +21,11 @@ This code is real and self-consistent. It will not actually finish a 70B run on 
 > **Recent additions:** Muon optimizer, Liger fused linear-CE, Transformer
 > Engine FP8 path, Megatron-style sequence parallelism, HuggingFace export
 > + lm-evaluation-harness CLI, recipe configs (cooldown / longctx / Muon
-> speedrun), warm-start checkpoint loading. See
+> speedrun / **DeepSeek-V3-style**), warm-start checkpoint loading,
+> **2025-frontier architecture** primitives (sparse MoE FFN with shared
+> expert + aux-loss-free balancing; Multi-head Latent Attention with
+> 5–10× KV-cache compression; Multi-Token Prediction auxiliary heads).
+> All default-off; see
 > [`docs/improvements_2026q1.md`](docs/improvements_2026q1.md) for what
 > landed, why, and which latent bugs got caught along the way.
 
@@ -29,8 +33,8 @@ This code is real and self-consistent. It will not actually finish a 70B run on 
 distgpt/
 ├── distgpt/
 │   ├── model/
-│   │   ├── config.py          # ModelConfig with param_count()
-│   │   ├── transformer.py     # GPT (RoPE, RMSNorm, SwiGLU, GQA)
+│   │   ├── config.py          # ModelConfig with param_count() + active_param_count()
+│   │   ├── transformer.py     # GPT (RoPE, RMSNorm, SwiGLU, GQA, MLA, MoE, MTP)
 │   │   └── parallel_layers.py # ColumnParallelLinear, RowParallelLinear, VocabParallelEmbedding
 │   ├── parallel/
 │   │   ├── mesh.py            # 3D device mesh (dp, tp, pp)
@@ -124,6 +128,11 @@ sidecar `.venv-pascal/` and PCI-unbind workarounds that got it running.
 ## What's *not* in scope
 
 - Custom CUDA kernels (we lean on PyTorch SDPA + Transformer Engine if installed)
-- Expert parallelism / MoE
+- Expert parallelism mesh + `all_to_all` dispatch for MoE+TP (the MoE
+  layers themselves are in, but tp=1 only — Tier 6)
+- Custom MLA+TP sharding plan (the MLA layer is in, tp=1 only — Tier 6)
+- HuggingFace export adapters for MoE (Mixtral format) or MLA (DeepSeek
+  custom class) — both exports raise `NotImplementedError` rather than
+  silently produce a broken model
 - RLHF (see the `frontier-platform` blueprint)
 - Inference engine (use vLLM / TRT-LLM)
