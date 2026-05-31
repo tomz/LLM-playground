@@ -269,6 +269,13 @@ def _muon_dist_worker(rank: int, world: int, port: int) -> None:
         assert moved > 0, f"rank {rank}: Muon.step on DTensor did not change param"
     finally:
         dist.destroy_process_group()
+    # Exit hard *after* a clean process-group teardown. Some torch/gloo point
+    # releases SIGABRT ("terminate called without an active exception") during
+    # interpreter shutdown when CPU FSDP2 (DTensor) static destructors run
+    # after mp.spawn — the assertions above have already passed, so the test
+    # logic is fine; it's a C++ teardown abort. os._exit(0) skips those
+    # destructors and reports clean success to mp.spawn's exit-code check.
+    os._exit(0)
 
 
 def _free_port() -> int:
