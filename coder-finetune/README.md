@@ -137,7 +137,7 @@ coder-finetune/
 ├── train.py        # SFT / LoRA / QLoRA via TRL SFTTrainer
 ├── eval/           # HumanEval+ runner with Docker sandbox (also the RL verifier)
 ├── infer/          # merge LoRA, export for vLLM
-└── tests/          # 66 tests — bug regressions, sandbox, DPO/GRPO pins
+└── tests/          # 74 tests — bug regressions, sandbox, DPO/SimPO/KTO/GRPO pins
 ```
 
 ## Quickstart

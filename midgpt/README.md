@@ -204,7 +204,7 @@ midgpt/
 ├── sample.py             # generation (greedy / top-k / top-p)
 ├── utils/                # logging, schedule, ckpt manager
 ├── configs/              # YAML per model size & flavor
-└── tests/                # 79 tests; CPU smoke + 2-rank gloo distributed
+└── tests/                # 83 tests; CPU smoke + 2-rank gloo distributed
 ```
 
 ## Apple Silicon (MPS) support

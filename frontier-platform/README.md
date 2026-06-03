@@ -105,7 +105,7 @@ Still `NotImplementedError` (intentionally — out of scope for a single-machine
 
 ```bash
 cd frontier-platform
-.venv/bin/python -m pytest -q             # 97 pass / 6 skip on CPU (5 CUDA-only tests fail off-GPU)
+.venv/bin/python -m pytest -q             # 342 pass / 5 skip on CPU (CUDA-only tests skip off-GPU)
 bash scripts/smoke_pipeline.sh            # full pipeline, ~6 s on CPU
 ```
 
