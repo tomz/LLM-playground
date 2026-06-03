@@ -22,6 +22,34 @@ def test_grad_checkpoint_runs():
     assert any(p.grad is not None for p in m.parameters())
 
 
+def test_attention_backend_default_and_unknown_rejected():
+    cfg = GPTConfig(vocab_size=64, block_size=16, n_layer=1, n_head=2, d_model=32, d_ffn=64)
+    assert cfg.attention_backend == "sdpa"
+    bad = GPTConfig(vocab_size=64, block_size=16, n_layer=1, n_head=2,
+                    d_model=32, d_ffn=64, attention_backend="nope")
+    m = GPT(bad)
+    x = torch.randint(0, 64, (1, 8))
+    try:
+        m(x, x)
+    except ValueError as e:
+        assert "attention_backend" in str(e)
+        return
+    raise AssertionError("unknown attention backend should raise")
+
+
+def test_flex_attention_backend_if_available():
+    import pytest
+    pytest.importorskip("torch.nn.attention.flex_attention")
+    cfg = GPTConfig(vocab_size=64, block_size=16, n_layer=1, n_head=2,
+                    d_model=32, d_ffn=64, attention_backend="flex")
+    m = GPT(cfg).eval()
+    x = torch.randint(0, 64, (1, 8))
+    with torch.no_grad():
+        logits, loss = m(x, x)
+    assert logits.shape == (1, 8, 64)
+    assert torch.isfinite(loss)
+
+
 def test_qk_norm_opt_in():
     # Default off (GPT-2 parity), on when requested.
     base = GPT(GPTConfig(vocab_size=64, block_size=32, n_layer=1, n_head=2, d_model=32, d_ffn=64))

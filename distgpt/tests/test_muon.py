@@ -78,6 +78,30 @@ def test_muon_step_updates_2d_param():
     assert moved > 0, "Muon.step() did not change the parameter"
 
 
+def test_muon_defaults_preserve_update_when_new_knobs_unset():
+    torch.manual_seed(0)
+    p1 = torch.nn.Parameter(torch.zeros(8, 16))
+    p2 = torch.nn.Parameter(torch.zeros(8, 16))
+    grad = torch.randn_like(p1)
+    p1.grad = grad.clone()
+    p2.grad = grad.clone()
+    Muon([p1], lr=0.01).step()
+    Muon([p2], lr=0.01, weight_decay=0.0, update_scale=None).step()
+    assert torch.equal(p1, p2)
+
+
+def test_muon_weight_decay_and_update_scale_are_opt_in():
+    torch.manual_seed(0)
+    base = torch.nn.Parameter(torch.ones(8, 16))
+    scaled = torch.nn.Parameter(torch.ones(8, 16))
+    grad = torch.randn_like(base)
+    base.grad = grad.clone()
+    scaled.grad = grad.clone()
+    Muon([base], lr=0.01).step()
+    Muon([scaled], lr=0.01, weight_decay=0.1, update_scale=0.5).step()
+    assert not torch.equal(base, scaled)
+
+
 def test_muon_momentum_buffer_is_persistent_across_steps():
     p = torch.nn.Parameter(torch.zeros(8, 16))
     opt = Muon([p], lr=0.01, momentum=0.9)

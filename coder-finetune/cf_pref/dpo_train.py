@@ -9,9 +9,11 @@ DPO (Rafailov et al., 2023) optimizes the policy to prefer ``chosen`` over
 ``rejected`` as a classification loss against a frozen reference copy of the
 model — no reward model, no sampling. ORPO (Hong et al., 2024) folds the same
 preference signal into SFT via an odds-ratio penalty and needs *no* reference
-model. Both reuse the LoRA/QLoRA loader and PEFT plumbing from ``train.py``; with
-a PEFT adapter, DPO's reference is the frozen base (adapters disabled), so no
-second model copy is loaded.
+model. SimPO is a reference-free pairwise objective and is exposed through TRL's
+DPOTrainer via ``loss_type: simpo`` when the installed TRL supports it. KTO uses
+binary desirable/undesirable examples rather than preference pairs, so its pure
+loss is documented in ``cf_pref.objectives`` and needs a separate data adapter
+before becoming a trainer entry point.
 
 NOTE on TRL versions: TRL 1.x removed the standalone ``ORPOTrainer``. We import
 it lazily and raise a clear, actionable error if the objective is ``orpo`` but
@@ -40,6 +42,7 @@ def build_pref_trainer(model, tok, train_ds, cfg: dict):
 
     The ``pref.objective`` key selects the algorithm:
       * ``dpo``  (default) — DPOTrainer with a frozen reference (implicit for PEFT).
+      * ``simpo`` — DPOTrainer with reference-free SimPO loss if this TRL ships it.
       * ``orpo`` — ORPOTrainer (reference-free); requires a TRL that ships it.
 
     ``model`` is already PEFT-wrapped by ``build_model_and_tokenizer`` for
@@ -83,10 +86,13 @@ def build_pref_trainer(model, tok, train_ds, cfg: dict):
         beta=p.get("beta", 0.1),
     )
 
-    if objective == "dpo":
+    if objective in {"dpo", "simpo"}:
         from trl import DPOConfig, DPOTrainer
-        # DPO supports a family of pairwise losses; sigmoid is the original DPO.
-        common["loss_type"] = p.get("loss_type", "sigmoid")
+        # DPO supports a family of pairwise losses. SimPO reuses the same
+        # chosen/rejected schema but removes the reference model from the loss.
+        common["loss_type"] = p.get("loss_type", "simpo" if objective == "simpo" else "sigmoid")
+        if objective == "simpo":
+            common["ref_model_sync_steps"] = None
         args = _make_config(DPOConfig, common)
         return DPOTrainer(
             model=model, ref_model=None, args=args,
@@ -108,7 +114,7 @@ def build_pref_trainer(model, tok, train_ds, cfg: dict):
             model=model, args=args,
             train_dataset=train_ds, processing_class=tok,
         )
-    raise ValueError(f"unknown pref.objective: {objective!r} (use 'dpo' or 'orpo')")
+    raise ValueError(f"unknown pref.objective: {objective!r} (use 'dpo', 'simpo', or 'orpo')")
 
 
 def _bf16_supported() -> bool:

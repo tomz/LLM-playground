@@ -45,6 +45,7 @@ class GPTConfig:
     # DeepSeek-V3 ablation. 0 disables; typical setting is 2-4.
     mtp_tokens: int = 0
     mtp_weight: float = 0.3
+    attention_backend: str = "sdpa"  # "sdpa" default; "flex" for mask experiments.
 
     @property
     def head_dim(self) -> int:
@@ -105,6 +106,30 @@ def _apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.
     return torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
 
 
+def _causal_attention(q, k, v, *, dropout_p: float, backend: str = "sdpa"):
+    if backend == "sdpa":
+        return F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p, is_causal=True)
+    if backend == "flex":
+        if dropout_p:
+            raise ValueError("attention_backend='flex' does not support dropout in this experimental path")
+        if q.requires_grad and not q.is_cuda:
+            raise ValueError("attention_backend='flex' on CPU supports inference/no-grad only")
+        try:
+            from torch.nn.attention.flex_attention import create_block_mask, flex_attention
+        except Exception as e:
+            raise ImportError("PyTorch FlexAttention is unavailable; use attention_backend='sdpa'") from e
+        T = q.size(-2)
+        # NOTE: the causal block mask is rebuilt every call (not cached). Fine
+        # for this experimental/no-grad path; a real training run should cache
+        # per-T masks and wrap flex_attention in torch.compile for the fused kernel.
+        block_mask = create_block_mask(
+            lambda _b, _h, q_idx, kv_idx: q_idx >= kv_idx,
+            B=None, H=None, Q_LEN=T, KV_LEN=T, device=q.device,
+        )
+        return flex_attention(q, k, v, block_mask=block_mask)
+    raise ValueError(f"unknown attention_backend={backend!r}; want 'sdpa' or 'flex'")
+
+
 class CausalSelfAttention(nn.Module):
     def __init__(self, cfg: GPTConfig):
         super().__init__()
@@ -135,9 +160,11 @@ class CausalSelfAttention(nn.Module):
             cos, sin = rope
             q = _apply_rope(q, cos, sin)
             k = _apply_rope(k, cos, sin)
-        # SDPA chooses Flash / mem-efficient automatically
-        y = F.scaled_dot_product_attention(
-            q, k, v, dropout_p=self.dropout if self.training else 0.0, is_causal=True
+        # SDPA chooses Flash / mem-efficient automatically; FlexAttention is an
+        # opt-in path for custom-mask experiments.
+        y = _causal_attention(
+            q, k, v, dropout_p=self.dropout if self.training else 0.0,
+            backend=self.cfg.attention_backend,
         )
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         return self.proj(y)

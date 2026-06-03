@@ -119,8 +119,10 @@ class Muon(torch.optim.Optimizer):
     """
 
     def __init__(self, params, lr: float = 0.02, momentum: float = 0.95,
-                 nesterov: bool = True, ns_steps: int = 5):
-        defaults = dict(lr=lr, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps)
+                 nesterov: bool = True, ns_steps: int = 5,
+                 weight_decay: float = 0.0, update_scale: float | None = None):
+        defaults = dict(lr=lr, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps,
+                        weight_decay=weight_decay, update_scale=update_scale)
         super().__init__(params, defaults)
         for group in self.param_groups:
             for p in group["params"]:
@@ -150,10 +152,14 @@ class Muon(torch.optim.Optimizer):
             momentum = group["momentum"]
             nesterov = group["nesterov"]
             ns_steps = group["ns_steps"]
+            weight_decay = group["weight_decay"]
+            update_scale = group["update_scale"]
             for p in group["params"]:
                 g = p.grad
                 if g is None:
                     continue
+                if weight_decay:
+                    p.mul_(1 - lr * weight_decay)
                 state = self.state[p]
                 if "momentum_buffer" not in state:
                     state["momentum_buffer"] = torch.zeros_like(g)
@@ -168,6 +174,8 @@ class Muon(torch.optim.Optimizer):
                 # Scale by sqrt(max(rows, cols)) so update RMS is comparable
                 # across differently-shaped matrices (Keller Jordan convention).
                 scale = max(full_p.size(0), full_p.size(1)) ** 0.5
+                if update_scale is not None:
+                    scale *= float(update_scale)
                 _apply_update_local(p, ortho, lr * scale)
         return loss
 
@@ -215,6 +223,8 @@ def split_muon_params(model):
 
 def build_muon_and_adamw(model, *, muon_lr: float, adamw_lr: float,
                            muon_momentum: float = 0.95,
+                           muon_weight_decay: float = 0.0,
+                           muon_update_scale: float | None = None,
                            adamw_betas=(0.9, 0.95),
                            weight_decay: float = 0.1, fused: bool = False):
     """Convenience builder: split model params and return both optimizers.
@@ -230,7 +240,10 @@ def build_muon_and_adamw(model, *, muon_lr: float, adamw_lr: float,
     muon_params, adamw_params = split_muon_params(model)
     optims = []
     if muon_params:
-        optims.append(Muon(muon_params, lr=muon_lr, momentum=muon_momentum))
+        optims.append(Muon(
+            muon_params, lr=muon_lr, momentum=muon_momentum,
+            weight_decay=muon_weight_decay, update_scale=muon_update_scale,
+        ))
     if adamw_params:
         # 1-D params (norms, biases) shouldn't decay; this is the same
         # split as in training/optim.py:build_optimizer.

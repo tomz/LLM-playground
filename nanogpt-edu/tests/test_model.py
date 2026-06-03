@@ -12,6 +12,34 @@ def test_forward_and_loss():
     assert loss.dim() == 0 and loss.item() > 0
 
 
+def test_attention_backend_default_and_unknown_rejected():
+    base = GPTConfig(vocab_size=65, block_size=16, n_layer=1, n_head=4, n_kv_head=2, d_model=64, d_ffn=128)
+    assert base.attention_backend == "sdpa"
+    bad = GPTConfig(vocab_size=65, block_size=16, n_layer=1, n_head=4, n_kv_head=2,
+                    d_model=64, d_ffn=128, attention_backend="nope")
+    m = GPT(bad)
+    x = torch.randint(0, 65, (1, 8))
+    try:
+        m(x, x)
+    except ValueError as e:
+        assert "attention_backend" in str(e)
+        return
+    raise AssertionError("unknown attention backend should raise")
+
+
+def test_flex_attention_backend_if_available():
+    pytest = __import__("pytest")
+    pytest.importorskip("torch.nn.attention.flex_attention")
+    cfg = GPTConfig(vocab_size=65, block_size=16, n_layer=1, n_head=4, n_kv_head=2,
+                    d_model=64, d_ffn=128, attention_backend="flex")
+    m = GPT(cfg).eval()
+    x = torch.randint(0, 65, (1, 8))
+    with torch.no_grad():
+        logits, loss = m(x, x)
+    assert logits.shape == (1, 8, 65)
+    assert torch.isfinite(loss)
+
+
 def test_generate():
     cfg = GPTConfig(vocab_size=65, block_size=32, n_layer=2, n_head=4, n_kv_head=2, d_model=64, d_ffn=128)
     m = GPT(cfg).eval()

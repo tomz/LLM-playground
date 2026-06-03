@@ -43,6 +43,15 @@ def test_load_unknown_source_raises():
         pref.load({"source": "nope"})
 
 
+def test_binary_feedback_adapter_derives_kto_rows():
+    from cf_pref import binary
+
+    ds = binary.load({"source": "builtin", "repeat": 1, "format": "text"})
+    assert len(ds) == 2 * len(pref.BUILTIN_PREFERENCES)
+    assert {"prompt", "completion", "label"} <= set(ds[0])
+    assert {ex["label"] for ex in ds} == {True, False}
+
+
 def test_chosen_solutions_actually_pass_their_verifier():
     # Cross-check against the RLVR verifier: every 'chosen' answer must pass the
     # matching unit tests, and every 'rejected' must fail — otherwise the
@@ -86,6 +95,107 @@ def test_make_config_filters_unknown_kwargs():
         "this_field_does_not_exist": 123,   # must be dropped, not crash
     })
     assert cfg.beta == 0.2
+
+
+def test_simpo_loss_decreases_as_normalized_margin_grows():
+    from cf_pref.objectives import simpo_loss
+    import torch
+
+    lengths = torch.tensor([10.0])
+    low_margin = simpo_loss(torch.tensor([-8.0]), torch.tensor([-9.0]), lengths, lengths, beta=2.0, gamma=0.0)
+    high_margin = simpo_loss(torch.tensor([-6.0]), torch.tensor([-9.0]), lengths, lengths, beta=2.0, gamma=0.0)
+    assert high_margin < low_margin
+
+
+def test_kto_loss_rewards_desirable_and_undesirable_directions():
+    from cf_pref.objectives import kto_loss
+    import torch
+
+    ref = torch.zeros(1)
+    desirable_bad = kto_loss(torch.tensor([-1.0]), ref, torch.tensor([True]), beta=1.0)
+    desirable_good = kto_loss(torch.tensor([1.0]), ref, torch.tensor([True]), beta=1.0)
+    undesirable_bad = kto_loss(torch.tensor([1.0]), ref, torch.tensor([False]), beta=1.0)
+    undesirable_good = kto_loss(torch.tensor([-1.0]), ref, torch.tensor([False]), beta=1.0)
+    assert desirable_good < desirable_bad
+    assert undesirable_good < undesirable_bad
+
+
+def test_simpo_objective_selects_simpo_loss_type_if_supported():
+    from cf_pref.dpo_train import _make_config
+    from trl import DPOConfig
+
+    cfg = _make_config(DPOConfig, {
+        "output_dir": "out/x", "beta": 0.2, "bf16": False, "loss_type": "simpo",
+    })
+    # Don't silently pass if the field vanishes — a missing loss_type means our
+    # simpo wiring assumption is broken and the test must say so.
+    assert hasattr(cfg, "loss_type"), "DPOConfig lost loss_type; simpo wiring needs review"
+    lt = cfg.loss_type if isinstance(cfg.loss_type, (list, tuple)) else [cfg.loss_type]
+    assert "simpo" in lt
+
+
+def _min_pref_cfg(objective: str) -> dict:
+    # Minimal config exercising build_pref_trainer's dispatch without a GPU.
+    # dtype is float32 so neither bf16 nor fp16 is requested on CPU-only CI.
+    return {
+        "out_dir": "out/x", "seed": 0, "method": "lora",
+        "model": {"dtype": "float32"},
+        "train": {"epochs": 1, "batch_size": 1, "grad_accum": 1, "lr": 1e-6,
+                  "warmup_ratio": 0.0, "weight_decay": 0.0, "grad_clip": 1.0,
+                  "log_every": 1, "save_every": 1, "max_seq_len": 64},
+        "pref": {"objective": objective},
+    }
+
+
+def test_simpo_objective_routes_through_dpo_trainer_reference_free(monkeypatch):
+    # End-to-end through build_pref_trainer's simpo branch: capture the args
+    # handed to DPOTrainer so we verify the *wiring*, not just a standalone
+    # config object. A real model load is unnecessary — the branch logic
+    # (loss_type default, ref-free flags, ref_model=None) is what can regress.
+    import trl
+    from cf_pref import dpo_train
+
+    captured = {}
+
+    def fake_trainer(*, model, ref_model, args, train_dataset, processing_class):
+        captured.update(model=model, ref_model=ref_model, args=args,
+                        train_dataset=train_dataset, processing_class=processing_class)
+        return "TRAINER"
+
+    monkeypatch.setattr(trl, "DPOTrainer", fake_trainer)
+
+    sentinel_model, sentinel_tok, sentinel_ds = object(), object(), object()
+    out = dpo_train.build_pref_trainer(
+        sentinel_model, sentinel_tok, sentinel_ds, _min_pref_cfg("simpo"),
+    )
+
+    assert out == "TRAINER"
+    # Reference-free: no separate reference model is loaded.
+    assert captured["ref_model"] is None
+    assert captured["model"] is sentinel_model
+    assert captured["processing_class"] is sentinel_tok
+    # SimPO loss is selected by default for the simpo objective...
+    args = captured["args"]
+    assert "simpo" in (args.loss_type if isinstance(args.loss_type, (list, tuple)) else [args.loss_type])
+    # ...and the reference-sync schedule is disabled (no ref model to sync to).
+    assert getattr(args, "ref_model_sync_steps", None) is None
+    assert args.beta == 0.1
+
+
+def test_dpo_objective_keeps_default_sigmoid_loss(monkeypatch):
+    # Guardrail: the default 'dpo' objective must NOT inherit simpo settings.
+    import trl
+    from cf_pref import dpo_train
+
+    captured = {}
+    monkeypatch.setattr(trl, "DPOTrainer",
+                        lambda **kw: captured.update(kw) or "TRAINER")
+
+    dpo_train.build_pref_trainer(object(), object(), object(), _min_pref_cfg("dpo"))
+    args = captured["args"]
+    lt = args.loss_type if isinstance(args.loss_type, (list, tuple)) else [args.loss_type]
+    assert "sigmoid" in lt
+    assert "simpo" not in lt
 
 
 def test_orpo_missing_raises_actionable_error():

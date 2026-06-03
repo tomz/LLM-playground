@@ -46,6 +46,7 @@ from .agentic import (
     make_calculator,
     make_keyvalue_store,
 )
+from .selfplay import Candidate, Generation, evaluate_candidate, run_selfplay, scripted_policy
 from .rollout import sample_group, GroupRollout
 from .grpo import GRPOConfig, group_advantages, grpo_step, run_grpo, run_grpo_async
 
@@ -81,6 +82,11 @@ __all__ = [
     "parse_action",
     "make_calculator",
     "make_keyvalue_store",
+    "Candidate",
+    "Generation",
+    "evaluate_candidate",
+    "run_selfplay",
+    "scripted_policy",
     "sample_group",
     "GroupRollout",
     "GRPOConfig",

@@ -35,6 +35,7 @@ class GPTConfig:
                                  # uses the main head only, so zero infer cost.
     mtp_weight: float = 0.3      # λ on the averaged auxiliary loss (DeepSeek-V3
                                  # used 0.3).
+    attention_backend: str = "sdpa"  # "sdpa" default; "flex" for mask experiments.
 
     @property
     def head_dim(self) -> int:
@@ -71,6 +72,35 @@ def apply_rope(x, cos, sin):
     return torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
 
 
+def causal_attention(q, k, v, *, dropout_p: float, backend: str = "sdpa"):
+    """Causal attention backend switch.
+
+    ``flex`` is opt-in for long-context/document-mask experiments. The default
+    remains SDPA, which lets PyTorch choose Flash/mem-efficient kernels.
+    """
+    if backend == "sdpa":
+        return F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p, is_causal=True)
+    if backend == "flex":
+        if dropout_p:
+            raise ValueError("attention_backend='flex' does not support dropout in this toy path")
+        if q.requires_grad and not q.is_cuda:
+            raise ValueError("attention_backend='flex' on CPU supports inference/no-grad only")
+        try:
+            from torch.nn.attention.flex_attention import create_block_mask, flex_attention
+        except Exception as e:
+            raise ImportError("PyTorch FlexAttention is unavailable; use attention_backend='sdpa'") from e
+        T = q.size(-2)
+        # NOTE: the causal block mask is rebuilt every call (not cached). Fine
+        # for this toy/no-grad path; a real run should cache per-T masks and wrap
+        # flex_attention in torch.compile for the fused kernel.
+        block_mask = create_block_mask(
+            lambda _b, _h, q_idx, kv_idx: q_idx >= kv_idx,
+            B=None, H=None, Q_LEN=T, KV_LEN=T, device=q.device,
+        )
+        return flex_attention(q, k, v, block_mask=block_mask)
+    raise ValueError(f"unknown attention_backend={backend!r}; want 'sdpa' or 'flex'")
+
+
 class GQAttention(nn.Module):
     def __init__(self, cfg: GPTConfig):
         super().__init__()
@@ -102,8 +132,9 @@ class GQAttention(nn.Module):
             k = k.repeat_interleave(rep, dim=1)
             v = v.repeat_interleave(rep, dim=1)
         # PyTorch's SDPA picks Flash/mem-eff if available
-        out = F.scaled_dot_product_attention(
-            q, k, v, dropout_p=self.dropout if self.training else 0.0, is_causal=True
+        out = causal_attention(
+            q, k, v, dropout_p=self.dropout if self.training else 0.0,
+            backend=self.cfg.attention_backend,
         )
         out = out.transpose(1, 2).contiguous().view(B, T, H * D)
         return self.o_proj(out)

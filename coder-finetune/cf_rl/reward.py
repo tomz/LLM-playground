@@ -152,6 +152,66 @@ def soft_length_penalty(
     return out
 
 
+def overlong_reward_shaping(
+    prompts=None,
+    completions=None,
+    *,
+    tokenizer=None,
+    max_tokens: int = 1024,
+    soft_window: int = 128,
+    coef: float = 0.2,
+    **kwargs,
+) -> list[float]:
+    """DAPO-style overlong shaping for responses that exceed the hard budget.
+
+    It is zero under ``max_tokens - soft_window``, then ramps linearly to
+    ``-coef`` at ``max_tokens`` and stays there. This keeps the signal smooth
+    near the boundary instead of turning every over-budget sample into the same
+    cliff penalty.
+
+    COST: this re-tokenizes each completion (``tokenizer(text)``) once per call.
+    In a GRPO loop that is O(batch * group) extra tokenizer passes per step. If
+    the trainer already has per-sample token counts, prefer passing those in;
+    the whitespace-word fallback (no ``tokenizer``) avoids the cost entirely for
+    smoke runs.
+    """
+    assert completions is not None
+    start = max(0, max_tokens - soft_window)
+    width = max(1, max_tokens - start)
+    out: list[float] = []
+    for comp in completions:
+        text = _completion_text(comp)
+        n = len(tokenizer(text)["input_ids"]) if tokenizer is not None else len(text.split())
+        if n <= start:
+            out.append(0.0)
+        else:
+            out.append(-coef * min(1.0, (n - start) / width))
+    return out
+
+
+def dynamic_sampling_mask(rewards, group_size: int) -> list[bool]:
+    """Return False for all-correct/all-wrong groups, True for useful groups.
+
+    DAPO's dynamic sampling avoids spending policy-gradient work on groups with
+    zero relative signal. This pure helper is intentionally bounded and side
+    effect free; any trainer integration must cap re-sampling attempts.
+    """
+    n = len(rewards)
+    if group_size <= 0:
+        raise ValueError(f"group_size must be positive, got {group_size}")
+    if n % group_size != 0:
+        raise ValueError(f"len(rewards)={n} is not a multiple of group_size={group_size}")
+    mask: list[bool] = []
+    for start in range(0, n, group_size):
+        group = [float(r) for r in rewards[start:start + group_size]]
+        # Boundary: an exact 0.0 counts as "wrong" (r <= 0.0), so a group of
+        # all-zeros is dropped, but a group mixing 0.0 with positives is kept —
+        # the 0.0 is a distinct (negative) signal that still yields advantage.
+        keep = not (all(r <= 0.0 for r in group) or all(r > 0.0 for r in group))
+        mask.extend([keep] * group_size)
+    return mask
+
+
 def group_standardize_advantages(
     rewards,
     group_size: int,

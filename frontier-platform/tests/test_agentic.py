@@ -10,6 +10,7 @@ from platform.rl.agentic import (
     parse_action,
     rollout_episode,
 )
+from platform.rl.selfplay import Candidate, run_selfplay, scripted_policy
 
 
 def test_parse_action_tool_final_noop():
@@ -88,3 +89,21 @@ def test_rollout_episode_step_budget_and_malformed():
     assert traj.steps == 3            # hit the step budget
     assert traj.malformed == 3
     assert traj.reward == 0.0
+
+
+def test_selfplay_loop_keeps_better_tool_using_policy():
+    env = ToolEnv([make_calculator()], max_steps=3)
+    tasks = ["what is 21*2?"]
+    verifier = lambda _task, ans: 1.0 if "42" in ans else 0.0
+    bad = Candidate("bad", scripted_policy(FINAL + " 0"))
+    good = Candidate("good", scripted_policy(
+        TOOL_CALL + '{"name": "calculator", "args": {"expr": "21*2"}}',
+        FINAL + " 42",
+    ))
+
+    def mutator(policy, _rng):
+        return policy
+
+    history = run_selfplay([bad, good], env, tasks, verifier, mutator, generations=2, top_k=1)
+    assert history[0].best.name == "good"
+    assert history[-1].best.score == 1.0

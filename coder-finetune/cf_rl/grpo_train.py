@@ -33,6 +33,7 @@ from cf_rl import prompts as grpo_data  # noqa: E402
 from cf_rl.reward import (  # noqa: E402
     code_unit_test_reward,
     format_reward,
+    overlong_reward_shaping,
     soft_length_penalty,
 )
 from train import build_model_and_tokenizer, build_model_and_tokenizer_unsloth  # noqa: E402
@@ -60,6 +61,16 @@ def build_reward_funcs(cfg: dict, tokenizer):
             )
         _len.__name__ = "soft_length_penalty"
         funcs.append(_len)
+    if g.get("overlong_shaping", False):
+        def _overlong(prompts=None, completions=None, **kw):
+            return overlong_reward_shaping(
+                prompts, completions, tokenizer=tokenizer,
+                max_tokens=g.get("overlong_max_tokens", g.get("max_completion_length", 512)),
+                soft_window=g.get("overlong_soft_window", 128),
+                coef=g.get("overlong_coef", 0.2), **kw,
+            )
+        _overlong.__name__ = "overlong_reward_shaping"
+        funcs.append(_overlong)
     return funcs
 
 
@@ -86,6 +97,8 @@ def grpo_extra_kwargs(cfg: dict) -> dict:
             extra["vllm_gpu_memory_utilization"] = float(
                 g["vllm_gpu_memory_utilization"]
             )
+    if g.get("epsilon_high") is not None:
+        extra["epsilon_high"] = float(g["epsilon_high"])
     return extra
 
 

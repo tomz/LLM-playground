@@ -3,7 +3,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from cf_rl.reward import (
     code_unit_test_reward,
+    dynamic_sampling_mask,
     format_reward,
+    overlong_reward_shaping,
     soft_length_penalty,
     _completion_text,
 )
@@ -87,6 +89,25 @@ def test_length_penalty_zero_under_target_then_ramps():
     r = soft_length_penalty(completions=[short, long], target_tokens=384, max_tokens=1024, coef=0.1)
     assert r[0] == 0.0
     assert r[1] < 0.0
+
+
+def test_overlong_reward_shaping_ramps_near_hard_budget():
+    short = "word " * 4
+    mid = "word " * 9
+    long = "word " * 20
+    r = overlong_reward_shaping(
+        completions=[short, mid, long], max_tokens=10, soft_window=4, coef=0.2,
+    )
+    assert r[0] == 0.0
+    assert 0.0 > r[1] > -0.2
+    assert r[2] == -0.2
+
+
+def test_dynamic_sampling_mask_drops_zero_signal_groups():
+    # all-wrong and all-correct groups have no relative advantage signal; mixed
+    # groups are useful for GRPO/DAPO.
+    mask = dynamic_sampling_mask([0, 0, 1, 1, 0, 1], group_size=2)
+    assert mask == [False, False, False, False, True, True]
 
 
 def test_completion_text_normalizes_shapes():
