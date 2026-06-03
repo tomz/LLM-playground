@@ -40,7 +40,7 @@ frontier-platform/
 │   ├── model/            # transformer, attention variants, MoE, vision (toy VLM)
 │   ├── training/         # pretraining loop, optimizer, parallelism
 │   ├── alignment/        # SFT, reward model, PPO, DPO
-│   ├── rl/               # RLVR: verifiers + group rollout + GRPO (reasoning post-train)
+│   ├── rl/               # RLVR: verifiers + group rollout + GRPO + self-play (reasoning post-train)
 │   ├── sim/              # discrete-event program simulator (MoE/FP8/RLVR economics)
 │   ├── eval/             # benchmark harness
 │   ├── safety/           # classifiers + red-team harness
@@ -88,7 +88,7 @@ frontier-platform/
 - ✅ Tier 2 — **training**: AdamW (WD-by-dim), cosine+warmup LR, single-process ParallelEngine, DCP-style checkpointing, SpikeMonitor + RewindController, `Trainer.fit`.
 - ✅ Tier 2 — **serving**: in-process `TorchEngine` with streaming generate, router.
 - ✅ Tier 3 — **alignment**: SFT (assistant-token loss mask), BT reward model, DPO (sigmoid / IPO / KTO variants), PPO with GAE + KL-to-reference penalty + clipped objective + value head.
-- ✅ Tier 3 — **RLVR / reasoning** (`platform/rl/`, toy-functional): verifiable reward functions (math exact-answer, string/regex, length penalty; sandboxed code-test verifier stubbed), group rollout, and **GRPO** (value-network-free, group-relative advantages + KL-to-reference). See `docs/15-reasoning-rl-rlvr.md`.
+- ✅ Tier 3 — **RLVR / reasoning** (`platform/rl/`, toy-functional): verifiable reward functions (math exact-answer, string/regex, length penalty; sandboxed code-test verifier stubbed), group rollout, **GRPO** (value-network-free, group-relative advantages + KL-to-reference), and a deterministic **self-play / evolutionary loop** (`selfplay.py`: evaluate → keep top-k → mutate → repeat, an AlphaEvolve/SPIN-shaped closed loop over policy callables). See `docs/15-reasoning-rl-rlvr.md`.
 - ✅ Tier 3 — **multimodality** (`platform/model/vision.py`, toy-functional): LLaVA-style `VisionEncoder` + `Projector` + `VisionLanguageModel` that patchifies an image, runs a small ViT, and prepends projected image tokens to the LM (loss on text positions only). Runs on CPU; encoder is randomly initialized. See `docs/16-multimodality.md`.
 - ✅ **Program simulator** (`platform/sim/`, `scripts/simulate.py`): end-to-end discrete-event model of the whole program now prices **sparse MoE** (active-param FLOPs), **FP8/NVFP4** throughput, and an **RLVR/GRPO reasoning phase** whose compute *and* capability lift feed the eval predictors — plus `GB200`/`B300` GPU rows and `1t`/`2t` presets for hardware we don't own. See `docs/13-simulation.md`.
 - ✅ End-to-end **smoke pipeline** (`bash scripts/smoke_pipeline.sh`, < 10s CPU): corpus → shards → pretrain → SFT → RM → DPO → PPO → eval → generate.

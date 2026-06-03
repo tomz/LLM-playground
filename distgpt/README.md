@@ -18,7 +18,9 @@ This code is real and self-consistent. It will not actually finish a 70B run on 
 
 ## Layout
 
-> **Recent additions:** Muon optimizer, Liger fused linear-CE, Transformer
+> **Recent additions:** Muon optimizer (with opt-in decoupled `weight_decay`
+> and `update_scale` knobs; defaults reproduce the prior update bit-for-bit),
+> Liger fused linear-CE, Transformer
 > Engine FP8 path, Megatron-style sequence parallelism, HuggingFace export
 > + lm-evaluation-harness CLI, recipe configs (cooldown / longctx / Muon
 > speedrun / **DeepSeek-V3-style**), warm-start checkpoint loading,

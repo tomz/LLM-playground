@@ -28,7 +28,12 @@ Uses HuggingFace `transformers` + `peft` + `trl`; no custom training loop.
    against a frozen reference; with a LoRA adapter the reference is just the base
    model with adapters disabled, so no second model copy is loaded. **ORPO**
    (Hong et al.) folds the same signal into SFT with an odds-ratio penalty and is
-   reference-free. This is the cheap, stable rung you run *before* online RL.
+   reference-free. **SimPO** (`pref.objective: simpo`) is a third, reference-free
+   pairwise objective routed through TRL's `DPOTrainer` (`loss_type: simpo`) — no
+   reference model to sync. **KTO** consumes *unary* desirable/undesirable labels
+   instead of pairs; its reference loss lives in `cf_pref/objectives.py` and a
+   binary data adapter in `cf_pref/binary.py` derives a tiny KTO set from the
+   built-in pairs. This is the cheap, stable rung you run *before* online RL.
 3. **RLVR / GRPO (`cf_rl/grpo_train.py`)** — *RL against a verifiable reward*:
    sample G completions per prompt, **run each against hidden unit tests**,
    standardize the rewards within the group, take a clipped policy step (GRPO —
@@ -58,8 +63,13 @@ The GRPO prompt set carries unit tests instead of gold answers
 (`cf_rl/prompts.py`: a dependency-free `builtin` set, or real `mbpp` tasks).
 Reward functions live in `cf_rl/reward.py` (correctness verifier always on;
 optional format / length shaping, mirroring frontier-platform's
-`CompositeReward`). **GRPO executes model-generated code every step — that *is*
-the reward — so run untrusted models inside Docker/gVisor.**
+`CompositeReward`). Two **DAPO** add-ons are config-gated: **overlong reward
+shaping** (`grpo.overlong_shaping: true`) ramps a smooth penalty as a completion
+approaches the hard token budget instead of a single cliff, and
+**`dynamic_sampling_mask`** drops all-correct / all-wrong groups that carry zero
+relative-advantage signal. The DAPO `epsilon_high` decoupled-clip knob is exposed
+via `grpo.epsilon_high`. **GRPO executes model-generated code every step — that
+*is* the reward — so run untrusted models inside Docker/gVisor.**
 
 
 ## Sandbox & safety
@@ -122,7 +132,7 @@ CUDA_VISIBLE_DEVICES=0 .venv/bin/python train.py --config configs/lora_5060ti.ya
 coder-finetune/
 ├── configs/        # YAML per recipe (SFT + dpo_3050.yaml + grpo_3050.yaml)
 ├── cf_data/        # SFT dataset loaders (HF datasets + your own repo + synthetic)
-├── cf_pref/        # DPO/ORPO: preference pairs + dpo_train.py
+├── cf_pref/        # DPO/ORPO/SimPO pairs + KTO objectives/binary adapter + dpo_train.py
 ├── cf_rl/          # RLVR/GRPO: verifiable reward + prompt sets + grpo_train.py
 ├── train.py        # SFT / LoRA / QLoRA via TRL SFTTrainer
 ├── eval/           # HumanEval+ runner with Docker sandbox (also the RL verifier)

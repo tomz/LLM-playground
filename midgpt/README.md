@@ -14,6 +14,7 @@ GPT-2 scale (124M–1.5B). Real BPE tokenizer (`tiktoken`), WikiText-103 or Open
 | Multi-GPU                     | —          | torchrun + DDP |
 | Eval                          | held-out loss | loss + perplexity + HellaSwag (zero-shot) |
 | FlashAttention                | SDPA picks it | SDPA picks it; checkpoint-friendly |
+| Attention backend             | SDPA / opt-in FlexAttention | SDPA / opt-in FlexAttention (`attention_backend`) |
 | Logging                       | print      | print + JSON lines + optional W&B |
 | Resume                        | last ckpt  | last ckpt with full RNG/optim/loader state |
 | Optimizer                     | AdamW / Muon | AdamW / Muon (orthogonalized 2D-weight updates) |
@@ -110,6 +111,13 @@ defaults; flip them for a head-to-head ablation on the same loop.
 | `norm_kind` | `layernorm` | `rmsnorm`  | Replaces all block + final norms with RMSNorm (Llama weight-only) |
 | `mlp_kind`  | `gelu`      | `swiglu`   | Replaces GELU MLP with gated `proj(silu(w1 x) * w3 x)` |
 
+A fourth knob, `attention_backend` (default `sdpa`), opts into PyTorch
+**FlexAttention** (`attention_backend: flex`) for custom-mask / long-context
+experiments; SDPA stays the default and picks Flash/mem-efficient kernels
+automatically. The flex path is guarded (no dropout, CPU is inference/no-grad
+only) and rebuilds its causal block mask per call — fine for experiments, but a
+real run should cache masks and `torch.compile` the kernel.
+
 The recipe `configs/gpt2_350m_llamafied_fweb_5060ti.yaml` flips all three on
 for a direct A/B against the GPT-2 baseline at the same parameter count
 (d_ffn is reduced from 4096 to 2730 ≈ 8/3·d_model to keep SwiGLU's 3-matrix
@@ -134,6 +142,17 @@ FFN iso-param with GELU's 2-matrix).
   python lm_eval_runner.py \
       --ckpt out/best.pt --tasks hellaswag,lambada_openai \
       --device cuda --output results.json
+  ```
+
+- **HF export validator** (`tools/validate_hf_export.py`) — dependency-light
+  check that an exported directory has a valid `config.json` (required GPT-2
+  fields), `generation_config.json`, weights, and tokenizer, then prints the
+  vLLM serving command. CI-friendly; `--bench` optionally runs a tiny vLLM
+  generation smoke when vLLM is installed.
+
+  ```bash
+  python tools/validate_hf_export.py out/hf_export          # fast structural check
+  python tools/validate_hf_export.py out/hf_export --bench  # + vLLM generation smoke
   ```
 
 ```bash

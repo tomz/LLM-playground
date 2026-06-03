@@ -120,6 +120,7 @@ opt-in config flags — small, readable, and pedagogically interesting:
 | **Zero-init projections** | `zero_init_proj=True` | Zero-inits the residual-write matrices (attn `o_proj`, ffn `w2`) so each block starts as identity — stable high-LR warmup (muP-like). |
 | **Untied embeddings** | `tie_embeddings=False` | Gives `lm_head` its own weight; helps loss once you have the tokens to support the extra params. |
 | **Multi-Token Prediction** | `mtp_tokens=2` (+`mtp_weight`) | Auxiliary heads predict tokens n+2/n+3 alongside n+1 (DeepSeek-V3 style). Denser gradient → better sample efficiency in early training. *Train-only* — `generate()` uses the main head, so zero inference cost. |
+| **FlexAttention backend** | `attention_backend='flex'` | Swaps SDPA for PyTorch FlexAttention (default stays `'sdpa'`). An opt-in path for custom-mask / long-context experiments; guarded (no dropout, CPU = inference/no-grad only) and rebuilds the causal block mask per call. See `model.py`. |
 
 A ready-made head-to-head config is `configs/tiny_muon.py` — same 10.65M
 architecture as `tiny_clean.py`, same iters/budget, all four knobs on:
@@ -233,10 +234,11 @@ DataComp-LM baseline (~10% better on MMLU at matched compute than FineWeb-Edu).
 ## What it deliberately omits
 
 FSDP, MoE, RLHF — see the `mid-scale-trainer` and `distributed-trainer`
-projects. FlashAttention is used implicitly via PyTorch SDPA. Many of the
-modded-nanogpt speedrun's heavier tricks (FlexAttention long-short windows,
-FP8 matmul, U-net skip connections, value embeddings) are also omitted to keep
-the core legible — the cheapest/most-instructive ones (Muon, QK-norm,
+projects. FlashAttention is used implicitly via PyTorch SDPA (an opt-in
+`attention_backend='flex'` FlexAttention path also exists for mask experiments).
+Many of the modded-nanogpt speedrun's heavier tricks (FlexAttention long-short
+windows, FP8 matmul, U-net skip connections, value embeddings) are also omitted
+to keep the core legible — the cheapest/most-instructive ones (Muon, QK-norm,
 zero-init, untied head, and DeepSeek-V3-style Multi-Token Prediction) are
 available as opt-in flags; see above. FP8 in
 particular needs Hopper+ and is useless on consumer Ampere/Blackwell cards.
