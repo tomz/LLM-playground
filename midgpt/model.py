@@ -22,6 +22,14 @@ class GPTConfig:
     # RMSNorm on Q and K before attention. Keeps attention-logit scale bounded so
     # you can train at higher LR without loss spikes. Adds 2 tiny norms per block.
     qk_norm: bool = False
+    # Opt-in zero-init of the residual-write projections (attn ``proj`` + MLP
+    # ``proj``) so each block starts as the exact identity ``x + 0``. muP-like:
+    # early/high-LR steps can't inject attention/FFN noise into the residual
+    # before the norms and routing settle. Brings midgpt to parity with the
+    # ``zero_init_proj`` knob in nanogpt-edu / distgpt; MAI-Thinking-1 (§1) uses
+    # the same trick at scale to keep early attention noise from perturbing MoE
+    # routing. Default-off (GPT-2 keeps the 1/sqrt(2N) residual rescale only).
+    zero_init_proj: bool = False
     # ----- Llama-flavored architecture knobs (default-off; existing GPT-2
     # recipes are bit-identical when these stay at their defaults) -----
     #
@@ -292,6 +300,21 @@ class GPT(nn.Module):
         for n, p in self.named_parameters():
             if n.endswith("proj.weight"):
                 nn.init.normal_(p, mean=0.0, std=0.02 / (2 * cfg.n_layer) ** 0.5)
+        # Opt-in: zero-init the residual-write projections (attn ``proj`` + MLP
+        # ``proj``) so every block starts as the exact identity map ``x + 0``.
+        # Done *after* the rescale loop above so it isn't clobbered. Both
+        # CausalSelfAttention and MLP/SwiGLU name their output matrix ``proj``,
+        # so this catches the attention and FFN residual writes uniformly. The
+        # bias (when ``cfg.bias``) is already zeroed by ``_init``; zero it again
+        # defensively so the block output is exactly zero at step 0.
+        if cfg.zero_init_proj:
+            for blk in self.blocks:
+                nn.init.zeros_(blk.attn.proj.weight)
+                if blk.attn.proj.bias is not None:
+                    nn.init.zeros_(blk.attn.proj.bias)
+                nn.init.zeros_(blk.mlp.proj.weight)
+                if blk.mlp.proj.bias is not None:
+                    nn.init.zeros_(blk.mlp.proj.bias)
 
     def _init(self, m):
         if isinstance(m, nn.Linear):

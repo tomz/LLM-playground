@@ -65,6 +65,69 @@ def test_qk_norm_opt_in():
     assert any(p.grad is not None for p in m.parameters())
 
 
+def test_zero_init_proj_off_by_default():
+    """GPT-2 parity: without the flag the residual-write projections are the
+    1/sqrt(2N)-rescaled normal init, not zero."""
+    cfg = GPTConfig(vocab_size=64, block_size=16, n_layer=2, n_head=2, d_model=32, d_ffn=64)
+    assert cfg.zero_init_proj is False
+    m = GPT(cfg)
+    assert not torch.all(m.blocks[0].attn.proj.weight == 0)
+    assert not torch.all(m.blocks[0].mlp.proj.weight == 0)
+
+
+def test_zero_init_proj_makes_blocks_identity_at_init():
+    """With zero_init_proj the attn ``proj`` and MLP ``proj`` start at exactly
+    zero, so every block is the identity map ``x + 0`` at init. Running the
+    trunk therefore leaves the input embedding unchanged (dropout off / eval).
+    This is the muP-like stability property the knob buys."""
+    torch.manual_seed(0)
+    cfg = GPTConfig(vocab_size=64, block_size=16, n_layer=3, n_head=2,
+                    d_model=32, d_ffn=64, zero_init_proj=True)
+    m = GPT(cfg).eval()
+    # Both residual-write matrices are exactly zero (after the rescale loop).
+    for blk in m.blocks:
+        assert torch.all(blk.attn.proj.weight == 0)
+        assert torch.all(blk.mlp.proj.weight == 0)
+    # The trunk is the identity at init: post-block hidden == input embedding.
+    idx = torch.randint(0, 64, (2, 16))
+    pos = torch.arange(16)
+    x0 = m.tok_emb(idx) + m.pos_emb(pos)
+    x = x0.clone()
+    for blk in m.blocks:
+        x = blk(x, rope=None)
+    assert torch.allclose(x, x0, atol=1e-6)
+
+
+def test_zero_init_proj_trains_after_init():
+    """Identity-at-init must not be a dead start: gradients flow into the zeroed
+    projections on the first step (the upstream norms/attention are nonzero, so
+    d_loss/d_proj.weight != 0) and a step moves them off zero."""
+    torch.manual_seed(0)
+    cfg = GPTConfig(vocab_size=64, block_size=16, n_layer=2, n_head=2,
+                    d_model=32, d_ffn=64, zero_init_proj=True)
+    m = GPT(cfg).train()
+    opt = torch.optim.AdamW(m.parameters(), lr=1e-2)
+    x = torch.randint(0, 64, (2, 16))
+    _, loss = m(x, x)
+    loss.backward()
+    assert torch.isfinite(loss)
+    assert m.blocks[0].attn.proj.weight.grad is not None
+    assert torch.any(m.blocks[0].attn.proj.weight.grad != 0)
+    opt.step()
+    assert not torch.all(m.blocks[0].attn.proj.weight == 0)
+
+
+def test_zero_init_proj_composes_with_swiglu():
+    """The knob keys on the ``proj`` attribute, which both MLP and SwiGLU share,
+    so it must also zero the SwiGLU down-projection under a llamafied config."""
+    cfg = GPTConfig(vocab_size=64, block_size=16, n_layer=2, n_head=2, d_model=32,
+                    d_ffn=64, zero_init_proj=True, mlp_kind="swiglu",
+                    norm_kind="rmsnorm", pos_kind="rope")
+    m = GPT(cfg)
+    assert torch.all(m.blocks[0].attn.proj.weight == 0)
+    assert torch.all(m.blocks[0].mlp.proj.weight == 0)
+
+
 def test_cosine_lr():
     assert cosine_lr(0, 100, 1000, 1.0, 0.1) > 0
     assert math.isclose(cosine_lr(100, 100, 1000, 1.0, 0.1), 1.0, abs_tol=1e-9)

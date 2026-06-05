@@ -19,6 +19,7 @@ GPT-2 scale (124M–1.5B). Real BPE tokenizer (`tiktoken`), WikiText-103 or Open
 | Resume                        | last ckpt  | last ckpt with full RNG/optim/loader state |
 | Optimizer                     | AdamW / Muon | AdamW / Muon (orthogonalized 2D-weight updates) |
 | QK-Norm stabilizer            | ✅ opt-in   | ✅ opt-in (`model.qk_norm`) |
+| Zero-init residual projections | ✅ opt-in  | ✅ opt-in (`model.zero_init_proj`) |
 | Fused linear-CE (Liger)       | —          | ✅ opt-in (`fused_ce`, GPU+Triton) |
 | Loss-spike rewind             | —          | ✅ opt-in (`stability.spike_monitor`) |
 | HuggingFace export            | —          | ✅ (`export_hf.py` → `GPT2LMHeadModel`) |
@@ -98,6 +99,15 @@ config-gated and off by default so existing runs are bit-for-bit unchanged.
   from the same final hidden state, contributing a `mtp_weight`-scaled CE
   auxiliary to the train loss. Train-only (eval/inference are unchanged),
   ~5-10% sample-efficiency on the DeepSeek-V3 ablation.
+- **Zero-init residual projections** — set `model.zero_init_proj: true`. Zeros
+  the two residual-write matrices in every block (attention `proj` + MLP/SwiGLU
+  `proj`) *after* the GPT-2 `1/sqrt(2N)` rescale, so each block starts as the
+  exact identity `x + 0`. muP-like: the early/high-LR phase can't inject
+  attention/FFN noise into the residual stream before the norms settle, which
+  is what lets you push the warmup LR. Brings midgpt to parity with the same
+  knob in `nanogpt-edu` / `distgpt`; MAI-Thinking-1 (§1) uses it at frontier
+  scale to keep early attention noise from perturbing MoE routing. Default-off
+  (a plain GPT-2 run keeps the rescale-only init, bit-for-bit unchanged).
 
 ### Architecture (Llama-style flips)
 
@@ -204,7 +214,7 @@ midgpt/
 ├── sample.py             # generation (greedy / top-k / top-p)
 ├── utils/                # logging, schedule, ckpt manager
 ├── configs/              # YAML per model size & flavor
-└── tests/                # 83 tests; CPU smoke + 2-rank gloo distributed
+└── tests/                # 87 tests; CPU smoke + 2-rank gloo distributed
 ```
 
 ## Apple Silicon (MPS) support
