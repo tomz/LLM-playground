@@ -7,3 +7,9 @@ JAAICODE.md
 **/.pytest_cache/
 **/__pycache__/
 graphify-out/
+
+# Tool internals / large local artifacts
+.jaaicode/
+**/.jaaicode/
+microsoft_paper.pdf
+*.pdf

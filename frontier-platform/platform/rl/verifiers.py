@@ -19,6 +19,7 @@ gVisor/Firecracker/nsjail — see docs/09-safety-redteam.md.
 """
 from __future__ import annotations
 
+import json
 import re
 from typing import Callable, Protocol
 
@@ -163,6 +164,243 @@ class MathExactVerifier:
             return False
 
 
+# ---------- IFEval-style objective constraint verifiers ----------
+#
+# RLVR doesn't only verify *answers*; instruction-following is verifiable too.
+# IFEval (Zhou et al. 2023) scores a response against a set of *objective,
+# programmatically-checkable* constraints ("write at least 3 paragraphs",
+# "include the keyword 'photosynthesis' twice", "respond in valid JSON", "no
+# commas"). Each constraint is a deterministic predicate over the response, so
+# the whole family slots straight into the Verifier protocol as a dense,
+# unhackable reward — the model can't game a regex when the regex *is* the task.
+#
+# A constraint is ``(name, **params)``; the checker returns True/False. The
+# verifier reward is the satisfied fraction (instruction-level accuracy) or
+# all-or-nothing (prompt-level strict accuracy, IFEval's headline metric).
+
+_WORD_RE = re.compile(r"\b\w+\b")
+_SENT_SPLIT_RE = re.compile(r"[.!?]+(?:\s|$)")
+_TITLE_RE = re.compile(r"<<(.+?)>>")
+_HIGHLIGHT_RE = re.compile(r"\*[^*\n]+\*")
+# A markdown bullet line: -, *, + or "1." / "1)" style enumerators.
+_BULLET_LINE_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\S", re.MULTILINE)
+# A fenced code block with an optional language tag (```json / ```python / ```).
+_ANY_FENCE_RE = re.compile(r"```[A-Za-z0-9_+-]*\s*(.*?)```", re.DOTALL)
+
+
+def _count_words(text: str) -> int:
+    return len(_WORD_RE.findall(text))
+
+
+def _count_sentences(text: str) -> int:
+    parts = [s for s in _SENT_SPLIT_RE.split(text.strip()) if s.strip()]
+    return len(parts)
+
+
+def _count_paragraphs(text: str) -> int:
+    # IFEval separates paragraphs with a line containing only '***'; fall back to
+    # blank-line separation when that marker is absent.
+    if "***" in text:
+        parts = [p for p in re.split(r"\n?\s*\*\*\*\s*\n?", text) if p.strip()]
+    else:
+        parts = [p for p in re.split(r"\n\s*\n", text.strip()) if p.strip()]
+    return len(parts)
+
+
+def _relation_ok(value: int, *, at_least: int | None, at_most: int | None,
+                 exactly: int | None) -> bool:
+    if exactly is not None:
+        return value == exactly
+    ok = True
+    if at_least is not None:
+        ok = ok and value >= at_least
+    if at_most is not None:
+        ok = ok and value <= at_most
+    return ok
+
+
+# Each checker: (response, params) -> bool. Kept module-level (not closures) so
+# the registry is introspectable and individually unit-testable.
+
+def _c_keyword_exists(resp: str, p: dict) -> bool:
+    kw = p["keyword"]
+    hay = resp if p.get("case_sensitive") else resp.lower()
+    needle = kw if p.get("case_sensitive") else kw.lower()
+    return needle in hay
+
+
+def _c_keyword_forbidden(resp: str, p: dict) -> bool:
+    return not _c_keyword_exists(resp, p)
+
+
+def _c_keyword_frequency(resp: str, p: dict) -> bool:
+    kw = p["keyword"]
+    hay = resp if p.get("case_sensitive") else resp.lower()
+    needle = kw if p.get("case_sensitive") else kw.lower()
+    count = hay.count(needle)
+    return _relation_ok(count, at_least=p.get("at_least"), at_most=p.get("at_most"),
+                        exactly=p.get("exactly"))
+
+
+def _c_word_count(resp: str, p: dict) -> bool:
+    return _relation_ok(_count_words(resp), at_least=p.get("at_least"),
+                        at_most=p.get("at_most"), exactly=p.get("exactly"))
+
+
+def _c_sentence_count(resp: str, p: dict) -> bool:
+    return _relation_ok(_count_sentences(resp), at_least=p.get("at_least"),
+                        at_most=p.get("at_most"), exactly=p.get("exactly"))
+
+
+def _c_paragraph_count(resp: str, p: dict) -> bool:
+    return _relation_ok(_count_paragraphs(resp), at_least=p.get("at_least"),
+                        at_most=p.get("at_most"), exactly=p.get("exactly"))
+
+
+def _c_bullets(resp: str, p: dict) -> bool:
+    n = len(_BULLET_LINE_RE.findall(resp))
+    return _relation_ok(n, at_least=p.get("at_least"), at_most=p.get("at_most"),
+                        exactly=p.get("exactly", p.get("count")))
+
+
+def _c_highlights(resp: str, p: dict) -> bool:
+    n = len(_HIGHLIGHT_RE.findall(resp))
+    return _relation_ok(n, at_least=p.get("at_least", p.get("count")),
+                        at_most=p.get("at_most"), exactly=p.get("exactly"))
+
+
+def _c_title(resp: str, p: dict) -> bool:
+    m = _TITLE_RE.findall(resp)
+    return len(m) >= 1 and any(t.strip() for t in m)
+
+
+def _c_json(resp: str, p: dict) -> bool:
+    text = resp.strip()
+    # Tolerate a ```json ... ``` (or any-language) fence around the payload.
+    m = _ANY_FENCE_RE.search(text)
+    if m:
+        text = m.group(1).strip()
+    try:
+        json.loads(text)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def _c_case_upper(resp: str, p: dict) -> bool:
+    letters = [c for c in resp if c.isalpha()]
+    return bool(letters) and all(c.isupper() for c in letters)
+
+
+def _c_case_lower(resp: str, p: dict) -> bool:
+    letters = [c for c in resp if c.isalpha()]
+    return bool(letters) and all(c.islower() for c in letters)
+
+
+def _c_startswith(resp: str, p: dict) -> bool:
+    return resp.strip().startswith(p["prefix"])
+
+
+def _c_endswith(resp: str, p: dict) -> bool:
+    return resp.strip().endswith(p["suffix"])
+
+
+def _c_quotation(resp: str, p: dict) -> bool:
+    t = resp.strip()
+    return len(t) >= 2 and t[0] == '"' and t[-1] == '"'
+
+
+def _c_no_commas(resp: str, p: dict) -> bool:
+    return "," not in resp
+
+
+CONSTRAINT_CHECKERS: dict[str, Callable[[str, dict], bool]] = {
+    "keywords:existence": _c_keyword_exists,
+    "keywords:forbidden": _c_keyword_forbidden,
+    "keywords:frequency": _c_keyword_frequency,
+    "length:words": _c_word_count,
+    "length:sentences": _c_sentence_count,
+    "length:paragraphs": _c_paragraph_count,
+    "format:bullets": _c_bullets,
+    "format:highlights": _c_highlights,
+    "format:title": _c_title,
+    "format:json": _c_json,
+    "case:upper": _c_case_upper,
+    "case:lower": _c_case_lower,
+    "startend:startswith": _c_startswith,
+    "startend:endswith": _c_endswith,
+    "startend:quotation": _c_quotation,
+    "punctuation:no_commas": _c_no_commas,
+}
+
+
+def check_constraint(name: str, response: str, **params) -> bool:
+    """Evaluate a single IFEval-style constraint against ``response``.
+
+    ``name`` must be a key of :data:`CONSTRAINT_CHECKERS`. Raises ``ValueError``
+    for unknown constraints (a typo'd constraint should fail loudly, not be
+    silently scored as satisfied)."""
+    try:
+        checker = CONSTRAINT_CHECKERS[name]
+    except KeyError:
+        raise ValueError(f"unknown constraint: {name!r}; "
+                         f"known: {sorted(CONSTRAINT_CHECKERS)}") from None
+    return checker(response, params)
+
+
+class ConstraintFollowingVerifier:
+    """Score instruction-following against a list of objective constraints.
+
+    Each constraint is a ``{"name": <key>, ...params}`` dict (or an equivalent
+    ``(name, params)`` tuple). Reward is:
+
+      * **all-or-nothing** (default, IFEval *prompt-level strict*): ``reward`` iff
+        *every* constraint holds, else 0.
+      * **fractional** (``all_or_nothing=False``, IFEval *instruction-level*):
+        ``reward * satisfied / total``.
+
+    The prompt argument is ignored (constraints are self-contained), so this is a
+    drop-in ``Verifier``. Use :meth:`breakdown` for per-constraint logging — it
+    plugs into ``CompositeReward``-style monitoring."""
+
+    def __init__(self, constraints: list, *, all_or_nothing: bool = True,
+                 reward: float = 1.0):
+        self.constraints = [self._normalize(c) for c in constraints]
+        self.all_or_nothing = all_or_nothing
+        self.reward = reward
+
+    @staticmethod
+    def _normalize(c) -> tuple[str, dict]:
+        if isinstance(c, dict):
+            params = dict(c)
+            name = params.pop("name", None) or params.pop("type", None)
+            if name is None:
+                raise ValueError(f"constraint dict needs a 'name': {c!r}")
+            return (name, params)
+        if isinstance(c, (tuple, list)) and len(c) == 2:
+            return (c[0], dict(c[1]))
+        raise ValueError(f"bad constraint spec: {c!r}")
+
+    def results(self, response: str) -> list[bool]:
+        return [check_constraint(name, response, **params)
+                for name, params in self.constraints]
+
+    def breakdown(self, prompt: str, response: str) -> dict[str, float]:
+        res = self.results(response)
+        out = {f"{name}#{i}": float(ok)
+               for i, ((name, _), ok) in enumerate(zip(self.constraints, res))}
+        out["satisfied_frac"] = (sum(res) / len(res)) if res else 0.0
+        return out
+
+    def __call__(self, prompt: str, response: str) -> float:
+        res = self.results(response)
+        if not res:
+            return 0.0
+        if self.all_or_nothing:
+            return self.reward if all(res) else 0.0
+        return self.reward * sum(res) / len(res)
+
+
 # ---------- sandboxed code (subprocess + rlimits) ----------
 
 class CodeUnitTestVerifier:
@@ -223,7 +461,8 @@ def _extract_code(response: str) -> str:
 def make_verifier(kind: str, **kwargs) -> Verifier:
     """Factory for the built-in verifiers.
 
-    kind ∈ {'contains', 'regex', 'math_exact', 'length_penalty', 'code_tests'}.
+    kind ∈ {'contains', 'regex', 'math_exact', 'length_penalty', 'code_tests',
+    'constraints'}.
     """
     if kind == "contains":
         return reward_contains(**kwargs)
@@ -235,4 +474,6 @@ def make_verifier(kind: str, **kwargs) -> Verifier:
         return length_penalty(**kwargs)
     if kind == "code_tests":
         return CodeUnitTestVerifier(**kwargs)
+    if kind == "constraints":
+        return ConstraintFollowingVerifier(**kwargs)
     raise ValueError(f"unknown verifier kind: {kind}")

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Callable
 
 from .verifiers import Verifier
 
@@ -80,6 +81,30 @@ def answer_spam_guard(response: str, *, max_candidates: int = 3, coef: float = 1
     return -coef if n_boxed > max_candidates else 0.0
 
 
+def language_consistency_reward(response: str, *, target_lang: str = "en",
+                                coef: float = 0.5, min_conf: float = 0.0) -> float:
+    """Penalize responses that drift out of the target language.
+
+    Reasoning models trained with RLVR are prone to *language mixing* — the CoT
+    silently code-switches (e.g. English prompt, half-Chinese scratchpad), which
+    DeepSeek-R1 explicitly added a language-consistency reward to suppress. We
+    reuse the data pipeline's :func:`platform.data.filter.detect_language` LID:
+    reward ``0`` when the detected language matches ``target_lang``, else
+    ``-coef``. The ``<think>`` tags and boxed-answer markup are stripped before
+    detection so formatting tokens don't skew the LID. When the detector is
+    unsure (confidence < ``min_conf``, or no alphabetic content) the reward is
+    ``0`` — we only penalize *confident* drift, never short/numeric answers."""
+    from ..data.filter import detect_language
+
+    # Strip think/answer markup so LID sees prose, not tags.
+    text = _THINK_RE.sub(" ", response)
+    text = _BOXED_RE.sub(" ", text)
+    lang, conf = detect_language(text)
+    if lang == "unk" or conf < min_conf:
+        return 0.0
+    return 0.0 if lang == target_lang else -coef
+
+
 @dataclass
 class RewardConfig:
     correctness_weight: float = 1.0
@@ -87,11 +112,36 @@ class RewardConfig:
     length_target_tokens: int = 512
     length_max_tokens: int = 2048
     length_coef: float = 0.1
+    # Difficulty-aware length budget. When a per-prompt difficulty in [0,1] is
+    # available, the length target scales between the easy and hard budgets so a
+    # hard problem is allowed a longer chain-of-thought before the soft penalty
+    # engages (easy problems are held short to curb rambling). Set
+    # difficulty_aware=False to use the flat length_target_tokens for every prompt.
+    difficulty_aware: bool = False
+    length_target_easy: int = 256
+    length_target_hard: int = 1536
     repetition_coef: float = 0.5
     answer_spam_max: int = 3
     answer_spam_coef: float = 1.0
+    # Language-consistency shaping (DeepSeek-R1-style anti language-mixing).
+    language_weight: float = 0.0      # 0 disables; >0 enables the penalty
+    target_lang: str = "en"
+    language_min_conf: float = 0.0
     # Clip the final shaped reward into a bounded range (keeps GRPO advantages sane).
     clip: tuple[float, float] = (-2.0, 2.0)
+
+    def length_target_for(self, difficulty: float | None) -> int:
+        """Resolve the soft-length target for a prompt of the given difficulty.
+
+        ``difficulty`` is in ``[0, 1]`` (0 = easiest, 1 = hardest). Returns the
+        flat ``length_target_tokens`` when difficulty-awareness is off or no
+        difficulty is supplied; otherwise linearly interpolates between
+        ``length_target_easy`` and ``length_target_hard``."""
+        if not self.difficulty_aware or difficulty is None:
+            return self.length_target_tokens
+        d = max(0.0, min(1.0, float(difficulty)))
+        lo, hi = self.length_target_easy, self.length_target_hard
+        return int(round(lo + (hi - lo) * d))
 
 
 @dataclass
@@ -100,11 +150,18 @@ class CompositeReward:
 
     Callable as a ``Verifier`` (``(prompt, response) -> float``) so it drops
     straight into ``run_grpo``. Use :meth:`breakdown` for per-component logging.
+
+    ``difficulty_fn`` (optional) maps a *prompt* to a difficulty in ``[0, 1]``;
+    when set together with ``RewardConfig.difficulty_aware`` the soft-length
+    budget scales per prompt (hard problems may reason longer before the penalty
+    bites). A real run sources difficulty from the prompt's metadata (pass-rate,
+    grade level, solver depth); for tests any ``prompt -> float`` works.
     """
 
     verifier: Verifier
     cfg: RewardConfig = field(default_factory=RewardConfig)
     tokenizer: object | None = None   # if set, length penalty uses real token counts
+    difficulty_fn: Callable[[str], float] | None = None
 
     @property
     def count_tokens(self):
@@ -117,8 +174,9 @@ class CompositeReward:
         c = self.cfg
         correctness = c.correctness_weight * self.verifier(prompt, response)
         fmt = c.format_weight * format_reward(response)
+        difficulty = self.difficulty_fn(prompt) if self.difficulty_fn is not None else None
         length = soft_length_penalty(
-            response, target_tokens=c.length_target_tokens,
+            response, target_tokens=c.length_target_for(difficulty),
             max_tokens=c.length_max_tokens, coef=c.length_coef,
             count_tokens=self.count_tokens,
         )
@@ -126,12 +184,19 @@ class CompositeReward:
         spam = answer_spam_guard(
             response, max_candidates=c.answer_spam_max, coef=c.answer_spam_coef
         )
-        total = correctness + fmt + length + rep + spam
+        lang = 0.0
+        if c.language_weight > 0.0:
+            lang = c.language_weight * language_consistency_reward(
+                response, target_lang=c.target_lang, coef=1.0,
+                min_conf=c.language_min_conf,
+            )
+        total = correctness + fmt + length + rep + spam + lang
         lo, hi = c.clip
         total = max(lo, min(hi, total))
         return {
             "correctness": correctness, "format": fmt, "length": length,
-            "repetition": rep, "answer_spam": spam, "total": total,
+            "repetition": rep, "answer_spam": spam, "language": lang,
+            "total": total,
         }
 
     def __call__(self, prompt: str, response: str) -> float:

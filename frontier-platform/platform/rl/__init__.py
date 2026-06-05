@@ -19,6 +19,9 @@ from .verifiers import (
     length_penalty,
     MathExactVerifier,
     CodeUnitTestVerifier,
+    ConstraintFollowingVerifier,
+    check_constraint,
+    CONSTRAINT_CHECKERS,
     make_verifier,
 )
 from .reward import (
@@ -28,6 +31,7 @@ from .reward import (
     soft_length_penalty,
     repetition_penalty,
     answer_spam_guard,
+    language_consistency_reward,
 )
 from .coldstart import ColdStartConfig, ColdStartResult, run_coldstart, format_trace
 from .sandbox import SandboxLimits, SandboxResult, run_in_sandbox
@@ -48,7 +52,15 @@ from .agentic import (
 )
 from .selfplay import Candidate, Generation, evaluate_candidate, run_selfplay, scripted_policy
 from .rollout import sample_group, GroupRollout
-from .grpo import GRPOConfig, group_advantages, grpo_step, run_grpo, run_grpo_async
+from .grpo import (
+    GRPOConfig,
+    EntropyController,
+    make_entropy_controller,
+    group_advantages,
+    grpo_step,
+    run_grpo,
+    run_grpo_async,
+)
 
 __all__ = [
     "Verifier",
@@ -57,6 +69,9 @@ __all__ = [
     "length_penalty",
     "MathExactVerifier",
     "CodeUnitTestVerifier",
+    "ConstraintFollowingVerifier",
+    "check_constraint",
+    "CONSTRAINT_CHECKERS",
     "make_verifier",
     "RewardConfig",
     "CompositeReward",
@@ -64,6 +79,7 @@ __all__ = [
     "soft_length_penalty",
     "repetition_penalty",
     "answer_spam_guard",
+    "language_consistency_reward",
     "ColdStartConfig",
     "ColdStartResult",
     "run_coldstart",
@@ -90,6 +106,8 @@ __all__ = [
     "sample_group",
     "GroupRollout",
     "GRPOConfig",
+    "EntropyController",
+    "make_entropy_controller",
     "group_advantages",
     "grpo_step",
     "run_grpo",

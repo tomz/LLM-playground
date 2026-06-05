@@ -118,6 +118,27 @@ def compute_token_logps(
     return logp.gather(-1, target_ids.unsqueeze(-1)).squeeze(-1)  # [B,T]
 
 
+def compute_token_logps_and_entropy(
+    model,
+    input_ids: torch.Tensor,
+    target_ids: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Per-token target log-prob **and** full-distribution entropy in one forward.
+
+    Returns ``(token_logp, entropy)`` each ``[B, T]``. ``token_logp`` is
+    identical to :func:`compute_token_logps`; ``entropy`` is the Shannon entropy
+    ``-sum_v p_v log p_v`` of the policy's next-token distribution at every
+    position. GRPO's adaptive entropy controller uses the masked mean of
+    ``entropy`` to detect/avert entropy collapse. Gradients flow through both
+    outputs; mask and reduce downstream.
+    """
+    logits, _ = model(input_ids)
+    logp = F.log_softmax(logits.float(), dim=-1)
+    token_logp = logp.gather(-1, target_ids.unsqueeze(-1)).squeeze(-1)  # [B,T]
+    entropy = -(logp.exp() * logp).sum(dim=-1)                          # [B,T]
+    return token_logp, entropy
+
+
 def clone_for_reference(model: torch.nn.Module) -> torch.nn.Module:
     """Deep copy + freeze + eval mode. Returns the frozen reference."""
     ref = copy.deepcopy(model)
