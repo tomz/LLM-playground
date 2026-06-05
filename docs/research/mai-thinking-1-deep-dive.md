@@ -210,7 +210,7 @@ gap #6/§2.11 RL stability). **Tier 1 (RLVR recipe) — shipped:**
 | 4 | **Difficulty-aware length penalty** (§5, `R_len`) — longer CoT budget for harder problems | `rl/reward.py`: `RewardConfig.difficulty_aware/length_target_{easy,hard}` + `length_target_for()`, `CompositeReward.difficulty_fn` | ✅ shipped |
 | 5 | **Outer ratio clip** (§5) — dual-clip-PPO floor on negative-advantage tokens | `rl/grpo.py`: `_dual_clip_surrogate`, `GRPOConfig.clip_ratio_c` | ✅ shipped |
 
-Tests: `tests/test_rl_tier1.py` (24) + `tests/test_reward_shaping_tier1.py` (12)
+Tests: `tests/test_rl_tier1.py` (22) + `tests/test_reward_shaping_tier1.py` (14)
 = **36 new, all passing**; full suite green except 4 pre-existing
 `test_jail.py` failures that are an environment artifact (bubblewrap cannot
 `execvp` a uv-managed Python symlink — unrelated to these changes).
@@ -223,7 +223,7 @@ Tests: `tests/test_rl_tier1.py` (24) + `tests/test_reward_shaping_tier1.py` (12)
 | 7 | **Long-context eval adapters** (Appendix B) — Code-NLL (position-bucketed), Retrieval-NLL (needle by LM loss), answer-accuracy-by-depth | `eval/long_context.py`: `CodeNLLAdapter` / `RetrievalNLLAdapter` / `LongContextQAAdapter` (BenchmarkAdapter shape) + `make_needle_record`; wired into `Evaluator.run_long_context` | ✅ shipped |
 | 8 | **Pareto-percentile release gate** (§8/Appendix I) — thresholds at a fixed percentile of the *currently-achievable* fleet, on a Pareto frontier over (safety, over-refusal, quality) | `safety/gates.py`: `ReleaseMetrics`, `ParetoGateConfig`, `pareto_preflight`, `pareto_frontier`, `percentile_threshold` (additive; original `preflight` untouched) | ✅ shipped |
 
-Tests: `tests/test_tier2_harvest.py` (**26**, all passing).
+Tests: `tests/test_tier2_harvest.py` (**25**, all passing).
 
 **Tier 3 (recipe + architecture) — shipped:**
 
@@ -234,11 +234,18 @@ Tests: `tests/test_tier2_harvest.py` (**26**, all passing).
 
 Tests: `tests/test_tier3_harvest.py` (**11**, all passing).
 
-**Wave totals.** 73 new tests; full suite **409 passing** (4 pre-existing
+**Wave totals.** 72 new tests; full suite **409 passing** (4 pre-existing
 `test_jail.py` env failures excluded). All ten harvest items from the deep dive
 are now in the repo behind their existing protocols (Verifier / RewardConfig /
 BenchmarkAdapter / gate / Transformer init), so a research or data org can fill
 content without touching platform code.
+
+**Cross-pollination.** Harvest item #10 (zero-init residual projections) also
+landed in **`midgpt`** (`model.GPTConfig.zero_init_proj`, default-off, 4 tests →
+87 total) to bring it to parity with `nanogpt-edu` and `distgpt`, which already
+shipped the same `zero_init_proj` knob independently. The other nine items are
+frontier-platform-specific (GRPO learner, verifier/reward protocols, eval
+adapters, RSP gate) and don't have a single-node analogue.
 
 ## Sources
 
