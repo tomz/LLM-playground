@@ -18,6 +18,13 @@ class ModelConfig:
     # A cheap stability trick (used in many 2024-2025 frontier models) that tames
     # attention-logit blowups during large-scale training. Present in nanogpt-edu.
     qk_norm: bool = False
+    # Zero-initialize the attention output projection (o_proj) so each block
+    # starts as the identity (x + 0·attn(x)). Equivalent to initializing a
+    # post-attention norm gain to zero; the MAI-Thinking-1 report uses this to
+    # stop early-training attention noise from perturbing MoE router assignments
+    # and causing expert load imbalance before routing has settled. Honored by
+    # Transformer.init_weights(); off by default (standard residual-scaled init).
+    zero_init_attn_output: bool = False
     # Multi-Token Prediction (DeepSeek-V3): extra auxiliary heads predict tokens
     # n+2, n+3, ... from the final hidden state, densifying the gradient for
     # better sample efficiency. Train-only (discarded at inference, so zero infer

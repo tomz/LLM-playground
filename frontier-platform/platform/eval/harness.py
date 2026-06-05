@@ -260,6 +260,46 @@ class Evaluator:
             duration_s=time.time() - t0,
         )
 
+    def run_long_context(self, req: EvalRequest) -> EvalReport:
+        """Run the long-context adapters (Code-NLL / Retrieval-NLL / answer-by-
+        position) from :mod:`platform.eval.long_context`.
+
+        Mirrors :meth:`run_2026`: per-task local JSONL fixtures come from
+        ``req.benchmarks_2026_paths`` (reused as the generic fixture map), and the
+        model/generator come from ``req.decoding`` (``model`` for the NLL
+        adapters' teacher-forced forward pass, ``generate``/``engine`` for the QA
+        adapter). Metrics are namespaced ``{task}:{metric}`` like the 2026 path.
+        """
+        from .long_context import LONG_CONTEXT_REGISTRY, get_long_context_adapter
+
+        t0 = time.time()
+        metrics: dict[str, float] = {}
+        paths = req.benchmarks_2026_paths or {}
+        model = req.decoding.get("model") or req.decoding.get("engine")
+        generate = req.decoding.get("generate")
+        tokenizer = req.decoding.get("tokenizer")
+        for task in req.tasks:
+            if task not in LONG_CONTEXT_REGISTRY:
+                continue
+            adapter = get_long_context_adapter(task)
+            path = paths.get(task)
+            if path is None or (model is None and generate is None):
+                metrics[f"{task}:n_total"] = 0.0
+                continue
+            examples = list(adapter.load(path))
+            if req.max_examples_per_task is not None:
+                examples = examples[: req.max_examples_per_task]
+            sub = adapter.score(model, examples, generate=generate, tokenizer=tokenizer)
+            for k, v in sub.items():
+                metrics[f"{task}:{k}"] = float(v)
+        return EvalReport(
+            ckpt=req.ckpt,
+            metrics=metrics,
+            contamination={},
+            harness_sha="long_context",
+            duration_s=time.time() - t0,
+        )
+
     # ---- internals --------------------------------------------------------
 
     def _run_2026_internal(self, req: EvalRequest, *, only: Iterable[str]) -> dict[str, float]:

@@ -61,6 +61,15 @@ from .grpo import (
     run_grpo,
     run_grpo_async,
 )
+from .hillclimb import (
+    Specialist,
+    HillClimbConfig,
+    HillClimbResult,
+    StageResult,
+    train_specialist,
+    harvest_distillation_data,
+    run_hill_climb,
+)
 
 __all__ = [
     "Verifier",
@@ -112,4 +121,11 @@ __all__ = [
     "grpo_step",
     "run_grpo",
     "run_grpo_async",
+    "Specialist",
+    "HillClimbConfig",
+    "HillClimbResult",
+    "StageResult",
+    "train_specialist",
+    "harvest_distillation_data",
+    "run_hill_climb",
 ]

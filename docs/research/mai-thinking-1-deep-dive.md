@@ -215,10 +215,30 @@ Tests: `tests/test_rl_tier1.py` (24) + `tests/test_reward_shaping_tier1.py` (12)
 `test_jail.py` failures that are an environment artifact (bubblewrap cannot
 `execvp` a uv-managed Python symlink — unrelated to these changes).
 
-**Still queued (not yet built):** Tier 2 — reasoning-trace archetype rubric
-(§6/Appendix C), long-context eval adapters (Code-NLL / retrieval-NLL /
-answer-by-position, Appendix B), Pareto-percentile safety threshold (§8);
-Tier 3 — hill-climb orchestrator (§5), zero-init attention output (§1).
+**Tier 2 (eval + safety harness) — shipped:**
+
+| # | Harvest (paper §) | Where | Status |
+|---|---|---|---|
+| 6 | **Reasoning-trace archetype rubric** (§6/Appendix C) — deterministic detectors for the strong-reasoning archetypes (backtracking, verification, case-analysis/filter, invariant-seeking, self-skepticism, enumerate-then-filter, + agentic unit-testing / evidence-first) | `eval/reasoning_rubric.py`: `ReasoningRubric`, `ReasoningSignal`, `RubricResult`, `TraceJudge` protocol; strong>weak on the paper's own AIME exemplar | ✅ shipped |
+| 7 | **Long-context eval adapters** (Appendix B) — Code-NLL (position-bucketed), Retrieval-NLL (needle by LM loss), answer-accuracy-by-depth | `eval/long_context.py`: `CodeNLLAdapter` / `RetrievalNLLAdapter` / `LongContextQAAdapter` (BenchmarkAdapter shape) + `make_needle_record`; wired into `Evaluator.run_long_context` | ✅ shipped |
+| 8 | **Pareto-percentile release gate** (§8/Appendix I) — thresholds at a fixed percentile of the *currently-achievable* fleet, on a Pareto frontier over (safety, over-refusal, quality) | `safety/gates.py`: `ReleaseMetrics`, `ParetoGateConfig`, `pareto_preflight`, `pareto_frontier`, `percentile_threshold` (additive; original `preflight` untouched) | ✅ shipped |
+
+Tests: `tests/test_tier2_harvest.py` (**26**, all passing).
+
+**Tier 3 (recipe + architecture) — shipped:**
+
+| # | Harvest (paper §) | Where | Status |
+|---|---|---|---|
+| 9 | **Hill-climb orchestrator** (§5, the conceptual core) — specialists → distill → climb, with rejection-sampled distillation harvest + lineage | `rl/hillclimb.py`: `Specialist`, `HillClimbConfig`, `run_hill_climb` (ties `run_grpo` + `sample_group` rejection-sampling + `run_coldstart`); CPU end-to-end | ✅ shipped |
+| 10 | **Zero-init attention output** (§1) — block starts as identity so early attention noise can't perturb MoE routing | `model/config.py` `zero_init_attn_output` flag + `Transformer.init_weights` zeroes `attn.o_proj` (exact residual analogue of a zero post-attn-norm gain) | ✅ shipped |
+
+Tests: `tests/test_tier3_harvest.py` (**11**, all passing).
+
+**Wave totals.** 73 new tests; full suite **409 passing** (4 pre-existing
+`test_jail.py` env failures excluded). All ten harvest items from the deep dive
+are now in the repo behind their existing protocols (Verifier / RewardConfig /
+BenchmarkAdapter / gate / Transformer init), so a research or data org can fill
+content without touching platform code.
 
 ## Sources
 

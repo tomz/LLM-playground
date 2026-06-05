@@ -539,3 +539,14 @@ class Transformer(nn.Module):
                     _init(e.w2, residual_std)
                 for sh in blk.ffn.shared:
                     _init(sh.w2, residual_std)
+
+        # Optional zero-init of the attention output (MAI-Thinking-1 §1): each
+        # block starts as the identity x + 0·attn(x), so early-training attention
+        # noise can't perturb MoE router assignments before routing settles. This
+        # is the residual analogue of setting a post-attention norm gain to zero;
+        # with pre-norm + no post-attn norm here, zeroing o_proj is exact.
+        if getattr(self.cfg, "zero_init_attn_output", False):
+            for blk in self.layers:
+                nn.init.zeros_(blk.attn.o_proj.weight)
+                if blk.attn.o_proj.bias is not None:
+                    nn.init.zeros_(blk.attn.o_proj.bias)
