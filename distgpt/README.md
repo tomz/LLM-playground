@@ -24,6 +24,10 @@ This code is real and self-consistent. It will not actually finish a 70B run on 
 > Engine FP8 path, Megatron-style sequence parallelism, HuggingFace export
 > + lm-evaluation-harness CLI, recipe configs (cooldown / longctx / Muon
 > speedrun / **DeepSeek-V3-style**), warm-start checkpoint loading,
+> **high-LR-warmup stability knobs** (per-head `qk_norm`; `zero_init_proj`
+> zero-inits the residual-write matrices — attn `o_proj` + FFN/expert
+> down-proj — so every block starts as the identity map; both adopted from
+> nanogpt-edu / modded-nanogpt),
 > **2025-frontier architecture** primitives (sparse MoE FFN with shared
 > expert + aux-loss-free balancing; Multi-head Latent Attention with
 > 5–10× KV-cache compression; Multi-Token Prediction auxiliary heads).
