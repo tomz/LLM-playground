@@ -1,0 +1,68 @@
+# 350M llamafied (Arm B) — 2-GPU iso-token variant of
+# gpt2_350m_llamafied_fweb_5060ti.yaml. Part of the Track B1 architecture A/B
+# (see examples/5060ti_350m_llamafied_AB.NEXT_STEPS.md). This is the Llama-style
+# arm (RoPE + RMSNorm + SwiGLU d_ffn 2730 + QK-norm) run under the *identical*
+# 2-GPU DDP harness as the GPT-2 baseline arm, so the only difference between
+# the two runs is architecture.
+#
+# grad_accum 8 -> 4 and micro_batch 4 -> 2 so that
+#   2(micro_batch) x 8(grad_accum) x 2(world) x 1024(block) = 32768 tok/step
+# matches the single-GPU GPT-2 baseline exactly. Same 4000-iter schedule =>
+# 131M training tokens. Iso-param with Arm A (353.51M vs 354.60M, 0.31% apart).
+#
+# NOTE on micro_batch: Arm A (GPT-2/GELU) ran fine at micro_batch=4, but the
+# llamafied arch (SwiGLU's 3-matmul gated MLP + QK-norm) holds materially more
+# activation memory per sequence and OOM'd at mb=4 on the 16 GB card — even with
+# PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True (which removed 1.26 GiB of
+# fragmentation but exposed a genuine activation ceiling at the fp32 cross-entropy
+# logits, (mb*seq)*vocab*4B ~= 824 MiB at mb=4). Halving micro_batch to 2 and
+# doubling grad_accum to 8 keeps the global batch / token budget / optimization
+# math *identical* (grad-accum is associative) while halving the activation
+# footprint. This is an iso-token, iso-param change — the val-ppl A/B stays clean;
+# only Arm B's per-step throughput drops slightly from the extra accumulation
+# micro-steps. (A real, citable finding: SwiGLU+QK-norm costs more activation
+# memory than GELU at equal parameter count.)
+#
+out_dir: out/gpt2_350m_llamafied_fweb_5060ti_2gpu
+dataset: fineweb-edu
+tokenizer: gpt2
+seed: 1337
+dtype: bfloat16
+compile: false
+grad_checkpoint: false
+log: {jsonl: true, wandb_project: null}
+
+model:
+  vocab_size: 50304
+  block_size: 1024
+  n_layer: 24
+  n_head: 16
+  d_model: 1024
+  d_ffn: 2730              # 8/3 * 1024 — iso-param with d_ffn=4096 GELU
+  dropout: 0.0
+  bias: false
+  tie_embeddings: true
+  pos_kind: rope
+  norm_kind: rmsnorm
+  mlp_kind: swiglu
+  rope_base: 10000.0
+  qk_norm: true            # cheap stability for the higher Llama-style LR
+
+optim:
+  optimizer: adamw
+  lr: 3.0e-4
+  min_lr: 3.0e-5
+  betas: [0.9, 0.95]
+  weight_decay: 0.1
+  grad_clip: 1.0
+  warmup_iters: 200
+  lr_decay_iters: 4000
+  max_iters: 4000
+
+train:
+  micro_batch: 2          # halved from 4: llamafied (SwiGLU+QKnorm) activations
+  grad_accum: 8           # doubled from 4: 2*8*2*1024 = 32768 tok/step (iso)
+  eval_interval: 200
+  eval_iters: 50
+  log_interval: 10
+  ckpt_interval: 500

@@ -133,6 +133,16 @@ for a direct A/B against the GPT-2 baseline at the same parameter count
 (d_ffn is reduced from 4096 to 2730 ≈ 8/3·d_model to keep SwiGLU's 3-matrix
 FFN iso-param with GELU's 2-matrix).
 
+**Measured A/B result** (2× RTX 5060 Ti, iso-param 354.6 M vs 353.5 M,
+iso-token 131 M, same DDP harness): the llamafied arm reaches **val ppl 48.1
+vs GPT-2's 57.8 — 16.8 % lower** at identical compute, and leads at **every
+one of 19 evals** (by up to 40 % early). It costs ~23 % throughput and ~1 GB
+VRAM — SwiGLU's third matmul + QK-norm carry more *activation* memory, which
+forced a smaller micro-batch on the 16 GB card. Full table, per-iter
+trajectory, samples, and the OOM-fix systems note:
+[`examples/5060ti_350m_llamafied_AB.md`](examples/5060ti_350m_llamafied_AB.md).
+Run both arms + plot with one command: `bash tools/run_llamafied_AB.sh`.
+
 ### Eval
 
 - **HuggingFace export** (`export_hf.py`) — writes a trained midgpt

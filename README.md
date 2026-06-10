@@ -102,6 +102,30 @@ Recipe:
 Walkthrough + sample completions + calibration table:
 [`midgpt/examples/5060ti_350m_fineweb.md`](midgpt/examples/5060ti_350m_fineweb.md).
 
+### `midgpt/` — llamafied vs GPT-2 A/B (350M, iso-param, iso-token)
+
+A controlled architecture ablation on the **same** 2× 5060 Ti DDP harness:
+GPT-2 (learned-pos · LayerNorm · GELU) vs llamafied (RoPE · RMSNorm · SwiGLU ·
+QK-norm), held iso-param (354.6 M vs 353.5 M) and iso-token (131 M), only the
+architecture varies.
+
+| Arm | Best val ppl | @ iter | tok/s | Peak VRAM/GPU |
+|---|---:|---:|---:|---:|
+| **A** — GPT-2 (learned-pos·LN·GELU) | 57.8 | 3 800 | 19.3 k | ~11.9 GB |
+| **B** — llamafied (RoPE·RMSNorm·SwiGLU·QK-norm) | **48.1** | 3 800 | 14.8 k | ~13.0 GB |
+
+**The Llama recipe wins by 16.8 % perplexity** at equal compute — and leads at
+*every one of 19 evals* (by up to 40 % early in training), reaching GPT-2's
+final quality ~37 % sooner. The cost is ~23 % throughput + ~1 GB VRAM: SwiGLU's
+third matmul and QK-norm carry more **activation** memory (iso-param ≠
+iso-activation), which OOM'd the naive config and forced a smaller micro-batch
+on the 16 GB card.
+
+![llamafied vs GPT-2 350M A/B](midgpt/out/gpt2_350m_llamafied_fweb_5060ti_2gpu/compare_llamafied.png)
+
+Full table + per-iteration trajectory + samples + the OOM-fix systems note:
+[`midgpt/examples/5060ti_350m_llamafied_AB.md`](midgpt/examples/5060ti_350m_llamafied_AB.md).
+
 ### `distgpt/` — 416M Llama-arch (RoPE+SwiGLU+GQA) on RTX 5060 Ti
 
 Single-GPU shake-out of distgpt's full multi-node training stack (the
