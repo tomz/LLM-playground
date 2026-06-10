@@ -111,6 +111,34 @@ SpikeMonitor rewind-loop on noisy small-batch gradients, and why running
 two ranks on one consumer GPU doesn't work under NCCL 2.28) and the
 fixes that landed in the same commit.
 
+## Worked example — genuine 2-GPU FSDP2 over PCIe (no NVLink)
+
+A second RTX 5060 Ti in the box lights up the **real cross-GPU FSDP2
+path** — all-gather (forward), reduce-scatter (backward), sharded
+params + optimizer state, and a DCP checkpoint sharded across both ranks.
+Same [`examples/5060ti_416m_fineweb.md`](examples/5060ti_416m_fineweb.md)
+writeup, "Going multi-GPU" section:
+
+- 2× RTX 5060 Ti, **no NVLink** (PCIe `PHB`, `NCCL_P2P_DISABLE=1`) ·
+  FSDP2 `dp=2` · effective batch **65 536 tokens / step**
+- **5 h 33 min** wall-clock · **14.7 k tok/s** aggregate · **10.3 %**
+  per-GPU MFU · **12.8 GB** peak VRAM / GPU
+- **Val ppl 41.6** at step 4 250 (295 M tokens, ~0.71× Chinchilla)
+
+![distgpt 416M 2-GPU training curves](out/gpt_416m_fweb_2gpu/loss.png)
+
+The naive 2-GPU config was *0.69× slower* than one GPU — every FSDP
+collective crawls through host memory over PCIe. Two fixes flip it to
+**1.28× positive scaling**: `reshard_after_forward=false` (skip the
+backward re-gather) and gating gradient-sync to the last micro-step
+(one reduce-scatter / optimizer step instead of 8). The writeup is the
+full calibration story — naive→optimized tables, the OOM when a bigger
+micro-batch competes for the same VRAM as Fix 1, and why the cosine tail
+(not the step-2 500 plateau) produces the genuinely-best checkpoint.
+
+Config: [`configs/gpt_416m_fweb_2gpu.yaml`](configs/gpt_416m_fweb_2gpu.yaml)
+· launcher [`scripts/run_5060ti_2gpu.sh`](scripts/run_5060ti_2gpu.sh).
+
 ## Worked example — same model on a 2016 Tesla P100
 
 The same 416 M model trained on a **single Tesla P100-PCIE-16GB** (Pascal,

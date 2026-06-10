@@ -138,6 +138,36 @@ Recipe:
 Walkthrough + bug post-mortems + 2-rank-on-one-GPU notes:
 [`distgpt/examples/5060ti_416m_fineweb.md`](distgpt/examples/5060ti_416m_fineweb.md).
 
+#### Going multi-GPU — genuine 2× 5060 Ti FSDP2 over PCIe
+
+A second 5060 Ti lights up the **real** FSDP2 collectives (all-gather +
+reduce-scatter + 2-rank-sharded DCP) — over a `PHB` PCIe link with **no
+NVLink**, so `NCCL_P2P_DISABLE=1` routes every collective through host
+memory. The naive `dp=2` config was *0.69× slower* than one GPU; two
+fixes (`reshard_after_forward=false` + gating gradient-sync to the last
+micro-step) flip it to **1.28× positive scaling**.
+
+| Metric           | Value |
+|------------------|------:|
+| GPUs / parallelism | **2× RTX 5060 Ti**, FSDP2 `dp=2` (PCIe `PHB`, no NVLink) |
+| Tokens trained   | **295 M** (~0.71× Chinchilla for 416 M) |
+| Wall-clock       | **5 h 33 min** (4 500 steps × 65 536 tok / step) |
+| Throughput       | **14.7 k tok/s** aggregate (7.4 k / GPU) |
+| Per-GPU MFU      | **10.3 %** (vs 16.2 % single-GPU — the PCIe tax) |
+| Peak VRAM        | **12.8 GB allocated / 14.3 GB reserved** per GPU |
+| Train loss       | 11.03 → **3.93** (low **3.66** at step 3 870) |
+| **Best val ppl** | **41.6** (loss 3.728) at step 4 250 |
+
+![distgpt 416M 2-GPU training curves](distgpt/out/gpt_416m_fweb_2gpu/loss.png)
+
+The cosine tail is the lesson: val plateaus noisily at ~4.0 from step
+2 750–3 250, then the LR decay grinds it down to **41.6 ppl** in the final
+quarter — beating the step-2 500 checkpoint and landing exactly on the
+single-GPU run's "295 M tokens → ppl ~42" forecast. Full calibration
+story (naive→optimized tables, the competing-VRAM OOM, why 2 ranks on one
+card is a dead end) in the same
+[walkthrough](distgpt/examples/5060ti_416m_fineweb.md#going-multi-gpu-genuine-2-gpu-fsdp2-over-pcie).
+
 ### `frontier-platform/` — simulated 1B → 400B program
 
 Discrete-event simulator (pure Python, no torch) that runs the full

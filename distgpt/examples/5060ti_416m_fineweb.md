@@ -265,8 +265,77 @@ export CUDA_VISIBLE_DEVICES=0,1 NCCL_P2P_DISABLE=1 \
 which sets the env above, links the FineWeb-Edu shards, and launches the
 two-rank `torchrun` for you.
 
-The full 4 500-step run is ~5.5 h of wall-clock for ~295 M tokens
-(0.71× Chinchilla) — a genuinely 2-GPU-trained, sharded-DCP checkpoint.
+### The full run: 4 500 steps, 295 M tokens, val ppl 41.6
+
+The calibration table above is a short measurement; the **completed
+4 500-step run** on the optimized config is below. It landed almost exactly
+on the projection — **5 h 33 min** (predicted ~5.5 h), **14.7 k tok/s**
+sustained (predicted 14.8 k), **10.3 % per-GPU MFU** (predicted 10.4 %) —
+a satisfying confirmation that the two-config calibration extrapolates
+cleanly to the full run:
+
+| Metric (2-GPU full run)   | Value |
+|---------------------------|------:|
+| GPUs                      | **2× RTX 5060 Ti 16 GB** (PCIe `PHB`, no NVLink, `NCCL_P2P_DISABLE=1`) |
+| Parallelism               | FSDP2 `dp=2`, `reshard_after_forward=false`, gated grad-sync |
+| Effective batch           | 4 × grad_accum 8 × **dp 2** = 64 sequences = **65 536 tokens / step** |
+| Steps                     | 4 500 |
+| **Wall-clock**            | **5 h 33 min** (median 4 449 ms / step) |
+| **Throughput**            | **14.7 k tok/s** aggregate (7.4 k / GPU), sustained |
+| **Per-GPU MFU**           | **10.3 %** (the PCIe tax, as predicted) |
+| **Peak VRAM / GPU**       | **12.78 GB allocated / 14.28 GB reserved** |
+| Tokens trained            | **295 M** (~0.71× Chinchilla for 416 M) |
+| Train loss                | 11.03 → **3.93** (low **3.66** at step 3 870) |
+| **Best val loss**         | **3.728** (perplexity **41.6**) at step 4 250 |
+| Checkpoint                | sharded DCP across 2 ranks; reloads on either |
+
+![2-GPU training curves](../out/gpt_416m_fweb_2gpu/loss.png)
+
+**The cosine tail won the run.** This is the payoff of the longer schedule
+and the single most useful thing the full run teaches. The single-GPU
+3 000-step run stopped at val 4.105 (ppl 60.7) with the curve still
+sloping down; this 2-GPU run carries the same architecture 1.5× further on
+3× the tokens, and the eval trace shows *exactly why you wait for the
+tail*:
+
+```
+step 2250  val 3.982          step 3250  val 4.108   ← noisy mid-run plateau
+step 2500  val 3.741  (ppl 42) step 3500  val 3.748
+step 2750  val 4.024          step 3750  val 3.792
+step 3000  val 3.975          step 4000  val 3.758
+                              step 4250  val 3.728  (ppl 41.6)  ★ best
+```
+
+Val bounces around 3.97–4.11 from step 2 750 to 3 250 — if you'd stopped
+there (or trusted the step-2 500 reading as "converged") you'd have
+shipped a *worse* model. It's only in the **final quarter**, as the cosine
+LR decays into its 3e-5 floor, that val grinds down past the mid-run
+plateau to **3.728 at step 4 250** — beating the step-2 500 checkpoint
+(3.741) by a hair, but beating it nonetheless. The best-val tracker did
+its job: it kept `step_000004250` and rotated the earlier
+`step_000002500` out, so the shipped checkpoint is the genuinely-best one,
+not the first-good-enough one.
+
+That ppl 60.7 → 41.6 jump for 3× the tokens also lands the single-GPU
+section's own forecast — it predicted "~200 M tokens would land near ppl
+45, ~400 M near the 30s." At 295 M tokens we measure **41.6**, right on
+the interpolated curve. Scaling laws, as ever, keep their promises.
+
+The honest read on the *systems* side is unchanged from the calibration
+table: 10.3 % per-GPU MFU is roughly two-thirds of the single GPU's 16.2 %,
+because every FSDP collective still crawls through host memory over PCIe.
+You buy wall-clock (14.7 k aggregate tok/s beats one GPU's 11.5 k) at the
+cost of per-device efficiency — and the entire point of distgpt is that
+this gap is an **interconnect** property, not a code one. The same
+`reshard_after_forward=false` + gated-sync trainer on an NVLink node would
+reclaim most of those six MFU points for free.
+
+What this run *proves*, beyond the throughput numbers: a sharded DCP
+checkpoint written across two ranks reloads cleanly, the streaming
+loader's `LoaderState` survives the mid-run evals, and the now-tamed
+SpikeMonitor stayed completely out of the way for all 4 500 steps — zero
+rewinds on a noisy 65 k-token-batch run that, pre-fix, would have spiralled
+into the LR-collapse loop documented below.
 
 ## Two things this run actually broke (and how we fixed them)
 
@@ -347,6 +416,10 @@ two-physical-GPU calibration documented above.
 - Console log: [`out/gpt_416m_fweb_5060ti_train.log`](../out/gpt_416m_fweb_5060ti_train.log)
 - Loss chart: [`out/gpt_416m_fweb_5060ti/loss.png`](../out/gpt_416m_fweb_5060ti/loss.png)
 - Best DCP checkpoint: `out/gpt_416m_fweb_5060ti/gpt_416m_fweb_5060ti/ckpts/step_000002800/` (2.5 GB)
+- **2-GPU full-run log**: [`out/gpt_416m_fweb_2gpu/log.jsonl`](../out/gpt_416m_fweb_2gpu/log.jsonl) (450 steps + 17 evals)
+- **2-GPU console log**: [`out/gpt_416m_fweb_2gpu_train.log`](../out/gpt_416m_fweb_2gpu_train.log)
+- **2-GPU loss chart**: [`out/gpt_416m_fweb_2gpu/loss.png`](../out/gpt_416m_fweb_2gpu/loss.png)
+- **2-GPU best DCP checkpoint** (val ppl 41.6): `out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000004250/`
 - Plot script: [`scripts/plot_distgpt.py`](../scripts/plot_distgpt.py)
 - Log dedup script: [`scripts/clean_log.py`](../scripts/clean_log.py)
 - 2-GPU launcher (two physical cards): [`scripts/run_5060ti_2gpu.sh`](../scripts/run_5060ti_2gpu.sh)
