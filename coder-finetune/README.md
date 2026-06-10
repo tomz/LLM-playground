@@ -170,6 +170,7 @@ python -m venv .venv
 | RTX 3050 8 GB    | [`examples/3050_lora.md`](examples/3050_lora.md)            | 84 s memorize-a-builtin-set smoke run (0.5B, no download) |
 | RTX 3050 8 GB    | [`configs/lora_3050_1p5b.RESULTS.md`](configs/lora_3050_1p5b.RESULTS.md) | 24 min 1.5B + Magicoder, pushing the 8 GB limit |
 | **RTX 5060 Ti 16 GB** | [`examples/5060ti_lora.md`](examples/5060ti_lora.md)   | **12 min 3B + Magicoder, packing on, grad_ckpt off** |
+| **2× RTX 5060 Ti 16 GB** | [`examples/5060ti_2gpu_ddp.md`](examples/5060ti_2gpu_ddp.md) | **genuine 2-GPU DDP over real NCCL — the GPU escalation of the gloo launcher test** |
 
 The 5060 Ti example is the one to read for current numbers — it shows
 both *real generalization* (novel held-out prompts get correct DP / BFS
@@ -200,6 +201,12 @@ accelerate launch --multi_gpu --num_processes 2 \
 torchrun --standalone --nproc_per_node 2 \
     -m cf_rl.grpo_train --config configs/grpo_3050.yaml
 ```
+
+For a **worked 2-GPU run on real hardware** — two RTX 5060 Ti, real NCCL
+collectives, with the DDP/rank evidence quoted from the log — see
+[`examples/5060ti_2gpu_ddp.md`](examples/5060ti_2gpu_ddp.md). It's the GPU
+escalation of the gloo/CPU launcher test (9.4): the unit test proves the
+*wiring*, that run proves the *training step* fires across two physical cards.
 
 What makes this correct under DDP — all in `cf_dist.py`, a read-only view of the
 topology `accelerate`/`torchrun` publish (it never calls `init_process_group`):
@@ -288,3 +295,12 @@ slice; effective batch scales with GPU count. This is *not* model sharding — s
   `device_count()==0` in the workers while `world_size==2`, it can only pass if
   the topology comes from `WORLD_SIZE` — the same fix 9.2 makes, now proven
   end-to-end through the real launcher instead of simulated env vars.
+- **9.5 — the capstone: a real two-GPU NCCL run** ([`examples/5060ti_2gpu_ddp.md`](examples/5060ti_2gpu_ddp.md)).
+  9.4 proves the *wiring* on gloo/CPU with CUDA hidden; this escalates it to
+  **two physical RTX 5060 Ti on real NCCL** (`2.29.7+cuda13.2`). A r=16 LoRA on
+  Qwen2.5-Coder-0.5B trains for 16 steps under `accelerate launch --multi_gpu
+  --num_processes 2`: the log shows the `[rank0]`/`[rank1]` DDP constructor
+  firing, loss descending 3.382 → 0.738 through a cross-GPU gradient all-reduce,
+  the rank-0 guard writing the adapter exactly once, and ~1.6 GB/replica peak —
+  the *training step itself*, not just the topology, proven correct across two
+  cards over a no-NVLink PCIe pair (`PHB`, `NCCL_P2P_DISABLE=1`).

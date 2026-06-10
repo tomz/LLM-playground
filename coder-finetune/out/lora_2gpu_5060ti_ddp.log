@@ -1,0 +1,40 @@
+The following values were not passed to `accelerate launch` and had defaults used instead:
+	`--num_machines` was set to a value of `1`
+	`--dynamo_backend` was set to a value of `'no'`
+To avoid this warning pass in values for each of the problematic parameters or run `accelerate config`.
+[load] dataset: builtin
+[load] dataset: builtin
+[load] 64 training examples
+[load] model: Qwen/Qwen2.5-Coder-0.5B method=lora
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/290 [00:00<?, ?it/s]Loading weights:   0%|          | 0/290 [00:00<?, ?it/s]Loading weights: 100%|██████████| 290/290 [00:00<00:00, 3731.90it/s]
+Loading weights: 100%|██████████| 290/290 [00:00<00:00, 3564.96it/s]
+trainable params: 8,798,208 || all params: 502,830,976 || trainable%: 1.7497
+trainable params: 8,798,208 || all params: 502,830,976 || trainable%: 1.7497
+[transformers] warmup_ratio is deprecated and will be removed in v5.2. Use `warmup_steps` instead.
+[transformers] warmup_ratio is deprecated and will be removed in v5.2. Use `warmup_steps` instead.
+Tokenizing train dataset:   0%|          | 0/64 [00:00<?, ? examples/s]Tokenizing train dataset: 100%|██████████| 64/64 [00:00<00:00, 2410.11 examples/s]
+NCCL version 2.29.7+cuda13.2
+[train] starting
+[transformers] The tokenizer has new PAD/BOS/EOS tokens that differ from the model config and generation config. The model config and generation config were aligned accordingly, being updated with the tokenizer's values. Updated tokens: {'bos_token_id': None, 'pad_token_id': 151643}.
+Tokenizing train dataset:   0%|          | 0/64 [00:00<?, ? examples/s]Tokenizing train dataset: 100%|██████████| 64/64 [00:00<00:00, 3478.86 examples/s]
+[transformers] The tokenizer has new PAD/BOS/EOS tokens that differ from the model config and generation config. The model config and generation config were aligned accordingly, being updated with the tokenizer's values. Updated tokens: {'bos_token_id': None, 'pad_token_id': 151643}.
+  0%|          | 0/16 [00:00<?, ?it/s][rank0]:[W610 14:16:39.831271080 reducer.cpp:1528] Warning: find_unused_parameters=True was specified in DDP constructor, but did not find any unused parameters in the forward pass. This flag results in an extra traversal of the autograd graph every iteration,  which can adversely affect performance. If your model indeed never has any unused parameters in the forward pass, consider turning this flag off. Note that this warning may be a false positive if your model has flow control causing later iterations to have unused parameters. (function operator())
+[rank1]:[W610 14:16:39.832497137 reducer.cpp:1528] Warning: find_unused_parameters=True was specified in DDP constructor, but did not find any unused parameters in the forward pass. This flag results in an extra traversal of the autograd graph every iteration,  which can adversely affect performance. If your model indeed never has any unused parameters in the forward pass, consider turning this flag off. Note that this warning may be a false positive if your model has flow control causing later iterations to have unused parameters. (function operator())
+  6%|▋         | 1/16 [00:00<00:10,  1.48it/s] 12%|█▎        | 2/16 [00:00<00:05,  2.47it/s]                                              {'loss': '3.382', 'grad_norm': '32.01', 'learning_rate': '0.0002', 'entropy': '1.95', 'num_tokens': '675', 'mean_token_accuracy': '0.6151', 'epoch': '0.125'}
+ 12%|█▎        | 2/16 [00:00<00:05,  2.47it/s] 19%|█▉        | 3/16 [00:01<00:04,  3.17it/s] 25%|██▌       | 4/16 [00:01<00:03,  3.66it/s]                                              {'loss': '2.272', 'grad_norm': '7.939', 'learning_rate': '0.0001733', 'entropy': '2.1', 'num_tokens': '1354', 'mean_token_accuracy': '0.6523', 'epoch': '0.25'}
+ 25%|██▌       | 4/16 [00:01<00:03,  3.66it/s] 31%|███▏      | 5/16 [00:01<00:02,  3.99it/s] 38%|███▊      | 6/16 [00:01<00:02,  4.22it/s]                                              {'loss': '1.259', 'grad_norm': '3.94', 'learning_rate': '0.0001467', 'entropy': '1.516', 'num_tokens': '2191', 'mean_token_accuracy': '0.7969', 'epoch': '0.375'}
+ 38%|███▊      | 6/16 [00:01<00:02,  4.22it/s] 44%|████▍     | 7/16 [00:01<00:02,  4.38it/s] 50%|█████     | 8/16 [00:02<00:01,  4.48it/s]                                              {'loss': '1.165', 'grad_norm': '3.029', 'learning_rate': '0.00012', 'entropy': '1.31', 'num_tokens': '2919', 'mean_token_accuracy': '0.8475', 'epoch': '0.5'}
+ 50%|█████     | 8/16 [00:02<00:01,  4.48it/s] 56%|█████▋    | 9/16 [00:02<00:01,  4.56it/s] 62%|██████▎   | 10/16 [00:02<00:01,  4.60it/s]                                               {'loss': '0.9499', 'grad_norm': '2.255', 'learning_rate': '9.333e-05', 'entropy': '0.9852', 'num_tokens': '3669', 'mean_token_accuracy': '0.876', 'epoch': '0.625'}
+ 62%|██████▎   | 10/16 [00:02<00:01,  4.60it/s] 69%|██████▉   | 11/16 [00:02<00:01,  4.62it/s] 75%|███████▌  | 12/16 [00:03<00:00,  4.66it/s]                                               {'loss': '0.8579', 'grad_norm': '3.092', 'learning_rate': '6.667e-05', 'entropy': '0.9067', 'num_tokens': '4426', 'mean_token_accuracy': '0.8765', 'epoch': '0.75'}
+ 75%|███████▌  | 12/16 [00:03<00:00,  4.66it/s] 81%|████████▏ | 13/16 [00:03<00:00,  4.64it/s] 88%|████████▊ | 14/16 [00:03<00:00,  4.68it/s]                                               {'loss': '0.6103', 'grad_norm': '1.808', 'learning_rate': '4e-05', 'entropy': '0.6995', 'num_tokens': '5312', 'mean_token_accuracy': '0.9165', 'epoch': '0.875'}
+ 88%|████████▊ | 14/16 [00:03<00:00,  4.68it/s] 94%|█████████▍| 15/16 [00:03<00:00,  4.69it/s]100%|██████████| 16/16 [00:03<00:00,  4.71it/s]                                               {'loss': '0.738', 'grad_norm': '1.669', 'learning_rate': '1.333e-05', 'entropy': '0.8292', 'num_tokens': '6024', 'mean_token_accuracy': '0.8935', 'epoch': '1'}
+100%|██████████| 16/16 [00:03<00:00,  4.71it/s]                                               {'train_runtime': '4.484', 'train_samples_per_second': '14.27', 'train_steps_per_second': '3.568', 'train_loss': '1.404', 'epoch': '1'}
+100%|██████████| 16/16 [00:04<00:00,  4.71it/s]100%|██████████| 16/16 [00:04<00:00,  3.75it/s]
+[train] saved -> out/lora_2gpu_5060ti/final
+[train] to evaluate: python eval/run_humaneval.py --model out/lora_2gpu_5060ti/final
+[vram] peak_alloc=1573 MiB  peak_reserved=1672 MiB
+[rank0]:[W610 14:16:44.358381178 ProcessGroupNCCL.cpp:1647] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
