@@ -134,7 +134,8 @@ def train(cfg: dict, data_dir_override: str | None = None) -> None:
             pp_mesh = mesh["pp"]
             is_last_pp_rank = (pp_mesh.get_local_rank() == pp_mesh.size() - 1)
         if pcfg["zero"] == "fsdp":
-            model = apply_fsdp(model, mesh["dp"], dtype)
+            model = apply_fsdp(model, mesh["dp"], dtype,
+                                reshard_after_forward=pcfg.get("reshard_after_forward", True))
 
     model = _maybe_compile(model, cfg["train"].get("compile", False),
                             pp_active=pp_schedule is not None)
@@ -257,8 +258,16 @@ def train(cfg: dict, data_dir_override: str | None = None) -> None:
             o.zero_grad(set_to_none=True)
         loss_acc = 0.0
         if pp_schedule is None:
-            # No pipelining: regular gradient accumulation.
-            for _ in range(accum):
+            # No pipelining: regular gradient accumulation. Under FSDP2 we
+            # gate gradient sync so the reduce-scatter fires only on the LAST
+            # micro-step instead of all `accum` of them — on a PCIe fabric
+            # (no NVLink) that single change is the difference between
+            # comm-bound (~6% MFU) and compute-bound. `set_requires_grad_sync`
+            # is a no-op on non-FSDP models, so this is safe single-GPU too.
+            sync_gate = getattr(model, "set_requires_gradient_sync", None)
+            for micro in range(accum):
+                if sync_gate is not None:
+                    sync_gate(micro == accum - 1)
                 x, y = loader.next_batch()
                 with autocast():
                     _, loss = model(x, y)

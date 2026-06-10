@@ -1,0 +1,65 @@
+# 2-GPU FSDP2 recipe — 416M Llama-arch GPT on FineWeb-Edu, 2x RTX 5060 Ti.
+#
+# This is the FIRST genuine multi-GPU run in distgpt: dp=2 means FSDP2
+# `fully_shard` actually shards every Block across the two GPUs, so the
+# all-gather (forward) / reduce-scatter (backward grad) collectives are on
+# the critical path -- unlike the single-rank gpt_416m_fweb_5060ti.yaml
+# where they no-op'd.
+#
+# Topology note: the two 5060 Ti's are PCIe-connected (PHB host bridge),
+# P2P = CNS (chipset not supported), no NVLink. NCCL routes collectives
+# through host shared memory, so the launch MUST set NCCL_P2P_DISABLE=1
+# (see scripts/run_5060ti_2gpu.sh). FSDP comm therefore has real PCIe
+# cost; the 416M model's compute-to-comm ratio keeps MFU usable anyway.
+#
+# Scale-out story vs the single-rank baseline (val ppl 60.7 @ 98M tokens):
+#   * dp=2 doubles tokens_per_step (65,536 vs 32,768) at the same grad_accum
+#   * FSDP shards 416M params -> ~208M/GPU, freeing VRAM that the single-rank
+#     run spent on the full param+optimizer copy
+#   * 4500 steps x 65,536 tok = 295M tokens (3x the baseline's 98M, ~0.7B
+#     of the 1B-token corpus seen once we account for the 2-way shard split)
+#
+run_id: gpt_416m_fweb_2gpu
+out_dir: out/gpt_416m_fweb_2gpu
+data: {dir: data/fineweb-edu, seq_len: 1024}
+seed: 1337
+dtype: bfloat16
+log: {jsonl: true, wandb_project: null}
+
+model:
+  vocab_size: 50304
+  n_layer: 24
+  n_head: 16
+  n_kv_head: 4         # GQA 4:1
+  d_model: 1024
+  d_ffn: 4096
+  max_seq_len: 1024
+  rope_base: 10000.0
+  tie_embeddings: true
+
+parallel:
+  dp: -1               # -> 2 at world_size=2 (build_mesh fills dp)
+  tp: 1
+  pp: 1
+  zero: fsdp           # ACTIVE at dp=2: fully_shard wraps each Block
+  reshard_after_forward: false   # PCIe fabric (no NVLink): keep the ~0.8GB
+                                  # unsharded param copy resident so backward
+                                  # needs no re-gather. Optim state still
+                                  # sharded. Halves collective volume.
+  activation_ckpt: none
+
+optim:
+  lr: 3.0e-4
+  min_lr: 3.0e-5
+  betas: [0.9, 0.95]
+  weight_decay: 0.1
+  grad_clip: 1.0
+  warmup_steps: 200
+  total_steps: 4500
+
+train:
+  micro_batch: 4
+  grad_accum: 8        # eff batch = 4*8*2(dp) = 64 seq = 65536 tok / step
+  log_every: 10
+  eval_every: 250
+  ckpt_every: 500
