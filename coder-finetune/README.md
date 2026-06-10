@@ -134,10 +134,11 @@ coder-finetune/
 ├── cf_data/        # SFT dataset loaders (HF datasets + your own repo + synthetic)
 ├── cf_pref/        # DPO/ORPO/SimPO pairs + KTO objectives/binary adapter + dpo_train.py
 ├── cf_rl/          # RLVR/GRPO: verifiable reward + prompt sets + grpo_train.py
+├── cf_dist.py      # read-only view of the DDP topology (WORLD_SIZE/RANK), launcher-set
 ├── train.py        # SFT / LoRA / QLoRA via TRL SFTTrainer
 ├── eval/           # HumanEval+ runner with Docker sandbox (also the RL verifier)
 ├── infer/          # merge LoRA, export for vLLM
-└── tests/          # 74 tests — bug regressions, sandbox, DPO/SimPO/KTO/GRPO pins
+└── tests/          # 84 tests — bug regressions, sandbox, DPO/SimPO/KTO/GRPO + DDP-env pins
 ```
 
 ## Quickstart
@@ -251,3 +252,29 @@ Hardening + frontier-toolbox pass, four hermetic commits (24 → 66 tests):
   the suite needs no download), and an `extract_code` fence round-trip.
 - **8.4 — docs** — this section, the Sandbox & safety section, and the knob/CLI
   tables above.
+
+## Recent changes (Tier 9)
+
+Single-node **DDP (data-parallel)** for all three entry points (74 → 84 tests),
+one commit. Each GPU holds a full model replica and processes a different batch
+slice; effective batch scales with GPU count. This is *not* model sharding — see
+[Multi-GPU](#multi-gpu-single-node-ddp) and **What this is NOT**.
+
+- **9.1 — `cf_dist.py`, a read-only topology view** (+10): `dist_env()` reads the
+  `RANK`/`LOCAL_RANK`/`WORLD_SIZE` that `accelerate`/`torchrun` publish (it never
+  calls `init_process_group` — TRL's `Trainer` owns the process group), with a
+  single-process fallback that tolerates unset/empty/garbage env values.
+  `placement_device_map()` returns `{"": local_rank}` only on the QLoRA path
+  (bitsandbytes pins 4-bit weights at load time) and `None` otherwise;
+  `rank0_print()` de-dupes status lines to the main process.
+- **9.2 — the core fix: world size from `WORLD_SIZE`, not `device_count()`.** GRPO's
+  group-divisibility validator must match TRL's `num_processes`. `device_count()`
+  diverges in *both* directions — a single process on a 2-GPU box over-counts, and
+  one-process-per-GPU under-counts — so it would both miss real mismatches and
+  reject valid configs. The validator, QLoRA placement, and rank-0-guarded saves
+  are threaded identically through `train.py`, `cf_pref/dpo_train.py`, and
+  `cf_rl/grpo_train.py`; **single-process behavior is byte-for-byte unchanged**.
+- **9.3 — `tests/test_dist_env.py`** (+10): pins the single-process identity, env
+  parsing, QLoRA placement, rank-0 gating, and the cross-module contract that a
+  `bs=2 × accum=2 × G=8` config is *invalid at world=1 but valid at world=2* —
+  proving the validator consults `WORLD_SIZE`, not the device count.
