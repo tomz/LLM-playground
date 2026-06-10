@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from cf_dist import dist_env, rank0_print  # noqa: E402
 from cf_rl import prompts as grpo_data  # noqa: E402
 from cf_rl.reward import (  # noqa: E402
     code_unit_test_reward,
@@ -117,10 +118,20 @@ def build_grpo_trainer(model, tok, train_ds, reward_funcs, cfg: dict):
     # straddle accumulation boundaries. Without this guard the failure mode is
     # an opaque tensor-shape error deep inside trainer.train(), often after
     # several minutes of model loading and dataset prep.
+    #
+    # world_size MUST come from WORLD_SIZE (== accelerate's num_processes), NOT
+    # from torch.cuda.device_count(). The two diverge in both directions and
+    # TRL validates against the process count, so device_count() would make
+    # this guard both miss real mismatches and reject valid configs:
+    #   * single process on a 2-GPU box: device_count()=2 but the job is one
+    #     process (WORLD_SIZE unset → 1); the old code over-counted the batch.
+    #   * torchrun --nproc_per_node 2, each rank pinned to one card:
+    #     device_count()=1 per process but WORLD_SIZE=2; the old code
+    #     under-counted and would wrongly reject a config TRL accepts.
     G = int(g.get("num_generations", 8))
     per_dev = int(t["batch_size"])
     accum = int(t["grad_accum"])
-    world = max(1, torch.cuda.device_count() if torch.cuda.is_available() else 1)
+    world = dist_env().world_size
     effective = per_dev * accum * world
     if effective % G != 0:
         raise SystemExit(
@@ -128,7 +139,9 @@ def build_grpo_trainer(model, tok, train_ds, reward_funcs, cfg: dict):
             f" = {effective}) is not divisible by num_generations (G={G}). "
             f"Fix by adjusting one of: train.batch_size, train.grad_accum, "
             f"grpo.num_generations so they line up (e.g. G={G} -> effective batch "
-            f"in {{{G}, {2*G}, {3*G}, ...}})."
+            f"in {{{G}, {2*G}, {3*G}, ...}}). Note: world is the number of "
+            f"processes (WORLD_SIZE), not visible GPUs — launch DDP with "
+            f"torchrun/accelerate so this matches TRL's num_processes."
         )
 
     args = GRPOConfig(
@@ -180,35 +193,37 @@ def main():
     os.makedirs(cfg["out_dir"], exist_ok=True)
     torch.manual_seed(cfg["seed"])
 
-    print(f"[grpo] dataset: {cfg['dataset']['source']}")
+    rank0_print(f"[grpo] dataset: {cfg['dataset']['source']}")
     train_ds = grpo_data.load(cfg["dataset"])
     if cfg["dataset"].get("max_examples"):
         train_ds = train_ds.select(range(min(cfg["dataset"]["max_examples"], len(train_ds))))
-    print(f"[grpo] {len(train_ds)} prompts (each scored by unit tests)")
+    rank0_print(f"[grpo] {len(train_ds)} prompts (each scored by unit tests)")
 
-    print(f"[grpo] model: {cfg['model']['name']} method={cfg['method']}")
+    rank0_print(f"[grpo] model: {cfg['model']['name']} method={cfg['method']}")
     if cfg["model"].get("use_unsloth", False):
         model, tok = build_model_and_tokenizer_unsloth(cfg)
     else:
         model, tok = build_model_and_tokenizer(cfg)
 
     reward_funcs = build_reward_funcs(cfg, tok)
-    print(f"[grpo] rewards: {[f.__name__ for f in reward_funcs]}")
+    rank0_print(f"[grpo] rewards: {[f.__name__ for f in reward_funcs]}")
 
     trainer = build_grpo_trainer(model, tok, train_ds, reward_funcs, cfg)
-    print("[grpo] starting RLVR")
+    rank0_print("[grpo] starting RLVR")
     trainer.train()
 
     save_path = os.path.join(cfg["out_dir"], "final")
-    trainer.save_model(save_path)
-    tok.save_pretrained(save_path)
-    print(f"[grpo] saved -> {save_path}")
-    print(f"[grpo] to evaluate: python eval/run_humaneval.py --model {save_path}")
+    trainer.save_model(save_path)            # TRL guards this to the main process
+    if dist_env().is_main:                   # tokenizer save is not guarded — do it once
+        tok.save_pretrained(save_path)
+    rank0_print(f"[grpo] saved -> {save_path}")
+    rank0_print(f"[grpo] to evaluate: python eval/run_humaneval.py --model {save_path}")
 
     if torch.cuda.is_available():
         alloc = torch.cuda.max_memory_allocated() // (1024 * 1024)
         resv = torch.cuda.max_memory_reserved() // (1024 * 1024)
-        print(f"[vram] peak_alloc={alloc} MiB  peak_reserved={resv} MiB")
+        # Each rank has its own peak; report rank 0's as the representative figure.
+        rank0_print(f"[vram] peak_alloc={alloc} MiB  peak_reserved={resv} MiB")
 
 
 if __name__ == "__main__":

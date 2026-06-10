@@ -33,6 +33,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from cf_dist import dist_env, rank0_print  # noqa: E402
 from cf_pref import pairs as pref_data  # noqa: E402
 from train import build_model_and_tokenizer, build_model_and_tokenizer_unsloth  # noqa: E402
 
@@ -156,32 +157,34 @@ def main():
     torch.manual_seed(cfg["seed"])
 
     objective = cfg.get("pref", {}).get("objective", "dpo").lower()
-    print(f"[pref] objective={objective}  dataset: {cfg['dataset']['source']}")
+    rank0_print(f"[pref] objective={objective}  dataset: {cfg['dataset']['source']}")
     train_ds = pref_data.load(cfg["dataset"])
     if cfg["dataset"].get("max_examples"):
         train_ds = train_ds.select(range(min(cfg["dataset"]["max_examples"], len(train_ds))))
-    print(f"[pref] {len(train_ds)} preference pairs (chosen vs rejected)")
+    rank0_print(f"[pref] {len(train_ds)} preference pairs (chosen vs rejected)")
 
-    print(f"[pref] model: {cfg['model']['name']} method={cfg['method']}")
+    rank0_print(f"[pref] model: {cfg['model']['name']} method={cfg['method']}")
     if cfg["model"].get("use_unsloth", False):
         model, tok = build_model_and_tokenizer_unsloth(cfg)
     else:
         model, tok = build_model_and_tokenizer(cfg)
 
     trainer = build_pref_trainer(model, tok, train_ds, cfg)
-    print(f"[pref] starting {objective.upper()}")
+    rank0_print(f"[pref] starting {objective.upper()}")
     trainer.train()
 
     save_path = os.path.join(cfg["out_dir"], "final")
-    trainer.save_model(save_path)
-    tok.save_pretrained(save_path)
-    print(f"[pref] saved -> {save_path}")
-    print(f"[pref] to evaluate: python eval/run_humaneval.py --model {save_path}")
+    trainer.save_model(save_path)            # TRL guards this to the main process
+    if dist_env().is_main:                   # tokenizer save is not guarded — do it once
+        tok.save_pretrained(save_path)
+    rank0_print(f"[pref] saved -> {save_path}")
+    rank0_print(f"[pref] to evaluate: python eval/run_humaneval.py --model {save_path}")
 
     if torch.cuda.is_available():
         alloc = torch.cuda.max_memory_allocated() // (1024 * 1024)
         resv = torch.cuda.max_memory_reserved() // (1024 * 1024)
-        print(f"[vram] peak_alloc={alloc} MiB  peak_reserved={resv} MiB")
+        # Each rank tracks its own peak; rank 0's is the representative figure.
+        rank0_print(f"[vram] peak_alloc={alloc} MiB  peak_reserved={resv} MiB")
 
 
 if __name__ == "__main__":

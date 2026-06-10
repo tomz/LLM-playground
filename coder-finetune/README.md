@@ -181,10 +181,50 @@ CUDA_VISIBLE_DEVICES=0 .venv/bin/python train.py --config configs/lora_5060ti.ya
     --prompt 'Write a Python function levenshtein(a, b) ...'
 ```
 
+## Multi-GPU (single-node DDP)
+
+The three entry points (`train.py`, `cf_pref/dpo_train.py`, `cf_rl/grpo_train.py`)
+run unchanged under **data-parallel multi-GPU** — launch with `accelerate` or
+`torchrun` and TRL's `Trainer` (built on HuggingFace `accelerate`) owns the
+process group. This is **DDP, not model sharding**: each GPU holds a full model
+replica and processes a different slice of the batch, so the effective batch
+scales with GPU count. To shard one model across GPUs, use `distgpt`.
+
+```bash
+# 2-GPU LoRA SFT (each rank = one card; effective batch ×2):
+accelerate launch --multi_gpu --num_processes 2 \
+    train.py --config configs/lora_5060ti.yaml
+
+# 2-GPU GRPO (torchrun also works; TRL reads WORLD_SIZE either way):
+torchrun --standalone --nproc_per_node 2 \
+    -m cf_rl.grpo_train --config configs/grpo_3050.yaml
+```
+
+What makes this correct under DDP — all in `cf_dist.py`, a read-only view of the
+topology `accelerate`/`torchrun` publish (it never calls `init_process_group`):
+
+- **World size from `WORLD_SIZE`, not `torch.cuda.device_count()`.** GRPO's
+  group-divisibility validator must match TRL's `num_processes`. `device_count()`
+  diverges in *both* directions — a single process on a 2-GPU box over-counts
+  (it's really world size 1), and one-process-per-GPU under-counts (each process
+  sees 1 card but the job is world size 2) — so it would both miss real
+  mismatches and reject valid configs.
+- **QLoRA placement: `device_map={"": local_rank}`.** bitsandbytes pins 4-bit
+  weights to a device *at load time* and accelerate can't relocate them, so each
+  rank must load its quantized replica onto its own GPU. Only the quantized path
+  sets this; plain LoRA / full FT let `accelerate.prepare()` do the device move.
+- **Rank-0-guarded prints + single tokenizer save.** Status lines fire once
+  (not `WORLD_SIZE`×, interleaved), and the tokenizer is written by the main
+  process only. On a single-process run `is_main` is True and `world_size` is 1,
+  so the byte-for-byte single-GPU behavior documented above is unchanged.
+
 ## What this is NOT
 
 - Not a from-scratch trainer (use `nanogpt-edu` / `midgpt` / `distgpt`).
-- Not multi-GPU (single 3050 / 4090 / A100; for 70B+ see `frontier-platform`).
+- Not a *model-sharding* trainer: single-node **multi-GPU DDP** works (replicate
+  the model, shard the batch — see [Multi-GPU](#multi-gpu-single-node-ddp)), but
+  each GPU still holds a full model replica. To shard one model across GPUs
+  (FSDP/TP/PP) or train 70B+, use `distgpt` / `frontier-platform`.
 - Not safe to run untrusted generated code outside the provided Docker sandbox.
 
 ## Recent changes (Tier 8)

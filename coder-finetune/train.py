@@ -18,6 +18,8 @@ import torch
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
+from cf_dist import dist_env, placement_device_map, rank0_print  # noqa: E402
+
 DTYPES = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}
 
 
@@ -93,6 +95,13 @@ def build_model_and_tokenizer(cfg: dict):
             bnb_4bit_compute_dtype=DTYPES[q["bnb_4bit_compute_dtype"]],
             bnb_4bit_use_double_quant=q["bnb_4bit_use_double_quant"],
         )
+        # Under DDP, bitsandbytes places the 4-bit weights on a concrete device
+        # at load time and accelerate cannot relocate them afterwards. Pin this
+        # rank's quantized copy to its own local GPU; on a single process this
+        # is None and Trainer/accelerate keeps doing the placement (unchanged).
+        dmap = placement_device_map()
+        if dmap is not None:
+            kwargs["device_map"] = dmap
 
     model = AutoModelForCausalLM.from_pretrained(name, **kwargs)
 
@@ -216,31 +225,33 @@ def main():
     train_ds = data.load(cfg["dataset"])
     if cfg["dataset"].get("max_examples"):
         train_ds = train_ds.select(range(min(cfg["dataset"]["max_examples"], len(train_ds))))
-    print(f"[load] {len(train_ds)} training examples")
+    rank0_print(f"[load] {len(train_ds)} training examples")
 
-    print(f"[load] model: {cfg['model']['name']} method={cfg['method']}")
+    rank0_print(f"[load] model: {cfg['model']['name']} method={cfg['method']}")
     if cfg["model"].get("use_unsloth", False):
-        print("[load] using Unsloth fast-path loader")
+        rank0_print("[load] using Unsloth fast-path loader")
         model, tok = build_model_and_tokenizer_unsloth(cfg)
     else:
         model, tok = build_model_and_tokenizer(cfg)
 
     trainer = build_trainer(model, tok, train_ds, cfg)
-    print("[train] starting")
+    rank0_print("[train] starting")
     trainer.train()
 
     save_path = os.path.join(cfg["out_dir"], "final")
-    trainer.save_model(save_path)
-    tok.save_pretrained(save_path)
-    print(f"[train] saved -> {save_path}")
-    print(f"[train] to evaluate: python eval/run_humaneval.py --model {save_path}")
+    trainer.save_model(save_path)            # TRL guards this to the main process
+    if dist_env().is_main:                   # tokenizer save is not guarded — do it once
+        tok.save_pretrained(save_path)
+    rank0_print(f"[train] saved -> {save_path}")
+    rank0_print(f"[train] to evaluate: python eval/run_humaneval.py --model {save_path}")
 
     if torch.cuda.is_available():
         # Report what the run actually cost. Useful for the worked-example
-        # docs and for capacity planning on the next-bigger model.
+        # docs and for capacity planning on the next-bigger model. Each rank
+        # tracks its own peak; rank 0's is the representative figure.
         alloc = torch.cuda.max_memory_allocated() // (1024 * 1024)
         resv = torch.cuda.max_memory_reserved() // (1024 * 1024)
-        print(f"[vram] peak_alloc={alloc} MiB  peak_reserved={resv} MiB")
+        rank0_print(f"[vram] peak_alloc={alloc} MiB  peak_reserved={resv} MiB")
 
 
 if __name__ == "__main__":
