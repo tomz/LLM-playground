@@ -138,11 +138,11 @@ tok/step because dp=2), everything else stock — was a shock:
 | Config (416 M, same seed) | Step time | Aggregate tok/s | Scaling | Per-GPU MFU | Peak VRAM/GPU |
 |---|---:|---:|---:|---:|---:|
 | 1-GPU baseline            | 2.84 s / 32 k tok | 11.5 k | 1.00× | 16.2 % | 12.0 GB |
-| 2-GPU **naive** FSDP      | 8.20 s / 65 k tok | **8.0 k** | **0.68×** ❌ | 5.6 % | 10.7 GB |
+| 2-GPU **naive** FSDP      | 8.20 s / 65 k tok | **8.0 k** | **0.69×** ❌ | 5.6 % | 10.7 GB |
 
-Adding a second GPU made the run **32 % slower in aggregate throughput**.
+Adding a second GPU made the run **31 % slower in aggregate throughput**.
 VRAM sharding worked (10.7 GB/GPU vs 12.0 GB — optimizer state is split),
-but per-GPU compute efficiency collapsed from 16.4 % to 5.6 %. The model
+but per-GPU compute efficiency collapsed from 16.2 % to 5.6 %. The model
 was spending more time shuffling parameters over PCIe than doing matmuls.
 
 Two things were generating far more collective traffic than necessary:
@@ -209,16 +209,16 @@ roughly halved:
 | Config (416 M, same seed) | Step time | Aggregate tok/s | Scaling | Per-GPU MFU | Peak VRAM/GPU |
 |---|---:|---:|---:|---:|---:|
 | 1-GPU baseline            | 2.84 s / 32 k tok | 11.5 k | 1.00× | 16.2 % | 12.0 GB |
-| 2-GPU naive FSDP          | 8.20 s / 65 k tok | 8.0 k | 0.68× ❌ | 5.6 % | 10.7 GB |
-| 2-GPU **optimized**       | 4.44 s / 65 k tok | **14.8 k** | **1.26×** ✅ | 10.4 % | 12.8 GB |
+| 2-GPU naive FSDP          | 8.20 s / 65 k tok | 8.0 k | 0.69× ❌ | 5.6 % | 10.7 GB |
+| 2-GPU **optimized**       | 4.44 s / 65 k tok | **14.8 k** | **1.28×** ✅ | 10.4 % | 12.8 GB |
 
 Step time **halved** (8.20 s → 4.44 s) and aggregate throughput went from
-*below* the single GPU to **1.26× above it** — a flip from negative to
+*below* the single GPU to **1.28× above it** — a flip from negative to
 positive scaling from two config/code changes, no new hardware.
 
-Read the numbers honestly, though: **1.26× on 2 GPUs is 63 % scaling
+Read the numbers honestly, though: **1.28× on 2 GPUs is 64 % scaling
 efficiency**, and per-GPU MFU is still only 10.4 % — *lower* than the
-single GPU's 16.4 %. That gap is the PCIe tax: each GPU gives up ~6 points
+single GPU's 16.2 %. That gap is the PCIe tax: each GPU gives up ~6 points
 of MFU to the cost of talking to its peer over host memory. You come out
 ahead in wall-clock (more aggregate tokens/s) but you are paying a real
 per-device efficiency penalty for the privilege. **On a fabric with
@@ -332,7 +332,7 @@ current NCCL:
   + `DISTGPT_COLOCATE_RANKS=1` is in this commit and the launcher is
   `scripts/run_5060ti_2rank.sh`), but FSDP all-gather over gloo on
   loopback is ~50× slower than NCCL: the 3 000-step run extrapolated
-  to ~24 hours instead of 1 h 12 min. Not worth the chart.
+  to ~24 hours instead of 2 h 22 min. Not worth the chart.
 
 So colocating two ranks is a dead end — if you want real FSDP
 collectives you need two *separate* visible devices, which is exactly the

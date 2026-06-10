@@ -12,7 +12,7 @@
 # P2P = CNS (not supported), no NVLink. NCCL must route collectives through
 # host shared memory, hence NCCL_P2P_DISABLE=1. With reshard_after_forward
 # false (set in the config) + last-micro-step grad sync (in trainer.py), this
-# lands at ~1.26x aggregate throughput vs a single 5060 Ti -- see the
+# lands at ~1.28x aggregate throughput vs a single 5060 Ti -- see the
 # "Going multi-GPU" section of examples/5060ti_416m_fineweb.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."

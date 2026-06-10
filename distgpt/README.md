@@ -100,7 +100,7 @@ real reproducible run in [`examples/5060ti_416m_fineweb.md`](examples/5060ti_416
 
 - 416 M params · Llama-arch (RoPE + RMSNorm + SwiGLU + GQA 4:1)
 - FineWeb-Edu 1 B-token slice · seq 1024 · effective batch 32 768 tokens
-- **1 h 12 min** wall-clock · **11.7 k tok/s** · **12.0 GB** peak VRAM
+- **2 h 22 min** wall-clock · **11.5 k tok/s** · **12.0 GB** peak VRAM
 - **Val ppl 60.7** at step 2 800 (98 M tokens trained, ~0.24× Chinchilla)
 
 ![distgpt 416M training curves](out/gpt_416m_fweb_5060ti/loss.png)

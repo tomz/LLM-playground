@@ -115,8 +115,8 @@ AdamW + cosine + per-group WD — is on the critical path).
 | Model            | 416 M Llama-arch (24 L × 1024 d × 16 H, **GQA 4:1**, tied embeddings, RoPE + RMSNorm + SwiGLU) |
 | Dataset          | FineWeb-Edu `sample-10BT`, 1 B-token slice (shared with `midgpt/`) |
 | Tokens trained   | **98 M** (~0.24× Chinchilla for 416 M) |
-| Wall-clock       | **1 h 12 min** (3 000 steps × 32 768 tok / step) |
-| Throughput       | **11.7 k tok/s** sustained, ~98 % GPU util |
+| Wall-clock       | **2 h 22 min** (3 000 steps × 32 768 tok / step) |
+| Throughput       | **11.5 k tok/s** sustained, ~98 % GPU util |
 | Peak VRAM        | **12.0 GB allocated / 12.1 GB reserved** (of 16 GB) |
 | Train loss       | 11.02 → **4.58** |
 | **Best val ppl** | **60.7** (loss 4.105) at step 2 800 |
