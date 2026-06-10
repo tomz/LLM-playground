@@ -138,7 +138,7 @@ coder-finetune/
 ├── train.py        # SFT / LoRA / QLoRA via TRL SFTTrainer
 ├── eval/           # HumanEval+ runner with Docker sandbox (also the RL verifier)
 ├── infer/          # merge LoRA, export for vLLM
-└── tests/          # 84 tests — bug regressions, sandbox, DPO/SimPO/KTO/GRPO + DDP-env pins
+└── tests/          # 85 tests — bug regressions, sandbox, DPO/SimPO/KTO/GRPO + DDP-env/launcher pins
 ```
 
 ## Quickstart
@@ -255,8 +255,8 @@ Hardening + frontier-toolbox pass, four hermetic commits (24 → 66 tests):
 
 ## Recent changes (Tier 9)
 
-Single-node **DDP (data-parallel)** for all three entry points (74 → 84 tests),
-one commit. Each GPU holds a full model replica and processes a different batch
+Single-node **DDP (data-parallel)** for all three entry points (74 → 85 tests),
+two commits. Each GPU holds a full model replica and processes a different batch
 slice; effective batch scales with GPU count. This is *not* model sharding — see
 [Multi-GPU](#multi-gpu-single-node-ddp) and **What this is NOT**.
 
@@ -278,3 +278,13 @@ slice; effective batch scales with GPU count. This is *not* model sharding — s
   parsing, QLoRA placement, rank-0 gating, and the cross-module contract that a
   `bs=2 × accum=2 × G=8` config is *invalid at world=1 but valid at world=2* —
   proving the validator consults `WORLD_SIZE`, not the device count.
+- **9.4 — `tests/test_dist_launch.py`, the real two-process launcher pin** (+1):
+  9.3 sets `os.environ` in *one* process; this spawns **two genuine processes**
+  via `python -m torch.distributed.run --nproc_per_node 2` and asserts each reads
+  its own distinct topology from `cf_dist` (distinct rank/local_rank, distinct
+  QLoRA pinning, one `is_main`), with a real gloo rendezvous + `all_gather`
+  confirming they coordinate. Runs on the **gloo (CPU) backend with CUDA hidden**
+  → zero GPU memory (safe alongside a live GPU job) and, because
+  `device_count()==0` in the workers while `world_size==2`, it can only pass if
+  the topology comes from `WORLD_SIZE` — the same fix 9.2 makes, now proven
+  end-to-end through the real launcher instead of simulated env vars.
