@@ -37,8 +37,16 @@ under `out/<run>/train.log`; PNG/SVG plots are written by
 |-------------|--------:|-------------:|-------------:|--------:|------------:|-------------:|----------:|----------:|
 | `smoke`     |  0.86 M | 275 / 300    |  14.0        |  ~5 s   | 1.90        | **1.99**     | 1.99      |  ~0       |
 | `tiny`      | 10.65 M | 4,990 / 5,000|  203.4       | ~17 min | 0.07        | **1.53**     | 4.34      | **2.81**  |
-| `tiny_clean`| 10.65 M | 1,500 / 1,500|  203.0       | ~5 min  | 0.53        | **1.48**     | 1.85      |   0.36    |
+| `tiny_clean`| 10.65 M | 1,500 / 1,500|  92.5 \*     | ~2.3 min \*| 0.53      | **1.48**     | 1.85      |   0.36    |
 | `small`     | 25.73 M | 9,600 / 15,000 (killed @ 64 %) |  798.4 | ~2 h 15 | 0.04        | **1.87**     | 5.21      |   3.35    |
+
+> \* **`tiny_clean` timings are from an RTX 5060 Ti, not the 3050.** When the
+> rig was upgraded, `tiny_clean` was the one row re-run on the new card (its
+> committed `out/tiny_clean/train.log` is the 5060 Ti log: ~92.5 ms/it median,
+> ~2.3 min wall). `smoke`/`tiny`/`small` above are the original 3050 logs and
+> are unchanged. The **loss** columns are hardware-independent and directly
+> comparable across all four rows; only `tiny_clean`'s ms/it + wall reflect the
+> faster GPU. The full migration of the remaining rows is tracked separately.
 
 `tiny_clean` is the same architecture as `tiny`, run for 1,500 iterations
 with `dropout=0.1` instead of `0.0`. It's the **regularized** counterpart
