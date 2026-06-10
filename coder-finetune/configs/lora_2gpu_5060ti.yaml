@@ -1,0 +1,81 @@
+# 2-GPU DDP recipe — Qwen2.5-Coder-0.5B LoRA, the genuine multi-process proof.
+#
+# This is the data-parallel companion to lora_5060ti.yaml (which is a single-GPU
+# 3B recipe). The point here is NOT throughput numbers — it's to light up the
+# real DDP path end-to-end: TWO genuine processes (one per RTX 5060 Ti), each a
+# full 0.5B model replica, each consuming a distinct shard of the batch, with
+# gradients all-reduced across the PCIe fabric every optimizer step. It is the
+# GPU escalation of tests/test_dist_launch.py (which proves the cf_dist topology
+# contract on CPU/gloo); this config proves the *training step* itself — real
+# fwd/bwd/optimizer — runs correctly under `accelerate launch --multi_gpu`.
+#
+# Why 0.5B + the built-in dataset:
+#   * 0.5B LoRA is ~2-3 GB/replica — fits twice over even when the cards are
+#     otherwise busy, and loads in seconds.
+#   * `dataset.source: builtin` needs NO download (cf_data.BUILTIN_PAIRS), so the
+#     run is hermetic and reproducible — the only fetch is the base model.
+#   * max_examples=64 / eff-batch 4 (1 micro x 2 accum x 2 dp) = 16 optimizer
+#     steps: enough to prove loss moves and every DDP collective fires, fast
+#     enough to be a smoke test rather than a training job.
+#
+# This is DDP (replicate-the-model, shard-the-batch), NOT model sharding. To
+# shard one model across GPUs (FSDP2/TP/PP) use distgpt. See the README's
+# "Multi-GPU (single-node DDP)" section.
+#
+# Topology note: the two 5060 Ti's have no NVLink (PHB host bridge, P2P=CNS), so
+# the launch script exports NCCL_P2P_DISABLE=1 and NCCL routes the gradient
+# all-reduce through host shared memory over PCIe — exactly the fabric distgpt's
+# 2-GPU FSDP example calibrates against.
+#
+# Launch (see scripts/run_5060ti_2gpu_ddp.sh):
+#   accelerate launch --multi_gpu --num_processes 2 --mixed_precision bf16 \
+#       train.py --config configs/lora_2gpu_5060ti.yaml
+
+out_dir: out/lora_2gpu_5060ti
+seed: 1337
+
+model:
+  name: Qwen/Qwen2.5-Coder-0.5B
+  dtype: bfloat16
+  attn_impl: sdpa            # 'sdpa' | 'flash_attention_2' | 'eager'
+  trust_remote_code: false
+
+method: lora                 # plain LoRA: accelerate.prepare() does the device
+                             # move per rank (the QLoRA device_map={'':local_rank}
+                             # path in cf_dist is exercised by configs/qlora.yaml).
+
+# Same adapter shape as the 3050/5060 Ti single-GPU recipes — keeps the DDP run
+# directly comparable to its single-process sibling.
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  bias: none
+  target_modules: ['q_proj', 'k_proj', 'v_proj', 'o_proj',
+                   'gate_proj', 'up_proj', 'down_proj']
+
+dataset:
+  source: builtin            # hermetic: cf_data.BUILTIN_PAIRS, no download
+  hf_name: null
+  jsonl_path: null
+  max_examples: 64           # -> 16 optimizer steps at eff-batch 4 (1x2x2dp)
+  format: chatml
+
+train:
+  max_seq_len: 1024
+  batch_size: 1              # per-device (per-rank) micro-batch
+  grad_accum: 2              # eff batch = 1 x 2 x 2(dp) = 4 sequences / step
+  epochs: 1
+  lr: 2.0e-4
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  grad_clip: 1.0
+  log_every: 2
+  save_every: 1000           # > total steps: final adapter save only, no
+                             # mid-train checkpoint (keeps the smoke fast)
+  packing: false
+
+eval:
+  enable: false
+  n_problems: 20
+  n_samples_per_problem: 1
