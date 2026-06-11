@@ -1,0 +1,517 @@
+W0609 20:35:19.764000 1331279 torch/distributed/run.py:862] 
+W0609 20:35:19.764000 1331279 torch/distributed/run.py:862] *****************************************
+W0609 20:35:19.764000 1331279 torch/distributed/run.py:862] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0609 20:35:19.764000 1331279 torch/distributed/run.py:862] *****************************************
+[init] rank=0/2 device=cuda:0 dtype=torch.bfloat16
+[mesh] dp=2 tp=1 pp=1
+[model] 0.42B params
+[fp8] disabled (dtype=torch.bfloat16)
+[mfu] peak 178.0 TFLOP/s @ torch.bfloat16
+NCCL version 2.29.7+cuda13.2
+
+[2026-06-09 20:35:24] i714700k:1331321:1331321 [0] misc/ibvwrap.cc:173 NCCL WARN lib wrapper not initialized.
+
+[2026-06-09 20:35:24] i714700k:1331322:1331322 [1] misc/ibvwrap.cc:173 NCCL WARN lib wrapper not initialized.
+step       0 | loss 11.0281 | lr 1.50e-06 | gnorm 3.844 | 528 ms | 0.12M tok/s | mfu 87.1%
+step      10 | loss 10.8807 | lr 1.65e-05 | gnorm 3.938 | 4430 ms | 0.01M tok/s | mfu 10.4%
+step      20 | loss 10.0524 | lr 3.15e-05 | gnorm 3.969 | 4436 ms | 0.01M tok/s | mfu 10.4%
+step      30 | loss 9.2844 | lr 4.65e-05 | gnorm 1.898 | 4440 ms | 0.01M tok/s | mfu 10.4%
+step      40 | loss 9.0166 | lr 6.15e-05 | gnorm 1.531 | 4444 ms | 0.01M tok/s | mfu 10.3%
+step      50 | loss 8.4117 | lr 7.65e-05 | gnorm 1.219 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step      60 | loss 7.9175 | lr 9.15e-05 | gnorm 1.234 | 4446 ms | 0.01M tok/s | mfu 10.3%
+step      70 | loss 7.5963 | lr 1.07e-04 | gnorm 0.672 | 4445 ms | 0.01M tok/s | mfu 10.3%
+step      80 | loss 7.4088 | lr 1.21e-04 | gnorm 0.664 | 4445 ms | 0.01M tok/s | mfu 10.3%
+step      90 | loss 7.3512 | lr 1.36e-04 | gnorm 0.742 | 4446 ms | 0.01M tok/s | mfu 10.3%
+step     100 | loss 7.2005 | lr 1.51e-04 | gnorm 0.723 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step     110 | loss 7.2004 | lr 1.66e-04 | gnorm 0.559 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     120 | loss 7.1461 | lr 1.81e-04 | gnorm 0.711 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step     130 | loss 7.0258 | lr 1.96e-04 | gnorm 0.883 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step     140 | loss 6.8291 | lr 2.11e-04 | gnorm 0.914 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step     150 | loss 6.6472 | lr 2.26e-04 | gnorm 0.855 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step     160 | loss 6.4983 | lr 2.41e-04 | gnorm 1.047 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step     170 | loss 6.6171 | lr 2.57e-04 | gnorm 0.969 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step     180 | loss 6.4870 | lr 2.71e-04 | gnorm 1.164 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step     190 | loss 6.6375 | lr 2.86e-04 | gnorm 0.645 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step     200 | loss 6.3693 | lr 3.00e-04 | gnorm 0.715 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step     210 | loss 6.2254 | lr 3.00e-04 | gnorm 0.742 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     220 | loss 6.3307 | lr 3.00e-04 | gnorm 0.867 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step     230 | loss 6.1498 | lr 3.00e-04 | gnorm 0.988 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     240 | loss 6.1761 | lr 3.00e-04 | gnorm 0.605 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step     250 | loss 6.2118 | lr 3.00e-04 | gnorm 0.523 | 4449 ms | 0.01M tok/s | mfu 10.3%
+           eval | loss 5.9550
+/home/support/dev-macrohard/LLM-playground/nanogpt-edu/.venv/lib/python3.14/site-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+  return func(*args, **kwargs)
+           best val 5.9550 → out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000000250
+step     260 | loss 6.0325 | lr 3.00e-04 | gnorm 0.570 | 4742 ms | 0.01M tok/s | mfu 9.7%
+step     270 | loss 5.9330 | lr 3.00e-04 | gnorm 0.977 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step     280 | loss 6.0121 | lr 3.00e-04 | gnorm 0.602 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     290 | loss 5.9172 | lr 3.00e-04 | gnorm 0.551 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step     300 | loss 5.9917 | lr 3.00e-04 | gnorm 0.844 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step     310 | loss 5.8226 | lr 3.00e-04 | gnorm 0.641 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step     320 | loss 5.8398 | lr 2.99e-04 | gnorm 0.934 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     330 | loss 5.7246 | lr 2.99e-04 | gnorm 0.656 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     340 | loss 5.7077 | lr 2.99e-04 | gnorm 0.566 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     350 | loss 5.6594 | lr 2.99e-04 | gnorm 0.523 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step     360 | loss 5.7480 | lr 2.99e-04 | gnorm 0.617 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     370 | loss 5.5149 | lr 2.99e-04 | gnorm 0.543 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step     380 | loss 5.5932 | lr 2.99e-04 | gnorm 0.602 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step     390 | loss 5.8113 | lr 2.99e-04 | gnorm 0.785 | 4461 ms | 0.01M tok/s | mfu 10.3%
+step     400 | loss 5.4559 | lr 2.99e-04 | gnorm 0.574 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     410 | loss 5.4995 | lr 2.98e-04 | gnorm 0.471 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step     420 | loss 5.4459 | lr 2.98e-04 | gnorm 0.574 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step     430 | loss 5.3742 | lr 2.98e-04 | gnorm 0.504 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step     440 | loss 5.3760 | lr 2.98e-04 | gnorm 0.498 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step     450 | loss 5.4167 | lr 2.98e-04 | gnorm 0.582 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step     460 | loss 5.3443 | lr 2.98e-04 | gnorm 0.508 | 4452 ms | 0.01M tok/s | mfu 10.3%
+step     470 | loss 5.5020 | lr 2.97e-04 | gnorm 0.617 | 4453 ms | 0.01M tok/s | mfu 10.3%
+step     480 | loss 5.4567 | lr 2.97e-04 | gnorm 0.463 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     490 | loss 5.2343 | lr 2.97e-04 | gnorm 0.520 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step     500 | loss 5.2923 | lr 2.97e-04 | gnorm 0.443 | 4454 ms | 0.01M tok/s | mfu 10.3%
+[ckpt] saved → out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000000500
+           eval | loss 5.0938
+/home/support/dev-macrohard/LLM-playground/nanogpt-edu/.venv/lib/python3.14/site-packages/torch/distributed/checkpoint/state_dict_saver.py:448: UserWarning: Detected an existing checkpoint in out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000000500, overwriting since self.overwrite=True. Past version 2.5 of PyTorch, `overwrite` will default to False. Set this variable to True to maintain this functionality or False to raise when an existing checkpoint is found.
+  local_plan = storage_writer.prepare_local_plan(local_plan)
+/home/support/dev-macrohard/LLM-playground/nanogpt-edu/.venv/lib/python3.14/site-packages/torch/distributed/checkpoint/state_dict_saver.py:448: UserWarning: Detected an existing checkpoint in out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000000500, overwriting since self.overwrite=True. Past version 2.5 of PyTorch, `overwrite` will default to False. Set this variable to True to maintain this functionality or False to raise when an existing checkpoint is found.
+  local_plan = storage_writer.prepare_local_plan(local_plan)
+           best val 5.0938 → out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000000500
+step     510 | loss 5.1827 | lr 2.97e-04 | gnorm 0.543 | 4898 ms | 0.01M tok/s | mfu 9.4%
+step     520 | loss 5.1909 | lr 2.96e-04 | gnorm 0.455 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step     530 | loss 5.1035 | lr 2.96e-04 | gnorm 0.469 | 4457 ms | 0.01M tok/s | mfu 10.3%
+step     540 | loss 5.8258 | lr 2.96e-04 | gnorm 1.008 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step     550 | loss 5.1948 | lr 2.96e-04 | gnorm 0.471 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     560 | loss 4.9621 | lr 2.95e-04 | gnorm 0.684 | 4455 ms | 0.01M tok/s | mfu 10.3%
+step     570 | loss 5.0107 | lr 2.95e-04 | gnorm 0.439 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step     580 | loss 5.1935 | lr 2.95e-04 | gnorm 0.496 | 4452 ms | 0.01M tok/s | mfu 10.3%
+step     590 | loss 5.2228 | lr 2.95e-04 | gnorm 0.672 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step     600 | loss 5.2216 | lr 2.94e-04 | gnorm 0.463 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     610 | loss 4.9901 | lr 2.94e-04 | gnorm 0.613 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step     620 | loss 5.0596 | lr 2.94e-04 | gnorm 0.547 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     630 | loss 5.0204 | lr 2.93e-04 | gnorm 0.570 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step     640 | loss 4.9754 | lr 2.93e-04 | gnorm 0.459 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step     650 | loss 4.9423 | lr 2.93e-04 | gnorm 0.527 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step     660 | loss 4.9756 | lr 2.92e-04 | gnorm 0.434 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step     670 | loss 5.0247 | lr 2.92e-04 | gnorm 0.586 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     680 | loss 4.9712 | lr 2.92e-04 | gnorm 0.434 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step     690 | loss 4.9107 | lr 2.91e-04 | gnorm 0.434 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step     700 | loss 4.9496 | lr 2.91e-04 | gnorm 0.396 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step     710 | loss 4.8846 | lr 2.91e-04 | gnorm 0.465 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     720 | loss 4.8335 | lr 2.90e-04 | gnorm 0.471 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step     730 | loss 5.0242 | lr 2.90e-04 | gnorm 0.598 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step     740 | loss 4.8306 | lr 2.90e-04 | gnorm 0.535 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step     750 | loss 4.9968 | lr 2.89e-04 | gnorm 0.449 | 4448 ms | 0.01M tok/s | mfu 10.3%
+           eval | loss 4.6799
+           best val 4.6799 → out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000000750
+step     760 | loss 4.7862 | lr 2.89e-04 | gnorm 0.449 | 4572 ms | 0.01M tok/s | mfu 10.1%
+step     770 | loss 4.7316 | lr 2.88e-04 | gnorm 0.436 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step     780 | loss 4.8753 | lr 2.88e-04 | gnorm 0.402 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     790 | loss 4.7451 | lr 2.88e-04 | gnorm 0.424 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     800 | loss 4.9028 | lr 2.87e-04 | gnorm 0.535 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step     810 | loss 4.7514 | lr 2.87e-04 | gnorm 0.402 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     820 | loss 4.7396 | lr 2.86e-04 | gnorm 0.436 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     830 | loss 4.6800 | lr 2.86e-04 | gnorm 0.412 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step     840 | loss 4.8925 | lr 2.86e-04 | gnorm 0.455 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step     850 | loss 4.7834 | lr 2.85e-04 | gnorm 0.402 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step     860 | loss 4.8268 | lr 2.85e-04 | gnorm 0.434 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step     870 | loss 4.6992 | lr 2.84e-04 | gnorm 0.445 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     880 | loss 4.6387 | lr 2.84e-04 | gnorm 0.379 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     890 | loss 4.6782 | lr 2.83e-04 | gnorm 0.420 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step     900 | loss 4.6898 | lr 2.83e-04 | gnorm 0.422 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     910 | loss 4.7408 | lr 2.82e-04 | gnorm 0.535 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step     920 | loss 4.7418 | lr 2.82e-04 | gnorm 0.482 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step     930 | loss 4.7403 | lr 2.81e-04 | gnorm 0.508 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     940 | loss 4.9161 | lr 2.81e-04 | gnorm 0.543 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step     950 | loss 4.6948 | lr 2.80e-04 | gnorm 0.381 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step     960 | loss 4.6156 | lr 2.80e-04 | gnorm 0.367 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step     970 | loss 4.5306 | lr 2.79e-04 | gnorm 0.488 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step     980 | loss 4.8116 | lr 2.79e-04 | gnorm 0.396 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step     990 | loss 4.6689 | lr 2.78e-04 | gnorm 0.459 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    1000 | loss 4.6492 | lr 2.78e-04 | gnorm 0.414 | 4448 ms | 0.01M tok/s | mfu 10.3%
+[ckpt] saved → out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000001000
+           eval | loss 4.1810
+/home/support/dev-macrohard/LLM-playground/nanogpt-edu/.venv/lib/python3.14/site-packages/torch/distributed/checkpoint/state_dict_saver.py:448: UserWarning: Detected an existing checkpoint in out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000001000, overwriting since self.overwrite=True. Past version 2.5 of PyTorch, `overwrite` will default to False. Set this variable to True to maintain this functionality or False to raise when an existing checkpoint is found.
+  local_plan = storage_writer.prepare_local_plan(local_plan)
+/home/support/dev-macrohard/LLM-playground/nanogpt-edu/.venv/lib/python3.14/site-packages/torch/distributed/checkpoint/state_dict_saver.py:448: UserWarning: Detected an existing checkpoint in out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000001000, overwriting since self.overwrite=True. Past version 2.5 of PyTorch, `overwrite` will default to False. Set this variable to True to maintain this functionality or False to raise when an existing checkpoint is found.
+  local_plan = storage_writer.prepare_local_plan(local_plan)
+           best val 4.1810 → out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000001000
+step    1010 | loss 4.7647 | lr 2.77e-04 | gnorm 0.432 | 4724 ms | 0.01M tok/s | mfu 9.7%
+step    1020 | loss 4.4073 | lr 2.76e-04 | gnorm 0.443 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    1030 | loss 4.5887 | lr 2.76e-04 | gnorm 0.385 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1040 | loss 4.8655 | lr 2.75e-04 | gnorm 0.451 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1050 | loss 4.4646 | lr 2.75e-04 | gnorm 0.436 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1060 | loss 4.6505 | lr 2.74e-04 | gnorm 0.359 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    1070 | loss 4.6439 | lr 2.74e-04 | gnorm 0.586 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1080 | loss 4.6177 | lr 2.73e-04 | gnorm 0.420 | 4457 ms | 0.01M tok/s | mfu 10.3%
+step    1090 | loss 4.4612 | lr 2.72e-04 | gnorm 0.436 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1100 | loss 4.6085 | lr 2.72e-04 | gnorm 0.393 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1110 | loss 4.5464 | lr 2.71e-04 | gnorm 0.416 | 4456 ms | 0.01M tok/s | mfu 10.3%
+step    1120 | loss 4.4891 | lr 2.71e-04 | gnorm 0.379 | 4453 ms | 0.01M tok/s | mfu 10.3%
+step    1130 | loss 4.5062 | lr 2.70e-04 | gnorm 0.404 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1140 | loss 4.5492 | lr 2.69e-04 | gnorm 0.395 | 4461 ms | 0.01M tok/s | mfu 10.3%
+step    1150 | loss 4.4560 | lr 2.69e-04 | gnorm 0.359 | 4467 ms | 0.01M tok/s | mfu 10.3%
+step    1160 | loss 4.4721 | lr 2.68e-04 | gnorm 0.455 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1170 | loss 4.4174 | lr 2.67e-04 | gnorm 0.361 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    1180 | loss 4.4910 | lr 2.67e-04 | gnorm 0.377 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1190 | loss 4.4567 | lr 2.66e-04 | gnorm 0.346 | 4466 ms | 0.01M tok/s | mfu 10.3%
+step    1200 | loss 4.4679 | lr 2.66e-04 | gnorm 0.377 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    1210 | loss 4.3907 | lr 2.65e-04 | gnorm 0.438 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    1220 | loss 4.5181 | lr 2.64e-04 | gnorm 0.445 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1230 | loss 4.4863 | lr 2.64e-04 | gnorm 0.402 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    1240 | loss 4.6253 | lr 2.63e-04 | gnorm 0.471 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1250 | loss 4.4180 | lr 2.62e-04 | gnorm 0.422 | 4450 ms | 0.01M tok/s | mfu 10.3%
+           eval | loss 4.3878
+step    1260 | loss 4.4533 | lr 2.61e-04 | gnorm 0.387 | 4461 ms | 0.01M tok/s | mfu 10.3%
+step    1270 | loss 4.3811 | lr 2.61e-04 | gnorm 0.348 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1280 | loss 4.4217 | lr 2.60e-04 | gnorm 0.402 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    1290 | loss 4.3185 | lr 2.59e-04 | gnorm 0.400 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1300 | loss 4.3792 | lr 2.59e-04 | gnorm 0.385 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    1310 | loss 4.2142 | lr 2.58e-04 | gnorm 0.371 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1320 | loss 4.3269 | lr 2.57e-04 | gnorm 0.498 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    1330 | loss 4.2886 | lr 2.57e-04 | gnorm 0.400 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    1340 | loss 4.2928 | lr 2.56e-04 | gnorm 0.383 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    1350 | loss 4.3312 | lr 2.55e-04 | gnorm 0.383 | 4452 ms | 0.01M tok/s | mfu 10.3%
+step    1360 | loss 4.2242 | lr 2.54e-04 | gnorm 0.346 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    1370 | loss 4.2580 | lr 2.54e-04 | gnorm 0.434 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    1380 | loss 4.2619 | lr 2.53e-04 | gnorm 0.484 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1390 | loss 4.3992 | lr 2.52e-04 | gnorm 0.412 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    1400 | loss 4.2384 | lr 2.51e-04 | gnorm 0.377 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    1410 | loss 4.2398 | lr 2.51e-04 | gnorm 0.371 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1420 | loss 4.3255 | lr 2.50e-04 | gnorm 0.404 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    1430 | loss 4.2265 | lr 2.49e-04 | gnorm 0.609 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    1440 | loss 4.1813 | lr 2.48e-04 | gnorm 0.367 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1450 | loss 4.2751 | lr 2.48e-04 | gnorm 0.414 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    1460 | loss 4.2552 | lr 2.47e-04 | gnorm 0.430 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    1470 | loss 4.4032 | lr 2.46e-04 | gnorm 0.406 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    1480 | loss 4.2570 | lr 2.45e-04 | gnorm 0.479 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    1490 | loss 4.1537 | lr 2.44e-04 | gnorm 0.375 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    1500 | loss 4.1949 | lr 2.44e-04 | gnorm 0.408 | 4449 ms | 0.01M tok/s | mfu 10.3%
+[ckpt] saved → out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000001500
+           eval | loss 4.2492
+step    1510 | loss 4.1961 | lr 2.43e-04 | gnorm 0.381 | 4573 ms | 0.01M tok/s | mfu 10.1%
+step    1520 | loss 4.1611 | lr 2.42e-04 | gnorm 0.410 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    1530 | loss 4.3241 | lr 2.41e-04 | gnorm 0.379 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    1540 | loss 4.3128 | lr 2.40e-04 | gnorm 0.438 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1550 | loss 4.2407 | lr 2.39e-04 | gnorm 0.391 | 4456 ms | 0.01M tok/s | mfu 10.3%
+step    1560 | loss 4.3077 | lr 2.39e-04 | gnorm 0.379 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1570 | loss 4.1811 | lr 2.38e-04 | gnorm 0.393 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1580 | loss 4.1920 | lr 2.37e-04 | gnorm 0.385 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    1590 | loss 4.2851 | lr 2.36e-04 | gnorm 0.383 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    1600 | loss 4.2257 | lr 2.35e-04 | gnorm 0.361 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    1610 | loss 4.2241 | lr 2.34e-04 | gnorm 0.357 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    1620 | loss 4.2246 | lr 2.34e-04 | gnorm 0.379 | 4454 ms | 0.01M tok/s | mfu 10.3%
+step    1630 | loss 4.1533 | lr 2.33e-04 | gnorm 0.365 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1640 | loss 4.2550 | lr 2.32e-04 | gnorm 0.385 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    1650 | loss 4.3005 | lr 2.31e-04 | gnorm 0.369 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    1660 | loss 4.1325 | lr 2.30e-04 | gnorm 0.355 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    1670 | loss 4.2342 | lr 2.29e-04 | gnorm 0.410 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    1680 | loss 4.1703 | lr 2.28e-04 | gnorm 0.379 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1690 | loss 4.1636 | lr 2.28e-04 | gnorm 0.391 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    1700 | loss 4.2560 | lr 2.27e-04 | gnorm 0.371 | 4455 ms | 0.01M tok/s | mfu 10.3%
+step    1710 | loss 4.3655 | lr 2.26e-04 | gnorm 0.406 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1720 | loss 4.1675 | lr 2.25e-04 | gnorm 0.342 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    1730 | loss 4.2766 | lr 2.24e-04 | gnorm 0.383 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    1740 | loss 4.3216 | lr 2.23e-04 | gnorm 0.439 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    1750 | loss 4.3312 | lr 2.22e-04 | gnorm 0.361 | 4451 ms | 0.01M tok/s | mfu 10.3%
+           eval | loss 4.3037
+step    1760 | loss 4.2024 | lr 2.21e-04 | gnorm 0.346 | 4462 ms | 0.01M tok/s | mfu 10.3%
+step    1770 | loss 4.1955 | lr 2.21e-04 | gnorm 0.354 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    1780 | loss 4.3889 | lr 2.20e-04 | gnorm 0.375 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    1790 | loss 4.1252 | lr 2.19e-04 | gnorm 0.369 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    1800 | loss 4.2596 | lr 2.18e-04 | gnorm 0.361 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    1810 | loss 4.1498 | lr 2.17e-04 | gnorm 0.436 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1820 | loss 4.2126 | lr 2.16e-04 | gnorm 0.385 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1830 | loss 4.2278 | lr 2.15e-04 | gnorm 0.420 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1840 | loss 4.2269 | lr 2.14e-04 | gnorm 0.418 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1850 | loss 4.3118 | lr 2.13e-04 | gnorm 0.379 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    1860 | loss 4.1414 | lr 2.12e-04 | gnorm 0.375 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    1870 | loss 3.9428 | lr 2.11e-04 | gnorm 0.332 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    1880 | loss 4.1210 | lr 2.10e-04 | gnorm 0.363 | 4454 ms | 0.01M tok/s | mfu 10.3%
+step    1890 | loss 3.9803 | lr 2.10e-04 | gnorm 0.352 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    1900 | loss 4.1100 | lr 2.09e-04 | gnorm 0.375 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1910 | loss 4.1411 | lr 2.08e-04 | gnorm 0.336 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    1920 | loss 4.0751 | lr 2.07e-04 | gnorm 1.156 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    1930 | loss 4.0581 | lr 2.06e-04 | gnorm 0.346 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    1940 | loss 4.1159 | lr 2.05e-04 | gnorm 0.361 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    1950 | loss 4.1735 | lr 2.04e-04 | gnorm 0.352 | 4460 ms | 0.01M tok/s | mfu 10.3%
+step    1960 | loss 4.0381 | lr 2.03e-04 | gnorm 0.348 | 4543 ms | 0.01M tok/s | mfu 10.1%
+step    1970 | loss 4.1550 | lr 2.02e-04 | gnorm 0.363 | 4500 ms | 0.01M tok/s | mfu 10.2%
+step    1980 | loss 4.1266 | lr 2.01e-04 | gnorm 0.350 | 4456 ms | 0.01M tok/s | mfu 10.3%
+step    1990 | loss 4.0624 | lr 2.00e-04 | gnorm 0.385 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    2000 | loss 4.1756 | lr 1.99e-04 | gnorm 0.393 | 4449 ms | 0.01M tok/s | mfu 10.3%
+[ckpt] saved → out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000002000
+           eval | loss 4.1284
+/home/support/dev-macrohard/LLM-playground/nanogpt-edu/.venv/lib/python3.14/site-packages/torch/distributed/checkpoint/state_dict_saver.py:448: UserWarning: Detected an existing checkpoint in out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000002000, overwriting since self.overwrite=True. Past version 2.5 of PyTorch, `overwrite` will default to False. Set this variable to True to maintain this functionality or False to raise when an existing checkpoint is found.
+  local_plan = storage_writer.prepare_local_plan(local_plan)
+/home/support/dev-macrohard/LLM-playground/nanogpt-edu/.venv/lib/python3.14/site-packages/torch/distributed/checkpoint/state_dict_saver.py:448: UserWarning: Detected an existing checkpoint in out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000002000, overwriting since self.overwrite=True. Past version 2.5 of PyTorch, `overwrite` will default to False. Set this variable to True to maintain this functionality or False to raise when an existing checkpoint is found.
+  local_plan = storage_writer.prepare_local_plan(local_plan)
+           best val 4.1284 → out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000002000
+step    2010 | loss 4.1506 | lr 1.98e-04 | gnorm 0.359 | 4855 ms | 0.01M tok/s | mfu 9.5%
+step    2020 | loss 4.2871 | lr 1.97e-04 | gnorm 0.396 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    2030 | loss 4.1215 | lr 1.96e-04 | gnorm 0.354 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2040 | loss 4.0078 | lr 1.95e-04 | gnorm 0.355 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    2050 | loss 3.9835 | lr 1.94e-04 | gnorm 0.326 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    2060 | loss 4.1601 | lr 1.93e-04 | gnorm 0.336 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    2070 | loss 4.1283 | lr 1.92e-04 | gnorm 0.369 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    2080 | loss 4.0183 | lr 1.91e-04 | gnorm 0.332 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    2090 | loss 4.2903 | lr 1.90e-04 | gnorm 0.385 | 4452 ms | 0.01M tok/s | mfu 10.3%
+step    2100 | loss 4.0801 | lr 1.90e-04 | gnorm 0.352 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    2110 | loss 4.1045 | lr 1.89e-04 | gnorm 0.350 | 4455 ms | 0.01M tok/s | mfu 10.3%
+step    2120 | loss 4.1367 | lr 1.88e-04 | gnorm 0.344 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    2130 | loss 4.0329 | lr 1.87e-04 | gnorm 0.342 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2140 | loss 4.0182 | lr 1.86e-04 | gnorm 0.352 | 4452 ms | 0.01M tok/s | mfu 10.3%
+step    2150 | loss 4.1492 | lr 1.85e-04 | gnorm 0.393 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    2160 | loss 4.0956 | lr 1.84e-04 | gnorm 0.365 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2170 | loss 4.2180 | lr 1.83e-04 | gnorm 0.486 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    2180 | loss 3.9517 | lr 1.82e-04 | gnorm 0.338 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    2190 | loss 4.0885 | lr 1.81e-04 | gnorm 0.508 | 4461 ms | 0.01M tok/s | mfu 10.3%
+step    2200 | loss 3.9702 | lr 1.80e-04 | gnorm 0.352 | 4458 ms | 0.01M tok/s | mfu 10.3%
+step    2210 | loss 4.1541 | lr 1.79e-04 | gnorm 0.350 | 4454 ms | 0.01M tok/s | mfu 10.3%
+step    2220 | loss 4.1632 | lr 1.78e-04 | gnorm 0.355 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    2230 | loss 3.9588 | lr 1.77e-04 | gnorm 0.336 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    2240 | loss 3.9365 | lr 1.76e-04 | gnorm 0.338 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    2250 | loss 4.0440 | lr 1.75e-04 | gnorm 0.402 | 4447 ms | 0.01M tok/s | mfu 10.3%
+           eval | loss 3.9819
+           best val 3.9819 → out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000002250
+step    2260 | loss 3.9837 | lr 1.74e-04 | gnorm 0.338 | 4592 ms | 0.01M tok/s | mfu 10.0%
+step    2270 | loss 3.9410 | lr 1.73e-04 | gnorm 0.348 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    2280 | loss 3.9537 | lr 1.72e-04 | gnorm 0.350 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    2290 | loss 3.8957 | lr 1.71e-04 | gnorm 0.383 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    2300 | loss 4.0295 | lr 1.70e-04 | gnorm 0.355 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    2310 | loss 3.9085 | lr 1.69e-04 | gnorm 0.342 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2320 | loss 3.8958 | lr 1.68e-04 | gnorm 0.324 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    2330 | loss 3.9301 | lr 1.67e-04 | gnorm 0.346 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    2340 | loss 3.9265 | lr 1.66e-04 | gnorm 0.418 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    2350 | loss 3.9305 | lr 1.65e-04 | gnorm 0.383 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2360 | loss 4.0809 | lr 1.64e-04 | gnorm 0.363 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2370 | loss 3.8949 | lr 1.63e-04 | gnorm 0.346 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2380 | loss 3.8778 | lr 1.62e-04 | gnorm 0.346 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2390 | loss 3.9104 | lr 1.61e-04 | gnorm 0.371 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2400 | loss 3.8435 | lr 1.60e-04 | gnorm 0.359 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    2410 | loss 3.9810 | lr 1.59e-04 | gnorm 0.346 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    2420 | loss 3.8836 | lr 1.58e-04 | gnorm 0.350 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2430 | loss 3.9844 | lr 1.57e-04 | gnorm 0.336 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    2440 | loss 3.9593 | lr 1.56e-04 | gnorm 0.355 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    2450 | loss 4.1097 | lr 1.55e-04 | gnorm 0.363 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2460 | loss 3.9840 | lr 1.54e-04 | gnorm 0.389 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2470 | loss 3.9539 | lr 1.53e-04 | gnorm 0.361 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2480 | loss 4.0604 | lr 1.52e-04 | gnorm 0.381 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2490 | loss 3.9325 | lr 1.51e-04 | gnorm 0.357 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2500 | loss 3.9346 | lr 1.50e-04 | gnorm 0.352 | 4447 ms | 0.01M tok/s | mfu 10.3%
+[ckpt] saved → out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000002500
+           eval | loss 3.7408
+/home/support/dev-macrohard/LLM-playground/nanogpt-edu/.venv/lib/python3.14/site-packages/torch/distributed/checkpoint/state_dict_saver.py:448: UserWarning: Detected an existing checkpoint in out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000002500, overwriting since self.overwrite=True. Past version 2.5 of PyTorch, `overwrite` will default to False. Set this variable to True to maintain this functionality or False to raise when an existing checkpoint is found.
+  local_plan = storage_writer.prepare_local_plan(local_plan)
+/home/support/dev-macrohard/LLM-playground/nanogpt-edu/.venv/lib/python3.14/site-packages/torch/distributed/checkpoint/state_dict_saver.py:448: UserWarning: Detected an existing checkpoint in out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000002500, overwriting since self.overwrite=True. Past version 2.5 of PyTorch, `overwrite` will default to False. Set this variable to True to maintain this functionality or False to raise when an existing checkpoint is found.
+  local_plan = storage_writer.prepare_local_plan(local_plan)
+           best val 3.7408 → out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000002500
+step    2510 | loss 4.0720 | lr 1.49e-04 | gnorm 0.369 | 4680 ms | 0.01M tok/s | mfu 9.8%
+step    2520 | loss 3.8599 | lr 1.48e-04 | gnorm 0.357 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    2530 | loss 3.9372 | lr 1.47e-04 | gnorm 0.400 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    2540 | loss 3.9214 | lr 1.46e-04 | gnorm 0.354 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2550 | loss 3.9924 | lr 1.45e-04 | gnorm 0.355 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    2560 | loss 4.0326 | lr 1.44e-04 | gnorm 0.350 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    2570 | loss 3.9104 | lr 1.43e-04 | gnorm 0.324 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    2580 | loss 3.9133 | lr 1.42e-04 | gnorm 0.354 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    2590 | loss 4.0188 | lr 1.41e-04 | gnorm 0.340 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2600 | loss 3.9296 | lr 1.40e-04 | gnorm 0.371 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    2610 | loss 3.9763 | lr 1.40e-04 | gnorm 0.369 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2620 | loss 4.0094 | lr 1.39e-04 | gnorm 0.346 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    2630 | loss 3.9715 | lr 1.38e-04 | gnorm 0.350 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    2640 | loss 4.1677 | lr 1.37e-04 | gnorm 0.363 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2650 | loss 4.0140 | lr 1.36e-04 | gnorm 0.391 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2660 | loss 4.2140 | lr 1.35e-04 | gnorm 0.365 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2670 | loss 4.1281 | lr 1.34e-04 | gnorm 0.357 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2680 | loss 3.8884 | lr 1.33e-04 | gnorm 0.369 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    2690 | loss 4.0209 | lr 1.32e-04 | gnorm 0.412 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2700 | loss 3.8660 | lr 1.31e-04 | gnorm 0.350 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2710 | loss 4.0088 | lr 1.30e-04 | gnorm 0.355 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    2720 | loss 3.9916 | lr 1.29e-04 | gnorm 0.346 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    2730 | loss 3.9488 | lr 1.28e-04 | gnorm 0.381 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2740 | loss 4.0453 | lr 1.27e-04 | gnorm 0.379 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    2750 | loss 3.8980 | lr 1.26e-04 | gnorm 0.352 | 4448 ms | 0.01M tok/s | mfu 10.3%
+           eval | loss 4.0235
+step    2760 | loss 3.7611 | lr 1.25e-04 | gnorm 0.424 | 4460 ms | 0.01M tok/s | mfu 10.3%
+step    2770 | loss 4.1671 | lr 1.24e-04 | gnorm 0.672 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    2780 | loss 4.1257 | lr 1.23e-04 | gnorm 0.387 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    2790 | loss 4.0594 | lr 1.22e-04 | gnorm 0.641 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    2800 | loss 3.8575 | lr 1.21e-04 | gnorm 0.348 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    2810 | loss 3.9206 | lr 1.20e-04 | gnorm 0.332 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    2820 | loss 3.9282 | lr 1.20e-04 | gnorm 0.357 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    2830 | loss 4.0454 | lr 1.19e-04 | gnorm 0.373 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    2840 | loss 3.8545 | lr 1.18e-04 | gnorm 0.324 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    2850 | loss 3.9040 | lr 1.17e-04 | gnorm 0.354 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    2860 | loss 4.0574 | lr 1.16e-04 | gnorm 0.354 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    2870 | loss 3.9320 | lr 1.15e-04 | gnorm 0.338 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    2880 | loss 3.8693 | lr 1.14e-04 | gnorm 0.363 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    2890 | loss 3.7560 | lr 1.13e-04 | gnorm 0.371 | 4452 ms | 0.01M tok/s | mfu 10.3%
+step    2900 | loss 3.9172 | lr 1.12e-04 | gnorm 0.340 | 4452 ms | 0.01M tok/s | mfu 10.3%
+step    2910 | loss 3.9972 | lr 1.11e-04 | gnorm 0.361 | 4452 ms | 0.01M tok/s | mfu 10.3%
+step    2920 | loss 4.0070 | lr 1.10e-04 | gnorm 0.324 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    2930 | loss 3.8620 | lr 1.09e-04 | gnorm 0.324 | 4460 ms | 0.01M tok/s | mfu 10.3%
+step    2940 | loss 3.8611 | lr 1.09e-04 | gnorm 0.342 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    2950 | loss 3.9443 | lr 1.08e-04 | gnorm 0.363 | 4452 ms | 0.01M tok/s | mfu 10.3%
+step    2960 | loss 3.8604 | lr 1.07e-04 | gnorm 0.340 | 4454 ms | 0.01M tok/s | mfu 10.3%
+step    2970 | loss 3.7572 | lr 1.06e-04 | gnorm 0.414 | 4456 ms | 0.01M tok/s | mfu 10.3%
+step    2980 | loss 3.9010 | lr 1.05e-04 | gnorm 0.324 | 4452 ms | 0.01M tok/s | mfu 10.3%
+step    2990 | loss 3.8908 | lr 1.04e-04 | gnorm 0.332 | 4453 ms | 0.01M tok/s | mfu 10.3%
+step    3000 | loss 3.8358 | lr 1.03e-04 | gnorm 0.375 | 4449 ms | 0.01M tok/s | mfu 10.3%
+[ckpt] saved → out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000003000
+           eval | loss 3.9751
+step    3010 | loss 3.6940 | lr 1.02e-04 | gnorm 0.354 | 4572 ms | 0.01M tok/s | mfu 10.1%
+step    3020 | loss 3.8112 | lr 1.02e-04 | gnorm 0.336 | 4452 ms | 0.01M tok/s | mfu 10.3%
+step    3030 | loss 3.8454 | lr 1.01e-04 | gnorm 0.324 | 4454 ms | 0.01M tok/s | mfu 10.3%
+step    3040 | loss 3.8705 | lr 9.98e-05 | gnorm 0.434 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    3050 | loss 3.8764 | lr 9.89e-05 | gnorm 0.355 | 4453 ms | 0.01M tok/s | mfu 10.3%
+step    3060 | loss 3.8430 | lr 9.81e-05 | gnorm 0.371 | 4458 ms | 0.01M tok/s | mfu 10.3%
+step    3070 | loss 3.8558 | lr 9.72e-05 | gnorm 0.354 | 4452 ms | 0.01M tok/s | mfu 10.3%
+step    3080 | loss 4.0399 | lr 9.64e-05 | gnorm 0.418 | 4452 ms | 0.01M tok/s | mfu 10.3%
+step    3090 | loss 3.8901 | lr 9.55e-05 | gnorm 0.342 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    3100 | loss 3.8248 | lr 9.47e-05 | gnorm 0.354 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    3110 | loss 3.7012 | lr 9.38e-05 | gnorm 0.334 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    3120 | loss 3.7959 | lr 9.30e-05 | gnorm 0.344 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    3130 | loss 3.9268 | lr 9.22e-05 | gnorm 0.373 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    3140 | loss 3.9036 | lr 9.13e-05 | gnorm 0.350 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    3150 | loss 3.8472 | lr 9.05e-05 | gnorm 0.346 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    3160 | loss 3.8379 | lr 8.97e-05 | gnorm 0.383 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    3170 | loss 3.8760 | lr 8.89e-05 | gnorm 0.355 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    3180 | loss 3.8915 | lr 8.81e-05 | gnorm 0.385 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    3190 | loss 4.0237 | lr 8.73e-05 | gnorm 0.422 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    3200 | loss 4.0193 | lr 8.64e-05 | gnorm 0.420 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    3210 | loss 4.0081 | lr 8.56e-05 | gnorm 0.352 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    3220 | loss 3.8632 | lr 8.49e-05 | gnorm 0.350 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    3230 | loss 3.9613 | lr 8.41e-05 | gnorm 0.477 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    3240 | loss 3.9017 | lr 8.33e-05 | gnorm 0.420 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    3250 | loss 3.8964 | lr 8.25e-05 | gnorm 0.336 | 4448 ms | 0.01M tok/s | mfu 10.3%
+           eval | loss 4.1077
+step    3260 | loss 3.9750 | lr 8.17e-05 | gnorm 0.348 | 4459 ms | 0.01M tok/s | mfu 10.3%
+step    3270 | loss 3.8820 | lr 8.09e-05 | gnorm 0.363 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    3280 | loss 3.8638 | lr 8.02e-05 | gnorm 0.340 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    3290 | loss 3.9171 | lr 7.94e-05 | gnorm 0.334 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    3300 | loss 3.9578 | lr 7.86e-05 | gnorm 0.350 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    3310 | loss 3.9548 | lr 7.79e-05 | gnorm 0.338 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    3320 | loss 3.9010 | lr 7.71e-05 | gnorm 0.406 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    3330 | loss 3.8646 | lr 7.64e-05 | gnorm 0.338 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    3340 | loss 3.8217 | lr 7.56e-05 | gnorm 0.336 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    3350 | loss 3.8480 | lr 7.49e-05 | gnorm 0.355 | 4452 ms | 0.01M tok/s | mfu 10.3%
+step    3360 | loss 3.8611 | lr 7.42e-05 | gnorm 0.391 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    3370 | loss 3.9835 | lr 7.35e-05 | gnorm 0.342 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    3380 | loss 3.8384 | lr 7.27e-05 | gnorm 0.357 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    3390 | loss 3.9617 | lr 7.20e-05 | gnorm 0.381 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    3400 | loss 3.8862 | lr 7.13e-05 | gnorm 0.352 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    3410 | loss 3.9488 | lr 7.06e-05 | gnorm 0.367 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    3420 | loss 3.9746 | lr 6.99e-05 | gnorm 0.338 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    3430 | loss 3.9323 | lr 6.92e-05 | gnorm 0.359 | 4457 ms | 0.01M tok/s | mfu 10.3%
+step    3440 | loss 3.9581 | lr 6.85e-05 | gnorm 0.539 | 4457 ms | 0.01M tok/s | mfu 10.3%
+step    3450 | loss 4.0512 | lr 6.78e-05 | gnorm 0.342 | 4452 ms | 0.01M tok/s | mfu 10.3%
+step    3460 | loss 3.8859 | lr 6.71e-05 | gnorm 0.373 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    3470 | loss 3.8589 | lr 6.65e-05 | gnorm 0.400 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    3480 | loss 3.9800 | lr 6.58e-05 | gnorm 0.379 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    3490 | loss 3.8817 | lr 6.51e-05 | gnorm 0.338 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    3500 | loss 3.8686 | lr 6.45e-05 | gnorm 0.354 | 4450 ms | 0.01M tok/s | mfu 10.3%
+[ckpt] saved → out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000003500
+           eval | loss 3.7483
+step    3510 | loss 3.9843 | lr 6.38e-05 | gnorm 0.377 | 4570 ms | 0.01M tok/s | mfu 10.1%
+step    3520 | loss 3.7587 | lr 6.32e-05 | gnorm 0.350 | 4456 ms | 0.01M tok/s | mfu 10.3%
+step    3530 | loss 4.0209 | lr 6.25e-05 | gnorm 0.357 | 4457 ms | 0.01M tok/s | mfu 10.3%
+step    3540 | loss 3.8392 | lr 6.19e-05 | gnorm 0.342 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    3550 | loss 3.8850 | lr 6.12e-05 | gnorm 0.367 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    3560 | loss 3.7779 | lr 6.06e-05 | gnorm 0.328 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    3570 | loss 3.8281 | lr 6.00e-05 | gnorm 0.328 | 4453 ms | 0.01M tok/s | mfu 10.3%
+step    3580 | loss 4.0000 | lr 5.94e-05 | gnorm 0.336 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    3590 | loss 3.8895 | lr 5.88e-05 | gnorm 0.346 | 4452 ms | 0.01M tok/s | mfu 10.3%
+step    3600 | loss 3.8898 | lr 5.81e-05 | gnorm 0.373 | 4453 ms | 0.01M tok/s | mfu 10.3%
+step    3610 | loss 3.9156 | lr 5.75e-05 | gnorm 0.346 | 4501 ms | 0.01M tok/s | mfu 10.2%
+step    3620 | loss 3.8439 | lr 5.70e-05 | gnorm 0.348 | 4454 ms | 0.01M tok/s | mfu 10.3%
+step    3630 | loss 3.8284 | lr 5.64e-05 | gnorm 0.361 | 4452 ms | 0.01M tok/s | mfu 10.3%
+step    3640 | loss 3.9390 | lr 5.58e-05 | gnorm 0.461 | 4463 ms | 0.01M tok/s | mfu 10.3%
+step    3650 | loss 3.8593 | lr 5.52e-05 | gnorm 0.330 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    3660 | loss 3.8900 | lr 5.46e-05 | gnorm 0.328 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    3670 | loss 3.7763 | lr 5.41e-05 | gnorm 0.338 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    3680 | loss 3.8018 | lr 5.35e-05 | gnorm 0.342 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    3690 | loss 3.7214 | lr 5.30e-05 | gnorm 0.336 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    3700 | loss 3.9143 | lr 5.24e-05 | gnorm 0.338 | 4446 ms | 0.01M tok/s | mfu 10.3%
+step    3710 | loss 3.7253 | lr 5.19e-05 | gnorm 0.373 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    3720 | loss 3.7232 | lr 5.13e-05 | gnorm 0.348 | 4446 ms | 0.01M tok/s | mfu 10.3%
+step    3730 | loss 3.7925 | lr 5.08e-05 | gnorm 0.344 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    3740 | loss 3.8918 | lr 5.03e-05 | gnorm 0.361 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    3750 | loss 3.7824 | lr 4.98e-05 | gnorm 0.344 | 4447 ms | 0.01M tok/s | mfu 10.3%
+           eval | loss 3.7923
+step    3760 | loss 3.7812 | lr 4.93e-05 | gnorm 0.381 | 4458 ms | 0.01M tok/s | mfu 10.3%
+step    3770 | loss 3.9026 | lr 4.87e-05 | gnorm 0.334 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    3780 | loss 3.9197 | lr 4.83e-05 | gnorm 0.375 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    3790 | loss 3.7860 | lr 4.78e-05 | gnorm 0.371 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    3800 | loss 3.7412 | lr 4.73e-05 | gnorm 0.342 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    3810 | loss 3.7581 | lr 4.68e-05 | gnorm 0.328 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    3820 | loss 3.7426 | lr 4.63e-05 | gnorm 0.350 | 4446 ms | 0.01M tok/s | mfu 10.3%
+step    3830 | loss 3.7447 | lr 4.59e-05 | gnorm 0.367 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    3840 | loss 3.9130 | lr 4.54e-05 | gnorm 0.332 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    3850 | loss 3.8206 | lr 4.49e-05 | gnorm 0.330 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    3860 | loss 3.7153 | lr 4.45e-05 | gnorm 0.334 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    3870 | loss 3.6558 | lr 4.40e-05 | gnorm 0.334 | 4456 ms | 0.01M tok/s | mfu 10.3%
+step    3880 | loss 3.7673 | lr 4.36e-05 | gnorm 0.328 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    3890 | loss 3.8740 | lr 4.32e-05 | gnorm 0.352 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    3900 | loss 3.9020 | lr 4.28e-05 | gnorm 0.365 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    3910 | loss 3.8593 | lr 4.23e-05 | gnorm 0.354 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    3920 | loss 3.8602 | lr 4.19e-05 | gnorm 0.350 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    3930 | loss 3.8377 | lr 4.15e-05 | gnorm 0.334 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    3940 | loss 3.8829 | lr 4.11e-05 | gnorm 0.355 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    3950 | loss 3.8938 | lr 4.08e-05 | gnorm 0.336 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    3960 | loss 3.8654 | lr 4.04e-05 | gnorm 0.332 | 4457 ms | 0.01M tok/s | mfu 10.3%
+step    3970 | loss 3.8741 | lr 4.00e-05 | gnorm 0.346 | 4454 ms | 0.01M tok/s | mfu 10.3%
+step    3980 | loss 3.8891 | lr 3.96e-05 | gnorm 0.396 | 4455 ms | 0.01M tok/s | mfu 10.3%
+step    3990 | loss 3.9421 | lr 3.93e-05 | gnorm 0.373 | 4513 ms | 0.01M tok/s | mfu 10.2%
+step    4000 | loss 3.6806 | lr 3.89e-05 | gnorm 0.383 | 4463 ms | 0.01M tok/s | mfu 10.3%
+[ckpt] saved → out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000004000
+           eval | loss 3.7580
+step    4010 | loss 3.9562 | lr 3.86e-05 | gnorm 0.369 | 4552 ms | 0.01M tok/s | mfu 10.1%
+step    4020 | loss 3.8916 | lr 3.82e-05 | gnorm 0.330 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    4030 | loss 3.6914 | lr 3.79e-05 | gnorm 0.354 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    4040 | loss 3.8115 | lr 3.76e-05 | gnorm 0.359 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    4050 | loss 3.8017 | lr 3.72e-05 | gnorm 0.424 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    4060 | loss 3.7253 | lr 3.69e-05 | gnorm 0.352 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    4070 | loss 3.9229 | lr 3.66e-05 | gnorm 0.439 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    4080 | loss 3.8592 | lr 3.63e-05 | gnorm 0.348 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    4090 | loss 3.7352 | lr 3.60e-05 | gnorm 0.340 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    4100 | loss 3.7781 | lr 3.57e-05 | gnorm 0.348 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    4110 | loss 3.7800 | lr 3.54e-05 | gnorm 0.389 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    4120 | loss 3.9830 | lr 3.52e-05 | gnorm 0.344 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    4130 | loss 3.8119 | lr 3.49e-05 | gnorm 0.334 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    4140 | loss 3.9069 | lr 3.46e-05 | gnorm 0.395 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    4150 | loss 4.1425 | lr 3.44e-05 | gnorm 0.461 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    4160 | loss 3.7694 | lr 3.41e-05 | gnorm 0.359 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    4170 | loss 3.8207 | lr 3.39e-05 | gnorm 0.363 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    4180 | loss 3.8710 | lr 3.37e-05 | gnorm 0.357 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    4190 | loss 4.0392 | lr 3.34e-05 | gnorm 0.395 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    4200 | loss 3.8541 | lr 3.32e-05 | gnorm 0.344 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    4210 | loss 3.9100 | lr 3.30e-05 | gnorm 0.410 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    4220 | loss 3.8612 | lr 3.28e-05 | gnorm 0.336 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    4230 | loss 3.7827 | lr 3.26e-05 | gnorm 0.357 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    4240 | loss 3.8849 | lr 3.24e-05 | gnorm 0.344 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    4250 | loss 3.8839 | lr 3.22e-05 | gnorm 0.348 | 4447 ms | 0.01M tok/s | mfu 10.3%
+           eval | loss 3.7283
+           best val 3.7283 → out/gpt_416m_fweb_2gpu/gpt_416m_fweb_2gpu/ckpts/step_000004250
+step    4260 | loss 3.9405 | lr 3.21e-05 | gnorm 0.365 | 4577 ms | 0.01M tok/s | mfu 10.0%
+step    4270 | loss 3.8274 | lr 3.19e-05 | gnorm 0.348 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    4280 | loss 3.7577 | lr 3.17e-05 | gnorm 0.350 | 4447 ms | 0.01M tok/s | mfu 10.3%
+step    4290 | loss 3.7983 | lr 3.16e-05 | gnorm 0.334 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    4300 | loss 3.7846 | lr 3.14e-05 | gnorm 0.340 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    4310 | loss 3.9558 | lr 3.13e-05 | gnorm 0.383 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    4320 | loss 3.7536 | lr 3.12e-05 | gnorm 0.342 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    4330 | loss 3.9118 | lr 3.10e-05 | gnorm 0.359 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    4340 | loss 3.9210 | lr 3.09e-05 | gnorm 0.340 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    4350 | loss 3.8737 | lr 3.08e-05 | gnorm 0.404 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    4360 | loss 4.0054 | lr 3.07e-05 | gnorm 0.363 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    4370 | loss 4.1170 | lr 3.06e-05 | gnorm 0.355 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    4380 | loss 3.8548 | lr 3.05e-05 | gnorm 0.359 | 4448 ms | 0.01M tok/s | mfu 10.3%
+step    4390 | loss 3.8419 | lr 3.04e-05 | gnorm 0.354 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    4400 | loss 4.0777 | lr 3.04e-05 | gnorm 0.359 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    4410 | loss 3.9201 | lr 3.03e-05 | gnorm 0.330 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    4420 | loss 3.7608 | lr 3.02e-05 | gnorm 0.389 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    4430 | loss 3.8981 | lr 3.02e-05 | gnorm 0.385 | 4450 ms | 0.01M tok/s | mfu 10.3%
+step    4440 | loss 3.9291 | lr 3.01e-05 | gnorm 0.352 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    4450 | loss 3.9574 | lr 3.01e-05 | gnorm 0.482 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    4460 | loss 3.8200 | lr 3.01e-05 | gnorm 0.342 | 4451 ms | 0.01M tok/s | mfu 10.3%
+step    4470 | loss 3.8634 | lr 3.00e-05 | gnorm 0.328 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    4480 | loss 3.8122 | lr 3.00e-05 | gnorm 0.334 | 4449 ms | 0.01M tok/s | mfu 10.3%
+step    4490 | loss 3.9274 | lr 3.00e-05 | gnorm 0.373 | 4454 ms | 0.01M tok/s | mfu 10.3%
+[done]
+[vram] peak_alloc=12780 MiB  peak_reserved=14284 MiB
