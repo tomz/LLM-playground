@@ -27,26 +27,23 @@ python sample.py --ckpt out/ckpt.pt --prompt "ROMEO:"
 | `small.py`    | ~30M   | 8      | 512     | ~20 min                   |
 | `medium.py`   | ~110M  | 12     | 768     | ~2 h                      |
 
-## Actual training results (1× RTX 3050, 8 GB)
+## Actual training results (1× RTX 5060 Ti, 16 GB)
 
 Char-level Tiny Shakespeare (1 MB). Training stdout logs are committed
 under `out/<run>/train.log`; PNG/SVG plots are written by
 `python tools/plot_nanogpt.py out/<run>/train.log`.
 
-| Run         | Params  | Iters done   | ms/it (3050) | Wall    | Final train | **Best val** | Final val | Overfit Δ |
+| Run         | Params  | Iters done   | ms/it (5060 Ti) | Wall    | Final train | **Best val** | Final val | Overfit Δ |
 |-------------|--------:|-------------:|-------------:|--------:|------------:|-------------:|----------:|----------:|
-| `smoke`     |  0.86 M | 275 / 300    |  14.0        |  ~5 s   | 1.90        | **1.99**     | 1.99      |  ~0       |
-| `tiny`      | 10.65 M | 4,990 / 5,000|  203.4       | ~17 min | 0.07        | **1.53**     | 4.34      | **2.81**  |
-| `tiny_clean`| 10.65 M | 1,500 / 1,500|  92.5 \*     | ~2.3 min \*| 0.53      | **1.48**     | 1.85      |   0.36    |
-| `small`     | 25.73 M | 9,600 / 15,000 (killed @ 64 %) |  798.4 | ~2 h 15 | 0.04        | **1.87**     | 5.21      |   3.35    |
+| `smoke`     |  0.86 M | 275 / 300    |  4.9         |  ~2 s   | 1.79        | **1.97**     | 1.97      |  ~0       |
+| `tiny`      | 10.65 M | 4,990 / 5,000|  85.0        | ~8 min  | 0.07        | **1.53**     | 4.27      | **2.74**  |
+| `tiny_clean`| 10.65 M | 1,500 / 1,500|  92.5        | ~2.3 min| 0.53      | **1.48**     | 1.85      |   0.36    |
+| `small`     | 25.73 M | 15,000 / 15,000 |  347.9 | ~1.5 h  | 0.03        | **1.86**     | 5.47      |   3.60    |
 
-> \* **`tiny_clean` timings are from an RTX 5060 Ti, not the 3050.** When the
-> rig was upgraded, `tiny_clean` was the one row re-run on the new card (its
-> committed `out/tiny_clean/train.log` is the 5060 Ti log: ~92.5 ms/it median,
-> ~2.3 min wall). `smoke`/`tiny`/`small` above are the original 3050 logs and
-> are unchanged. The **loss** columns are hardware-independent and directly
-> comparable across all four rows; only `tiny_clean`'s ms/it + wall reflect the
-> faster GPU. The full migration of the remaining rows is tracked separately.
+> All four rows were trained on the RTX 5060 Ti (16 GB, bf16). The **loss**
+> columns are hardware-independent — they reflect the model/data/schedule, not
+> the card — so they're directly comparable across runs; the ms/it and wall
+> columns reflect the 5060 Ti's throughput.
 
 `tiny_clean` is the same architecture as `tiny`, run for 1,500 iterations
 with `dropout=0.1` instead of `0.0`. It's the **regularized** counterpart
@@ -56,13 +53,13 @@ ascent) — and notably, it lands on a *slightly better* best-val (1.48 vs
 
 Things the plots make obvious:
 
-1. **Step time scales roughly with `d_model²·block_size`** on the 3050:
-   14 → 203 → 798 ms (d_model 128 → 384 → 512, block 128 → 256 → 512).
+1. **Step time scales roughly with `d_model²·block_size`** on the 5060 Ti:
+   4.9 → 85 → 348 ms (d_model 128 → 384 → 512, block 128 → 256 → 512).
 2. **Tiny Shakespeare overfits hard on any non-trivial model.** Both
    `tiny` and `small` hit their best val between iter ~500–800 (right
    after warmup), then val rises monotonically while train collapses
    toward zero. **The useful checkpoint is *not* the last one.**
-3. **Bigger model is worse on val** at this dataset scale (best val 1.87
+3. **Bigger model is worse on val** at this dataset scale (best val 1.86
    for `small` vs 1.53 for `tiny`) — classic overcapacity for a 1 MB
    corpus. To make the larger config actually shine, scale tokens with
    params (i.e. use a larger dataset) or add dropout/early stopping.
@@ -106,7 +103,7 @@ python train.py --config configs/small.py      2>&1 | tee out/small/train.log
 python tools/plot_nanogpt.py out/tiny/train.log
 python tools/plot_nanogpt.py out/{smoke,tiny,tiny_clean,small}/train.log \
     --compare out/compare.png \
-    --hardware "RTX 3050 bf16" --dataset "Tiny Shakespeare 1.1 MB"
+    --hardware "RTX 5060 Ti bf16" --dataset "Tiny Shakespeare 1.1 MB"
 python tools/plot_nanogpt.py out/{tiny,tiny_clean}/train.log \
     --compare out/compare_overfit.png
 ```
@@ -184,15 +181,15 @@ python tools/bench_mtp_spec.py --ckpt out/tiny_mtp/ckpt.pt --prompt $'ROMEO:\n' 
 One trunk pass drafts `K+1` candidate tokens (main head + K MTP drafts); a
 second pass verifies them with the main head's greedy argmax, accepting the
 longest matching prefix (plus a bonus token when the whole chain verifies). A
-real run of a 10.7M `mtp_tokens=2` checkpoint on an RTX 3050:
+real run of a 10.7M `mtp_tokens=2` checkpoint on an RTX 5060 Ti:
 
 | decoder | tokens/s | trunk passes (256 tokens) | speedup |
 |---------|---------:|--------------------------:|--------:|
-| baseline greedy | ~240 | 256 | 1.00× |
-| MTP-speculative | ~355 | 170 | **1.48×** |
+| baseline greedy | ~731 | 256 | 1.00× |
+| MTP-speculative | ~1061 | 170 | **1.45×** |
 
 Output is **bit-identical** to greedy decoding (greedy verification is exact —
-the tool asserts it), so the 1.48× is a pure latency win at zero quality cost:
+the tool asserts it), so the 1.45× is a pure latency win at zero quality cost:
 ~3.0 tokens emitted per verification round, 34% fewer trunk passes. The same
 MTP head that densified the training gradient pays off again at serving time —
 exactly the train→serve loop the SOTA watch flags. Runs anywhere (with no

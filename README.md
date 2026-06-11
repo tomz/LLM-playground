@@ -21,29 +21,27 @@ Liger Kernel, DoRA/rsLoRA/NEFTune, FineWeb-Edu/DCLM data scaling).
 ## Results gallery
 
 Three projects in this repo come with **published training plots and
-headline numbers** from real single-GPU runs (one 3050, two 5060 Ti),
+headline numbers** from real single-GPU runs (all on 5060 Ti),
 plus one project with a discrete-event simulator that scales the same
 physics to a frontier cluster.
 
-### `nanogpt-edu/` — real training on an RTX 3050
+### `nanogpt-edu/` — real training on an RTX 5060 Ti
 
-Three runs of a real PyTorch training loop on a single RTX 3050 (8 GB,
+Three runs of a real PyTorch training loop on a single RTX 5060 Ti (16 GB,
 bf16) against char-level Tiny Shakespeare (1 MB). The whole sweep,
-including a 25 M parameter model overfitting hard for 2 h, was run on a
+including a 25 M parameter model overfitting hard for ~1.5 h, was run on a
 desktop GPU at home — no cluster, no API.
 
 | Run         | Params  | Iters         | ms/it | Wall    | Final train | **Best val** | Final val | Overfit Δ |
 |-------------|--------:|--------------:|------:|--------:|------------:|-------------:|----------:|----------:|
-| `smoke`     |  0.86 M | 275 / 300     |  14.0 |   ~5 s  | 1.90        | **1.99**     | 1.99      |   ~0      |
-| `tiny`      | 10.65 M | 4,990 / 5,000 | 203.4 | ~17 min | 0.07        | **1.53**     | 4.34      | **2.81**  |
-| `tiny_clean`| 10.65 M | 1,500 / 1,500 | 92.5 \*|  ~2.3 min \*| 0.53        | **1.48**     | 1.85      |   0.36    |
-| `small`     | 25.73 M | 9,600 / 15,000| 798.4 | ~2 h 15 | 0.04        | **1.87**     | 5.21      |   3.35    |
+| `smoke`     |  0.86 M | 275 / 300     |  4.9  |   ~2 s  | 1.79        | **1.97**     | 1.97      |   ~0      |
+| `tiny`      | 10.65 M | 4,990 / 5,000 | 85.0  | ~8 min  | 0.07        | **1.53**     | 4.27      | **2.74**  |
+| `tiny_clean`| 10.65 M | 1,500 / 1,500 | 92.5  |  ~2.3 min   | 0.53        | **1.48**     | 1.85      |   0.36    |
+| `small`     | 25.73 M | 15,000 / 15,000| 347.9 | ~1.5 h  | 0.03        | **1.86**     | 5.47      |   3.60    |
 
-> \* `tiny_clean` was re-run on the RTX 5060 Ti during the rig upgrade (its
-> committed `out/tiny_clean/train.log` is the 5060 Ti log: ~92.5 ms/it, ~2.3
-> min); `smoke`/`tiny`/`small` are the original 3050 logs. Loss columns are
-> hardware-independent and comparable across all rows — only `tiny_clean`'s
-> ms/it + wall reflect the faster card.
+> All four rows were trained on the RTX 5060 Ti (16 GB, bf16). Loss columns are
+> hardware-independent — comparable across all rows regardless of card — while
+> ms/it and wall reflect the 5060 Ti's throughput.
 
 The classic "best val arrives in the first ~1000 iters and then val
 climbs monotonically while train collapses to zero" overfit story
@@ -63,7 +61,7 @@ Per-run 3-panel plots (loss + LR + step time) and the parser that
 generated them live at [`nanogpt-edu/out/`](./nanogpt-edu/out/) and
 [`nanogpt-edu/tools/plot_nanogpt.py`](./nanogpt-edu/tools/plot_nanogpt.py).
 Full discussion in
-[`nanogpt-edu/README.md`](./nanogpt-edu/README.md#actual-training-results-1-rtx-3050-8-gb).
+[`nanogpt-edu/README.md`](./nanogpt-edu/README.md#actual-training-results-1-rtx-5060-ti-16-gb).
 
 ### `midgpt/` — 350M GPT-2 pretraining on RTX 5060 Ti
 

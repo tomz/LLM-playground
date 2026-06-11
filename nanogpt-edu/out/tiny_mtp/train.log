@@ -1,193 +1,194 @@
 model: 10.70M params (10.67M non-emb)
-iter      0 | loss 5.5972 | lr 6.00e-06 | 49.1 ms/it
-iter     10 | loss 4.6302 | lr 6.60e-05 | 88.6 ms/it
-iter     20 | loss 4.3860 | lr 1.26e-04 | 88.5 ms/it
-iter     30 | loss 4.0502 | lr 1.86e-04 | 88.5 ms/it
-iter     40 | loss 3.7097 | lr 2.46e-04 | 88.6 ms/it
-iter     50 | loss 3.5217 | lr 3.06e-04 | 88.5 ms/it
-           eval | train 2.5607 | val 2.5589
-           best val 2.5589 → saved out/tiny_mtp/ckpt_best.pt
-iter     60 | loss 3.4003 | lr 3.66e-04 | 659.7 ms/it
-iter     70 | loss 3.2549 | lr 4.26e-04 | 88.4 ms/it
-iter     80 | loss 3.1555 | lr 4.86e-04 | 88.4 ms/it
-iter     90 | loss 3.0213 | lr 5.46e-04 | 88.4 ms/it
-iter    100 | loss 2.8853 | lr 6.00e-04 | 88.4 ms/it
-           eval | train 1.9798 | val 2.0426
-           best val 2.0426 → saved out/tiny_mtp/ckpt_best.pt
-iter    110 | loss 2.7912 | lr 6.00e-04 | 700.7 ms/it
-iter    120 | loss 2.6248 | lr 6.00e-04 | 88.4 ms/it
-iter    130 | loss 2.5815 | lr 5.99e-04 | 88.4 ms/it
-iter    140 | loss 2.4958 | lr 5.99e-04 | 88.4 ms/it
-iter    150 | loss 2.4146 | lr 5.98e-04 | 88.4 ms/it
-           eval | train 1.5983 | val 1.7572
-           best val 1.7572 → saved out/tiny_mtp/ckpt_best.pt
-iter    160 | loss 2.3758 | lr 5.98e-04 | 687.1 ms/it
-iter    170 | loss 2.3310 | lr 5.97e-04 | 88.4 ms/it
-iter    180 | loss 2.2988 | lr 5.96e-04 | 88.5 ms/it
-iter    190 | loss 2.2937 | lr 5.95e-04 | 88.4 ms/it
-iter    200 | loss 2.2339 | lr 5.93e-04 | 88.4 ms/it
-           eval | train 1.4477 | val 1.6312
-           best val 1.6312 → saved out/tiny_mtp/ckpt_best.pt
-iter    210 | loss 2.2051 | lr 5.92e-04 | 682.8 ms/it
-iter    220 | loss 2.1712 | lr 5.90e-04 | 88.4 ms/it
-iter    230 | loss 2.1624 | lr 5.89e-04 | 88.4 ms/it
-iter    240 | loss 2.1621 | lr 5.87e-04 | 88.4 ms/it
-iter    250 | loss 2.1063 | lr 5.85e-04 | 88.5 ms/it
-           eval | train 1.3654 | val 1.5666
-           best val 1.5666 → saved out/tiny_mtp/ckpt_best.pt
-iter    260 | loss 2.0996 | lr 5.83e-04 | 683.1 ms/it
-iter    270 | loss 2.0706 | lr 5.81e-04 | 88.4 ms/it
-iter    280 | loss 2.1017 | lr 5.78e-04 | 88.5 ms/it
-iter    290 | loss 2.0281 | lr 5.76e-04 | 88.5 ms/it
-iter    300 | loss 2.0381 | lr 5.73e-04 | 88.4 ms/it
-           eval | train 1.3062 | val 1.5271
-           best val 1.5271 → saved out/tiny_mtp/ckpt_best.pt
-iter    310 | loss 2.0079 | lr 5.71e-04 | 682.9 ms/it
-iter    320 | loss 1.9926 | lr 5.68e-04 | 88.5 ms/it
-iter    330 | loss 2.0330 | lr 5.65e-04 | 88.4 ms/it
-iter    340 | loss 1.9738 | lr 5.62e-04 | 88.4 ms/it
-iter    350 | loss 1.9761 | lr 5.59e-04 | 88.4 ms/it
-           eval | train 1.2639 | val 1.4995
-           best val 1.4995 → saved out/tiny_mtp/ckpt_best.pt
-iter    360 | loss 1.9881 | lr 5.55e-04 | 693.9 ms/it
-iter    370 | loss 1.9875 | lr 5.52e-04 | 88.4 ms/it
-iter    380 | loss 1.9687 | lr 5.48e-04 | 88.5 ms/it
-iter    390 | loss 1.9226 | lr 5.45e-04 | 88.4 ms/it
-iter    400 | loss 1.8995 | lr 5.41e-04 | 88.4 ms/it
-           eval | train 1.2245 | val 1.4889
-           best val 1.4889 → saved out/tiny_mtp/ckpt_best.pt
-iter    410 | loss 1.9042 | lr 5.37e-04 | 707.7 ms/it
-iter    420 | loss 1.9046 | lr 5.33e-04 | 88.4 ms/it
-iter    430 | loss 1.9112 | lr 5.29e-04 | 88.4 ms/it
-iter    440 | loss 1.9014 | lr 5.25e-04 | 88.5 ms/it
-iter    450 | loss 1.9132 | lr 5.21e-04 | 88.5 ms/it
-           eval | train 1.1875 | val 1.4672
-           best val 1.4672 → saved out/tiny_mtp/ckpt_best.pt
-iter    460 | loss 1.8611 | lr 5.17e-04 | 701.3 ms/it
-iter    470 | loss 1.8155 | lr 5.12e-04 | 88.4 ms/it
-iter    480 | loss 1.9075 | lr 5.08e-04 | 88.4 ms/it
-iter    490 | loss 1.8436 | lr 5.03e-04 | 88.4 ms/it
-iter    500 | loss 1.8631 | lr 4.98e-04 | 88.4 ms/it
-           eval | train 1.1586 | val 1.4686
+iter      0 | loss 5.5822 | lr 6.00e-06 | 33.8 ms/it | 484.4k tok/s
+iter     10 | loss 4.6313 | lr 6.60e-05 | 86.6 ms/it | 189.3k tok/s
+iter     20 | loss 4.3928 | lr 1.26e-04 | 86.6 ms/it | 189.3k tok/s
+iter     30 | loss 4.0184 | lr 1.86e-04 | 86.5 ms/it | 189.4k tok/s
+iter     40 | loss 3.6898 | lr 2.46e-04 | 86.5 ms/it | 189.4k tok/s
+iter     50 | loss 3.5103 | lr 3.06e-04 | 86.5 ms/it | 189.4k tok/s
+           eval | train 2.5421 | val 2.5469
+           best val 2.5469 → saved out/tiny_mtp/ckpt_best.pt
+iter     60 | loss 3.3586 | lr 3.66e-04 | 627.9 ms/it | 26.1k tok/s
+iter     70 | loss 3.2437 | lr 4.26e-04 | 86.5 ms/it | 189.4k tok/s
+iter     80 | loss 3.1371 | lr 4.86e-04 | 86.6 ms/it | 189.2k tok/s
+iter     90 | loss 2.9783 | lr 5.46e-04 | 86.6 ms/it | 189.2k tok/s
+iter    100 | loss 2.8900 | lr 6.00e-04 | 86.6 ms/it | 189.1k tok/s
+           eval | train 1.9865 | val 2.0531
+           best val 2.0531 → saved out/tiny_mtp/ckpt_best.pt
+iter    110 | loss 2.7223 | lr 6.00e-04 | 630.3 ms/it | 26.0k tok/s
+iter    120 | loss 2.6483 | lr 6.00e-04 | 86.7 ms/it | 188.9k tok/s
+iter    130 | loss 2.5163 | lr 5.99e-04 | 86.8 ms/it | 188.8k tok/s
+iter    140 | loss 2.4522 | lr 5.99e-04 | 86.8 ms/it | 188.8k tok/s
+iter    150 | loss 2.3999 | lr 5.98e-04 | 86.8 ms/it | 188.7k tok/s
+           eval | train 1.5838 | val 1.7389
+           best val 1.7389 → saved out/tiny_mtp/ckpt_best.pt
+iter    160 | loss 2.3635 | lr 5.98e-04 | 632.3 ms/it | 25.9k tok/s
+iter    170 | loss 2.2974 | lr 5.97e-04 | 86.9 ms/it | 188.6k tok/s
+iter    180 | loss 2.2585 | lr 5.96e-04 | 86.9 ms/it | 188.6k tok/s
+iter    190 | loss 2.2514 | lr 5.95e-04 | 86.8 ms/it | 188.7k tok/s
+iter    200 | loss 2.1913 | lr 5.93e-04 | 86.8 ms/it | 188.7k tok/s
+           eval | train 1.4422 | val 1.6174
+           best val 1.6174 → saved out/tiny_mtp/ckpt_best.pt
+iter    210 | loss 2.1972 | lr 5.92e-04 | 631.6 ms/it | 25.9k tok/s
+iter    220 | loss 2.1764 | lr 5.90e-04 | 86.8 ms/it | 188.7k tok/s
+iter    230 | loss 2.1581 | lr 5.89e-04 | 86.8 ms/it | 188.8k tok/s
+iter    240 | loss 2.1428 | lr 5.87e-04 | 86.7 ms/it | 189.0k tok/s
+iter    250 | loss 2.1303 | lr 5.85e-04 | 86.8 ms/it | 188.8k tok/s
+           eval | train 1.3625 | val 1.5536
+           best val 1.5536 → saved out/tiny_mtp/ckpt_best.pt
+iter    260 | loss 2.0671 | lr 5.83e-04 | 631.7 ms/it | 25.9k tok/s
+iter    270 | loss 2.0611 | lr 5.81e-04 | 86.8 ms/it | 188.7k tok/s
+iter    280 | loss 1.9972 | lr 5.78e-04 | 86.9 ms/it | 188.6k tok/s
+iter    290 | loss 2.1091 | lr 5.76e-04 | 86.9 ms/it | 188.6k tok/s
+iter    300 | loss 2.0210 | lr 5.73e-04 | 86.9 ms/it | 188.6k tok/s
+           eval | train 1.3111 | val 1.5302
+           best val 1.5302 → saved out/tiny_mtp/ckpt_best.pt
+iter    310 | loss 1.9907 | lr 5.71e-04 | 631.2 ms/it | 26.0k tok/s
+iter    320 | loss 2.0314 | lr 5.68e-04 | 86.8 ms/it | 188.7k tok/s
+iter    330 | loss 1.9776 | lr 5.65e-04 | 86.8 ms/it | 188.7k tok/s
+iter    340 | loss 1.9597 | lr 5.62e-04 | 86.8 ms/it | 188.8k tok/s
+iter    350 | loss 1.9780 | lr 5.59e-04 | 86.8 ms/it | 188.8k tok/s
+           eval | train 1.2612 | val 1.4969
+           best val 1.4969 → saved out/tiny_mtp/ckpt_best.pt
+iter    360 | loss 1.9810 | lr 5.55e-04 | 632.3 ms/it | 25.9k tok/s
+iter    370 | loss 1.9691 | lr 5.52e-04 | 86.9 ms/it | 188.6k tok/s
+iter    380 | loss 1.9621 | lr 5.48e-04 | 86.8 ms/it | 188.7k tok/s
+iter    390 | loss 1.9449 | lr 5.45e-04 | 86.8 ms/it | 188.8k tok/s
+iter    400 | loss 1.9255 | lr 5.41e-04 | 86.8 ms/it | 188.7k tok/s
+           eval | train 1.2265 | val 1.4917
+           best val 1.4917 → saved out/tiny_mtp/ckpt_best.pt
+iter    410 | loss 1.9309 | lr 5.37e-04 | 633.8 ms/it | 25.9k tok/s
+iter    420 | loss 1.9309 | lr 5.33e-04 | 86.8 ms/it | 188.7k tok/s
+iter    430 | loss 1.8766 | lr 5.29e-04 | 86.8 ms/it | 188.7k tok/s
+iter    440 | loss 1.8946 | lr 5.25e-04 | 86.9 ms/it | 188.6k tok/s
+iter    450 | loss 1.9369 | lr 5.21e-04 | 86.9 ms/it | 188.6k tok/s
+           eval | train 1.1907 | val 1.4719
+           best val 1.4719 → saved out/tiny_mtp/ckpt_best.pt
+iter    460 | loss 1.8913 | lr 5.17e-04 | 631.7 ms/it | 25.9k tok/s
+iter    470 | loss 1.8449 | lr 5.12e-04 | 86.8 ms/it | 188.7k tok/s
+iter    480 | loss 1.8876 | lr 5.08e-04 | 86.8 ms/it | 188.7k tok/s
+iter    490 | loss 1.8385 | lr 5.03e-04 | 86.8 ms/it | 188.7k tok/s
+iter    500 | loss 1.8550 | lr 4.98e-04 | 86.8 ms/it | 188.7k tok/s
+           eval | train 1.1606 | val 1.4652
+           best val 1.4652 → saved out/tiny_mtp/ckpt_best.pt
            saved ckpt -> out/tiny_mtp/ckpt.pt
-iter    510 | loss 1.8246 | lr 4.94e-04 | 657.5 ms/it
-iter    520 | loss 1.8481 | lr 4.89e-04 | 88.5 ms/it
-iter    530 | loss 1.8154 | lr 4.84e-04 | 88.5 ms/it
-iter    540 | loss 1.8029 | lr 4.79e-04 | 88.4 ms/it
-iter    550 | loss 1.7976 | lr 4.74e-04 | 88.4 ms/it
-           eval | train 1.1236 | val 1.4613
-           best val 1.4613 → saved out/tiny_mtp/ckpt_best.pt
-iter    560 | loss 1.8112 | lr 4.68e-04 | 711.6 ms/it
-iter    570 | loss 1.8089 | lr 4.63e-04 | 88.3 ms/it
-iter    580 | loss 1.8097 | lr 4.58e-04 | 88.4 ms/it
-iter    590 | loss 1.7615 | lr 4.53e-04 | 88.4 ms/it
-iter    600 | loss 1.8017 | lr 4.47e-04 | 88.4 ms/it
-           eval | train 1.0946 | val 1.4655
-iter    610 | loss 1.7601 | lr 4.42e-04 | 646.9 ms/it
-iter    620 | loss 1.7351 | lr 4.36e-04 | 88.4 ms/it
-iter    630 | loss 1.7848 | lr 4.31e-04 | 88.4 ms/it
-iter    640 | loss 1.7270 | lr 4.25e-04 | 88.4 ms/it
-iter    650 | loss 1.7352 | lr 4.19e-04 | 88.4 ms/it
-           eval | train 1.0564 | val 1.4688
-iter    660 | loss 1.6820 | lr 4.13e-04 | 646.8 ms/it
-iter    670 | loss 1.6803 | lr 4.08e-04 | 88.4 ms/it
-iter    680 | loss 1.7425 | lr 4.02e-04 | 88.5 ms/it
-iter    690 | loss 1.7149 | lr 3.96e-04 | 88.4 ms/it
-iter    700 | loss 1.6745 | lr 3.90e-04 | 88.4 ms/it
-           eval | train 1.0214 | val 1.4878
-iter    710 | loss 1.6619 | lr 3.84e-04 | 647.1 ms/it
-iter    720 | loss 1.6318 | lr 3.78e-04 | 88.5 ms/it
-iter    730 | loss 1.6561 | lr 3.72e-04 | 88.5 ms/it
-iter    740 | loss 1.6633 | lr 3.66e-04 | 88.5 ms/it
-iter    750 | loss 1.6288 | lr 3.60e-04 | 88.4 ms/it
-           eval | train 0.9889 | val 1.4728
-iter    760 | loss 1.6351 | lr 3.54e-04 | 646.8 ms/it
-iter    770 | loss 1.6756 | lr 3.48e-04 | 88.5 ms/it
-iter    780 | loss 1.6175 | lr 3.42e-04 | 88.4 ms/it
-iter    790 | loss 1.6163 | lr 3.36e-04 | 88.4 ms/it
-iter    800 | loss 1.5829 | lr 3.30e-04 | 88.4 ms/it
-           eval | train 0.9508 | val 1.5033
-iter    810 | loss 1.6190 | lr 3.24e-04 | 647.0 ms/it
-iter    820 | loss 1.6037 | lr 3.18e-04 | 88.5 ms/it
-iter    830 | loss 1.6230 | lr 3.12e-04 | 88.5 ms/it
-iter    840 | loss 1.6036 | lr 3.06e-04 | 88.4 ms/it
-iter    850 | loss 1.5628 | lr 3.00e-04 | 88.5 ms/it
-           eval | train 0.9174 | val 1.5083
-iter    860 | loss 1.5379 | lr 2.94e-04 | 647.0 ms/it
-iter    870 | loss 1.5514 | lr 2.88e-04 | 88.5 ms/it
-iter    880 | loss 1.5530 | lr 2.82e-04 | 88.5 ms/it
-iter    890 | loss 1.5444 | lr 2.76e-04 | 88.4 ms/it
-iter    900 | loss 1.5095 | lr 2.70e-04 | 88.4 ms/it
-           eval | train 0.8788 | val 1.5473
-iter    910 | loss 1.5646 | lr 2.64e-04 | 647.2 ms/it
-iter    920 | loss 1.4990 | lr 2.58e-04 | 88.5 ms/it
-iter    930 | loss 1.4894 | lr 2.52e-04 | 88.5 ms/it
-iter    940 | loss 1.5161 | lr 2.47e-04 | 88.4 ms/it
-iter    950 | loss 1.5242 | lr 2.41e-04 | 88.4 ms/it
-           eval | train 0.8398 | val 1.5637
-iter    960 | loss 1.5210 | lr 2.35e-04 | 647.1 ms/it
-iter    970 | loss 1.4842 | lr 2.29e-04 | 88.5 ms/it
-iter    980 | loss 1.5013 | lr 2.24e-04 | 88.4 ms/it
-iter    990 | loss 1.4891 | lr 2.18e-04 | 88.5 ms/it
-iter   1000 | loss 1.4397 | lr 2.13e-04 | 88.4 ms/it
-           eval | train 0.8064 | val 1.5708
+iter    510 | loss 1.8205 | lr 4.94e-04 | 637.9 ms/it | 25.7k tok/s
+iter    520 | loss 1.8127 | lr 4.89e-04 | 86.9 ms/it | 188.6k tok/s
+iter    530 | loss 1.8304 | lr 4.84e-04 | 86.8 ms/it | 188.7k tok/s
+iter    540 | loss 1.8470 | lr 4.79e-04 | 86.8 ms/it | 188.7k tok/s
+iter    550 | loss 1.7850 | lr 4.74e-04 | 86.8 ms/it | 188.8k tok/s
+           eval | train 1.1271 | val 1.4651
+           best val 1.4651 → saved out/tiny_mtp/ckpt_best.pt
+iter    560 | loss 1.7650 | lr 4.68e-04 | 631.4 ms/it | 25.9k tok/s
+iter    570 | loss 1.7814 | lr 4.63e-04 | 86.8 ms/it | 188.8k tok/s
+iter    580 | loss 1.7678 | lr 4.58e-04 | 86.8 ms/it | 188.8k tok/s
+iter    590 | loss 1.7816 | lr 4.53e-04 | 86.8 ms/it | 188.8k tok/s
+iter    600 | loss 1.7564 | lr 4.47e-04 | 86.8 ms/it | 188.8k tok/s
+           eval | train 1.0888 | val 1.4700
+iter    610 | loss 1.7220 | lr 4.42e-04 | 623.4 ms/it | 26.3k tok/s
+iter    620 | loss 1.7764 | lr 4.36e-04 | 86.5 ms/it | 189.4k tok/s
+iter    630 | loss 1.7386 | lr 4.31e-04 | 86.5 ms/it | 189.4k tok/s
+iter    640 | loss 1.7133 | lr 4.25e-04 | 86.5 ms/it | 189.3k tok/s
+iter    650 | loss 1.7293 | lr 4.19e-04 | 86.6 ms/it | 189.3k tok/s
+           eval | train 1.0592 | val 1.4721
+iter    660 | loss 1.7517 | lr 4.13e-04 | 622.5 ms/it | 26.3k tok/s
+iter    670 | loss 1.6784 | lr 4.08e-04 | 86.5 ms/it | 189.3k tok/s
+iter    680 | loss 1.7197 | lr 4.02e-04 | 86.5 ms/it | 189.4k tok/s
+iter    690 | loss 1.6931 | lr 3.96e-04 | 86.5 ms/it | 189.4k tok/s
+iter    700 | loss 1.6809 | lr 3.90e-04 | 86.6 ms/it | 189.3k tok/s
+           eval | train 1.0270 | val 1.4739
+iter    710 | loss 1.6988 | lr 3.84e-04 | 622.3 ms/it | 26.3k tok/s
+iter    720 | loss 1.6412 | lr 3.78e-04 | 86.6 ms/it | 189.3k tok/s
+iter    730 | loss 1.7078 | lr 3.72e-04 | 86.6 ms/it | 189.3k tok/s
+iter    740 | loss 1.6451 | lr 3.66e-04 | 86.5 ms/it | 189.3k tok/s
+iter    750 | loss 1.6513 | lr 3.60e-04 | 86.6 ms/it | 189.2k tok/s
+           eval | train 0.9895 | val 1.4952
+iter    760 | loss 1.6648 | lr 3.54e-04 | 622.4 ms/it | 26.3k tok/s
+iter    770 | loss 1.6557 | lr 3.48e-04 | 86.5 ms/it | 189.3k tok/s
+iter    780 | loss 1.6651 | lr 3.42e-04 | 86.5 ms/it | 189.4k tok/s
+iter    790 | loss 1.6212 | lr 3.36e-04 | 86.5 ms/it | 189.4k tok/s
+iter    800 | loss 1.6446 | lr 3.30e-04 | 86.5 ms/it | 189.3k tok/s
+           eval | train 0.9556 | val 1.5086
+iter    810 | loss 1.5901 | lr 3.24e-04 | 622.5 ms/it | 26.3k tok/s
+iter    820 | loss 1.6154 | lr 3.18e-04 | 86.5 ms/it | 189.4k tok/s
+iter    830 | loss 1.6259 | lr 3.12e-04 | 86.5 ms/it | 189.3k tok/s
+iter    840 | loss 1.5982 | lr 3.06e-04 | 86.6 ms/it | 189.3k tok/s
+iter    850 | loss 1.5852 | lr 3.00e-04 | 86.6 ms/it | 189.3k tok/s
+           eval | train 0.9149 | val 1.5226
+iter    860 | loss 1.5830 | lr 2.94e-04 | 622.8 ms/it | 26.3k tok/s
+iter    870 | loss 1.5304 | lr 2.88e-04 | 86.5 ms/it | 189.3k tok/s
+iter    880 | loss 1.5129 | lr 2.82e-04 | 86.5 ms/it | 189.4k tok/s
+iter    890 | loss 1.5359 | lr 2.76e-04 | 86.5 ms/it | 189.3k tok/s
+iter    900 | loss 1.5662 | lr 2.70e-04 | 86.5 ms/it | 189.4k tok/s
+           eval | train 0.8796 | val 1.5380
+iter    910 | loss 1.5240 | lr 2.64e-04 | 622.1 ms/it | 26.3k tok/s
+iter    920 | loss 1.5300 | lr 2.58e-04 | 86.5 ms/it | 189.3k tok/s
+iter    930 | loss 1.5531 | lr 2.52e-04 | 86.6 ms/it | 189.3k tok/s
+iter    940 | loss 1.5060 | lr 2.47e-04 | 86.5 ms/it | 189.4k tok/s
+iter    950 | loss 1.4873 | lr 2.41e-04 | 86.5 ms/it | 189.4k tok/s
+           eval | train 0.8406 | val 1.5620
+iter    960 | loss 1.4739 | lr 2.35e-04 | 624.1 ms/it | 26.3k tok/s
+iter    970 | loss 1.4970 | lr 2.29e-04 | 86.8 ms/it | 188.7k tok/s
+iter    980 | loss 1.4912 | lr 2.24e-04 | 86.8 ms/it | 188.6k tok/s
+iter    990 | loss 1.4537 | lr 2.18e-04 | 86.9 ms/it | 188.5k tok/s
+iter   1000 | loss 1.4449 | lr 2.13e-04 | 86.8 ms/it | 188.7k tok/s
+           eval | train 0.8075 | val 1.5772
            saved ckpt -> out/tiny_mtp/ckpt.pt
-iter   1010 | loss 1.4603 | lr 2.07e-04 | 711.0 ms/it
-iter   1020 | loss 1.4240 | lr 2.02e-04 | 88.5 ms/it
-iter   1030 | loss 1.4216 | lr 1.97e-04 | 88.4 ms/it
-iter   1040 | loss 1.4422 | lr 1.92e-04 | 88.4 ms/it
-iter   1050 | loss 1.4529 | lr 1.86e-04 | 88.5 ms/it
-           eval | train 0.7684 | val 1.6081
-iter   1060 | loss 1.3994 | lr 1.81e-04 | 646.8 ms/it
-iter   1070 | loss 1.4209 | lr 1.76e-04 | 88.5 ms/it
-iter   1080 | loss 1.4188 | lr 1.71e-04 | 88.4 ms/it
-iter   1090 | loss 1.3805 | lr 1.66e-04 | 88.4 ms/it
-iter   1100 | loss 1.4007 | lr 1.62e-04 | 88.4 ms/it
-           eval | train 0.7355 | val 1.6237
-iter   1110 | loss 1.3994 | lr 1.57e-04 | 647.0 ms/it
-iter   1120 | loss 1.3788 | lr 1.52e-04 | 88.5 ms/it
-iter   1130 | loss 1.3523 | lr 1.48e-04 | 88.4 ms/it
-iter   1140 | loss 1.3328 | lr 1.43e-04 | 88.4 ms/it
-iter   1150 | loss 1.3511 | lr 1.39e-04 | 88.5 ms/it
-           eval | train 0.7026 | val 1.6576
-iter   1160 | loss 1.3325 | lr 1.35e-04 | 647.0 ms/it
-iter   1170 | loss 1.3357 | lr 1.31e-04 | 88.5 ms/it
-iter   1180 | loss 1.3377 | lr 1.27e-04 | 88.5 ms/it
-iter   1190 | loss 1.2898 | lr 1.23e-04 | 88.4 ms/it
-iter   1200 | loss 1.2848 | lr 1.19e-04 | 88.6 ms/it
-           eval | train 0.6742 | val 1.6808
-iter   1210 | loss 1.3381 | lr 1.15e-04 | 647.3 ms/it
-iter   1220 | loss 1.3003 | lr 1.12e-04 | 88.5 ms/it
-iter   1230 | loss 1.3151 | lr 1.08e-04 | 88.4 ms/it
-iter   1240 | loss 1.3196 | lr 1.05e-04 | 88.5 ms/it
-iter   1250 | loss 1.2905 | lr 1.01e-04 | 88.4 ms/it
-           eval | train 0.6477 | val 1.7025
-iter   1260 | loss 1.3275 | lr 9.82e-05 | 646.8 ms/it
-iter   1270 | loss 1.2784 | lr 9.52e-05 | 88.5 ms/it
-iter   1280 | loss 1.2847 | lr 9.22e-05 | 88.4 ms/it
-iter   1290 | loss 1.2720 | lr 8.94e-05 | 88.5 ms/it
-iter   1300 | loss 1.2838 | lr 8.67e-05 | 88.4 ms/it
-           eval | train 0.6243 | val 1.7312
-iter   1310 | loss 1.2921 | lr 8.42e-05 | 647.0 ms/it
-iter   1320 | loss 1.2677 | lr 8.17e-05 | 88.4 ms/it
-iter   1330 | loss 1.2924 | lr 7.94e-05 | 88.5 ms/it
-iter   1340 | loss 1.2344 | lr 7.72e-05 | 88.4 ms/it
-iter   1350 | loss 1.2235 | lr 7.52e-05 | 88.5 ms/it
-           eval | train 0.6077 | val 1.7289
-iter   1360 | loss 1.2721 | lr 7.32e-05 | 647.0 ms/it
-iter   1370 | loss 1.2295 | lr 7.14e-05 | 88.6 ms/it
-iter   1380 | loss 1.2227 | lr 6.97e-05 | 88.4 ms/it
-iter   1390 | loss 1.2387 | lr 6.82e-05 | 88.5 ms/it
-iter   1400 | loss 1.2703 | lr 6.68e-05 | 88.4 ms/it
-           eval | train 0.5887 | val 1.7479
-iter   1410 | loss 1.2463 | lr 6.55e-05 | 647.6 ms/it
-iter   1420 | loss 1.2349 | lr 6.43e-05 | 88.5 ms/it
-iter   1430 | loss 1.2833 | lr 6.33e-05 | 88.5 ms/it
-iter   1440 | loss 1.2388 | lr 6.24e-05 | 88.5 ms/it
-iter   1450 | loss 1.2169 | lr 6.17e-05 | 88.5 ms/it
-           eval | train 0.5714 | val 1.7697
-iter   1460 | loss 1.2406 | lr 6.11e-05 | 647.2 ms/it
-iter   1470 | loss 1.2311 | lr 6.06e-05 | 88.5 ms/it
-iter   1480 | loss 1.2288 | lr 6.03e-05 | 88.4 ms/it
-iter   1490 | loss 1.1985 | lr 6.01e-05 | 88.5 ms/it
-done. final ckpt -> out/tiny_mtp/ckpt.pt  best val 1.4613 -> out/tiny_mtp/ckpt_best.pt
+iter   1010 | loss 1.4470 | lr 2.07e-04 | 631.3 ms/it | 26.0k tok/s
+iter   1020 | loss 1.4586 | lr 2.02e-04 | 86.5 ms/it | 189.4k tok/s
+iter   1030 | loss 1.4514 | lr 1.97e-04 | 86.6 ms/it | 189.2k tok/s
+iter   1040 | loss 1.4557 | lr 1.92e-04 | 86.7 ms/it | 189.1k tok/s
+iter   1050 | loss 1.4294 | lr 1.86e-04 | 86.6 ms/it | 189.2k tok/s
+           eval | train 0.7717 | val 1.5936
+iter   1060 | loss 1.4232 | lr 1.81e-04 | 622.2 ms/it | 26.3k tok/s
+iter   1070 | loss 1.4354 | lr 1.76e-04 | 86.6 ms/it | 189.2k tok/s
+iter   1080 | loss 1.4361 | lr 1.71e-04 | 86.6 ms/it | 189.3k tok/s
+iter   1090 | loss 1.3498 | lr 1.66e-04 | 86.6 ms/it | 189.2k tok/s
+iter   1100 | loss 1.3719 | lr 1.62e-04 | 86.6 ms/it | 189.3k tok/s
+           eval | train 0.7338 | val 1.6229
+iter   1110 | loss 1.3857 | lr 1.57e-04 | 622.9 ms/it | 26.3k tok/s
+iter   1120 | loss 1.3584 | lr 1.52e-04 | 86.5 ms/it | 189.4k tok/s
+iter   1130 | loss 1.4039 | lr 1.48e-04 | 86.5 ms/it | 189.4k tok/s
+iter   1140 | loss 1.3769 | lr 1.43e-04 | 86.5 ms/it | 189.4k tok/s
+iter   1150 | loss 1.3890 | lr 1.39e-04 | 86.5 ms/it | 189.3k tok/s
+           eval | train 0.7057 | val 1.6452
+iter   1160 | loss 1.3317 | lr 1.35e-04 | 621.9 ms/it | 26.3k tok/s
+iter   1170 | loss 1.3370 | lr 1.31e-04 | 86.5 ms/it | 189.4k tok/s
+iter   1180 | loss 1.3297 | lr 1.27e-04 | 86.5 ms/it | 189.3k tok/s
+iter   1190 | loss 1.3224 | lr 1.23e-04 | 86.5 ms/it | 189.4k tok/s
+iter   1200 | loss 1.3379 | lr 1.19e-04 | 86.5 ms/it | 189.4k tok/s
+           eval | train 0.6744 | val 1.6759
+iter   1210 | loss 1.3272 | lr 1.15e-04 | 622.5 ms/it | 26.3k tok/s
+iter   1220 | loss 1.2761 | lr 1.12e-04 | 86.5 ms/it | 189.3k tok/s
+iter   1230 | loss 1.3492 | lr 1.08e-04 | 86.5 ms/it | 189.4k tok/s
+iter   1240 | loss 1.3219 | lr 1.05e-04 | 86.5 ms/it | 189.3k tok/s
+iter   1250 | loss 1.2966 | lr 1.01e-04 | 86.5 ms/it | 189.4k tok/s
+           eval | train 0.6522 | val 1.6817
+iter   1260 | loss 1.2985 | lr 9.82e-05 | 622.4 ms/it | 26.3k tok/s
+iter   1270 | loss 1.3232 | lr 9.52e-05 | 86.9 ms/it | 188.5k tok/s
+iter   1280 | loss 1.3368 | lr 9.22e-05 | 86.9 ms/it | 188.6k tok/s
+iter   1290 | loss 1.3279 | lr 8.94e-05 | 86.8 ms/it | 188.7k tok/s
+iter   1300 | loss 1.2763 | lr 8.67e-05 | 86.8 ms/it | 188.8k tok/s
+           eval | train 0.6272 | val 1.7099
+iter   1310 | loss 1.3148 | lr 8.42e-05 | 623.6 ms/it | 26.3k tok/s
+iter   1320 | loss 1.3191 | lr 8.17e-05 | 86.8 ms/it | 188.8k tok/s
+iter   1330 | loss 1.3027 | lr 7.94e-05 | 86.7 ms/it | 188.9k tok/s
+iter   1340 | loss 1.2923 | lr 7.72e-05 | 86.7 ms/it | 189.0k tok/s
+iter   1350 | loss 1.2951 | lr 7.52e-05 | 86.8 ms/it | 188.8k tok/s
+           eval | train 0.6073 | val 1.7226
+iter   1360 | loss 1.2860 | lr 7.32e-05 | 622.3 ms/it | 26.3k tok/s
+iter   1370 | loss 1.2537 | lr 7.14e-05 | 86.5 ms/it | 189.4k tok/s
+iter   1380 | loss 1.2804 | lr 6.97e-05 | 86.5 ms/it | 189.3k tok/s
+iter   1390 | loss 1.2699 | lr 6.82e-05 | 86.5 ms/it | 189.4k tok/s
+iter   1400 | loss 1.2560 | lr 6.68e-05 | 86.5 ms/it | 189.5k tok/s
+           eval | train 0.5895 | val 1.7402
+iter   1410 | loss 1.2603 | lr 6.55e-05 | 622.3 ms/it | 26.3k tok/s
+iter   1420 | loss 1.2484 | lr 6.43e-05 | 86.5 ms/it | 189.4k tok/s
+iter   1430 | loss 1.2398 | lr 6.33e-05 | 86.5 ms/it | 189.3k tok/s
+iter   1440 | loss 1.2010 | lr 6.24e-05 | 86.5 ms/it | 189.4k tok/s
+iter   1450 | loss 1.2484 | lr 6.17e-05 | 86.5 ms/it | 189.3k tok/s
+           eval | train 0.5725 | val 1.7579
+iter   1460 | loss 1.1654 | lr 6.11e-05 | 622.5 ms/it | 26.3k tok/s
+iter   1470 | loss 1.2627 | lr 6.06e-05 | 86.5 ms/it | 189.3k tok/s
+iter   1480 | loss 1.2436 | lr 6.03e-05 | 86.5 ms/it | 189.5k tok/s
+iter   1490 | loss 1.2169 | lr 6.01e-05 | 86.6 ms/it | 189.3k tok/s
+done. final ckpt -> out/tiny_mtp/ckpt.pt  best val 1.4651 -> out/tiny_mtp/ckpt_best.pt
