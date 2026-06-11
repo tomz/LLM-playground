@@ -367,25 +367,46 @@ Fix (in `distgpt/training/stability.py`):
 The clean second half of the run (steps 1 500 → 3 000) has zero spike
 events, as expected.
 
-### 2. Resumed log was a mess of duplicate steps
+### 2. Resumed log was a mess of duplicate steps — and the *first* cleanup put a phantom dip in the LR curve
 
-After the rewind-loop bug, the JSONL log had steps 1 500 → 1 800
-repeated 14 times (once per rewind iteration, each at a different LR).
-The plotter would happily draw all of them — the loss panel looked like
-a barcode.
+After the rewind-loop bug, the JSONL log had steps 1 510 → 1 890 written
+up to ~8 times each (once per rewind iteration), and *every repeat carried
+a lower LR* as the buggy RewindController halved the multiplier on each
+false spike. Plotting all 573 rows drew a barcode; worse, the repeated
+rows pulled the LR panel into a deep downward spike between steps ~1 510
+and ~1 890.
 
-Fix (in `scripts/clean_log.py`): a small script that keeps the *first*
-occurrence of each (`step`) tuple — that's the clean cosine-schedule
-entry, before any rewind — and drops the rest. Backs up the raw log to
-`log.jsonl.raw` for forensics.
+The first version of `clean_log.py` made it *worse in a subtle way*: it
+kept the **first** occurrence of each step, on the assumption that the
+earliest row was "the clean pre-rewind entry." That's true for steps
+*before* the storm, but for the steps caught mid-storm the
+first-written row was already a rewound, halved-LR row — so keep-first
+**baked the dip in** instead of removing it. Replotting still showed LR
+collapsing to ~1.6 % of the cosine value (0.5⁶ — exactly six halvings)
+across steps 1 510–1 890, then snapping back to 1.0×. A schedule that
+*never actually happened* on the resumed run.
+
+The fix is the opposite rule: **keep the *last* occurrence of each step.**
+In a pause → fix → resume log the resume is authoritative — it re-wrote
+the affected steps at the correct cosine LR, and those rows come last.
+`clean_log.py` now (a) reads from the pristine `log.jsonl.raw` backup so
+re-running can always recover the good rows, (b) never overwrites that
+backup, (c) de-dups train and eval rows separately so an eval at a
+repeated step survives, and (d) emits the result in step order for the
+plotter. Validated against the analytic schedule, keep-last reproduces
+the cosine to **0.000 % across all 300 train rows** (keep-first was off
+by up to **98 %** at step 1 580).
 
 ```bash
 .venv/bin/python scripts/clean_log.py out/gpt_416m_fweb_5060ti/log.jsonl
-# wrote 314 unique-step entries (dropped 259 duplicates)
+# reading pristine raw log <- out/gpt_416m_fweb_5060ti/log.jsonl.raw
+# wrote 314 unique-step entries (300 train + 14 eval), dropped 259 rewound/duplicate rows
 ```
 
 Both files (`log.jsonl` and `log.jsonl.raw`) are kept in
-`out/gpt_416m_fweb_5060ti/` so you can see what happened.
+`out/gpt_416m_fweb_5060ti/` so you can see what happened — and because the
+cleaner always re-derives from `.raw`, the cleaned log is reproducible
+from scratch at any time.
 
 ## Why not 2 ranks on one 5060 Ti?
 
