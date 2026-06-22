@@ -9,6 +9,7 @@ Fine-tune open-weights code models on a single consumer GPU. Tiers:
 | `configs/lora_3050_1p5b.yaml` | Qwen2.5-Coder-1.5B | LoRA r=16       | 7.5 GB    | 24 min on 2k        |
 | **`configs/lora_5060ti.yaml`** | **Qwen2.5-Coder-3B** | **LoRA r=16, packed** | **15.1 GB** | **12 min on 2.5k**  |
 | `configs/lora.yaml`     | Qwen2.5-Coder-1.5B       | LoRA r=16       | ~7 GB     | ~1.5 h on 20k       |
+| **`configs/lora_hicap.yaml`** | **Qwen2.5-Coder-1.5B** | **LoRA r=256, all-linear (LoRA Without Regret)** | **~11 GB** | **~2 h on 20k**     |
 | `configs/qlora.yaml`    | Qwen2.5-Coder-7B         | QLoRA NF4 r=32  | ~7 GB     | ~8 h on 50k         |
 | **`configs/dpo_3050.yaml`** | **Qwen2.5-Coder-0.5B** | **DPO (LoRA), offline preference pairs** | **~4–5 GB** | **fast (no sampling)** |
 | **`configs/grpo_3050.yaml`** | **Qwen2.5-Coder-0.5B** | **GRPO / RLVR (LoRA), unit-test reward** | **~5–6 GB** | **gen-heavy**       |
@@ -126,6 +127,37 @@ Recent SOTA add-ons that plug into the existing TRL/PEFT stack. All default
 CUDA_VISIBLE_DEVICES=0 .venv/bin/python train.py --config configs/lora_5060ti.yaml
 ```
 
+### LoRA Without Regret — when LoRA *equals* full fine-tuning
+
+The recipes above run **r=16**, which is right for a few-k-row smoke set. But
+*LoRA Without Regret* (Schulman et al., TML 2025) showed the "regret" people
+accept for using LoRA over full fine-tuning (FullFT) is usually a
+**mis-configuration**, not a law — get four knobs right and LoRA *matches*
+FullFT at **~⅔ the compute**:
+
+1. **All linear layers, not attention-only.** The MLP/MoE matrices carry the
+   capacity — attention-only LoRA underperforms even at matched param count.
+   *(Every config here already targets `gate/up/down_proj`; a pin in
+   `tests/test_lora_without_regret.py` stops anyone narrowing it back.)*
+2. **Enough rank for the dataset** — **≈256 for post-training-scale SFT**. This
+   is the one knob the r=16 recipes get "wrong" for a real instruction mixture:
+   *"for datasets that exceed LoRA capacity, LoRA underperforms FullFT."*
+3. **A higher, ~rank-independent LR** (the `1/r` scaling makes the optimal LoRA
+   LR roughly rank-independent — so `lora_hicap.yaml` keeps the same `2e-4`, not
+   a lowered one), and **effective batch < 32** (LoRA is less batch-tolerant).
+4. **RL needs almost no rank** — policy-gradient extracts ~1 bit/episode, so
+   `r=1–32` suffices for GRPO/DPO. The RL recipes stay at r=16 *on purpose*; do
+   **not** copy the SFT high rank into `cf_rl`/`cf_pref`.
+
+`configs/lora_hicap.yaml` is the worked recipe (r=256, all-linear, rsLoRA,
+rank-independent LR, effective batch 16). Mirrors HF TRL's own
+[`lora_without_regret`](https://huggingface.co/docs/trl/main/lora_without_regret).
+
+```bash
+# Post-training-scale SFT: r=256 all-linear on a real instruction mixture.
+CUDA_VISIBLE_DEVICES=0 .venv/bin/python train.py --config configs/lora_hicap.yaml
+```
+
 ## Layout
 
 ```
@@ -138,7 +170,7 @@ coder-finetune/
 ├── train.py        # SFT / LoRA / QLoRA via TRL SFTTrainer
 ├── eval/           # HumanEval+ runner with Docker sandbox (also the RL verifier)
 ├── infer/          # merge LoRA, export for vLLM
-└── tests/          # 85 tests — bug regressions, sandbox, DPO/SimPO/KTO/GRPO + DDP-env/launcher pins
+└── tests/          # 106 tests — bug regressions, sandbox, DPO/SimPO/KTO/GRPO + DDP-env/launcher + LoRA-Without-Regret pins
 ```
 
 ## Quickstart
@@ -171,6 +203,7 @@ python -m venv .venv
 | RTX 3050 8 GB    | [`configs/lora_3050_1p5b.RESULTS.md`](configs/lora_3050_1p5b.RESULTS.md) | 24 min 1.5B + Magicoder, pushing the 8 GB limit |
 | **RTX 5060 Ti 16 GB** | [`examples/5060ti_lora.md`](examples/5060ti_lora.md)   | **12 min 3B + Magicoder, packing on, grad_ckpt off** |
 | **2× RTX 5060 Ti 16 GB** | [`examples/5060ti_2gpu_ddp.md`](examples/5060ti_2gpu_ddp.md) | **genuine 2-GPU DDP over real NCCL — the GPU escalation of the gloo launcher test** |
+| **2× RTX 5060 Ti 16 GB** | [`examples/lora_without_regret_ab.md`](examples/lora_without_regret_ab.md) | **r=16 vs r=256 A/B (LoRA Without Regret) — ties at convergence, r=16 wins at fixed epoch budget; one arm per GPU** |
 
 The 5060 Ti example is the one to read for current numbers — it shows
 both *real generalization* (novel held-out prompts get correct DP / BFS

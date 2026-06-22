@@ -1,0 +1,59 @@
+# LoRA Without Regret — SEPARATION run, ARM A: low rank (r=16).
+#
+# Goal: find the regime where r=256 *beats* r=16 (not just ties). The 8k
+# Python-only A/B tied because r=16 already had the capacity for one language.
+# Here we use a CAPACITY-EXCEEDING mixture: 30k SHUFFLED rows spanning all 9
+# Magicoder languages (python/shell/ts/cpp/rust/php/java/swift/csharp). r=16
+# must compress 9 languages' idioms into 8.8M params; the paper predicts it
+# plateaus BELOW r=256 here. 2 epochs so both arms converge.
+#
+# Iso-everything-except-rank vs ab_lora_r256_sep.yaml.
+out_dir: out/ab_lora_r16_sep
+seed: 1337
+
+model:
+  name: Qwen/Qwen2.5-Coder-0.5B
+  dtype: bfloat16
+  attn_impl: sdpa
+  trust_remote_code: false
+
+method: lora
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  bias: none
+  target_modules: ['q_proj', 'k_proj', 'v_proj', 'o_proj',
+                   'gate_proj', 'up_proj', 'down_proj']
+  use_rslora: false
+
+dataset:
+  source: hf
+  hf_name: ise-uiuc/Magicoder-OSS-Instruct-75K
+  # NO lang_filter -> all 9 languages; shuffle so the 30k cap samples the whole
+  # set (it's ordered python-first, so an unshuffled head would be ~Python only).
+  shuffle: true
+  shuffle_seed: 1337
+  max_examples: 30000
+  format: chatml
+
+train:
+  max_seq_len: 1024
+  batch_size: 1
+  grad_accum: 16          # effective batch = 16 (< 32, finding #4)
+  epochs: 2
+  lr: 2.0e-4              # SAME LR both arms (rank-independent, finding #3)
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  grad_clip: 1.0
+  log_every: 20
+  save_every: 500
+  packing: true
+  gradient_checkpointing: false
+  use_liger_kernel: false
+
+eval:
+  enable: false
+  n_problems: 50
+  n_samples_per_problem: 1

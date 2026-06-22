@@ -1,0 +1,106 @@
+# LoRA Without Regret — high-capacity SFT recipe (Schulman et al., TML 2025).
+#
+# The headline finding: LoRA *matches* full fine-tuning (FullFT) at ~⅔ the
+# compute — the "regret" people accept for using LoRA is usually a
+# *mis-configuration*, not a law. The fix is four knobs, three of which the
+# repo already had right (`lora_5060ti.yaml`) and one we did NOT: rank.
+#
+#   1. LoRA on *all* linear layers, not just attention.  ✅ already (q/k/v/o +
+#      gate/up/down). The MLP matrices carry the capacity; attention-only LoRA
+#      underperforms even at matched param count via higher rank. Pinned by
+#      tests/test_lora_without_regret.py so nobody narrows it back.
+#   2. Enough rank for the dataset.  ← THE CHANGE. Our other recipes run r=16,
+#      which is fine for a 2.5k-row Python smoke set but, per the paper,
+#      "for datasets that exceed LoRA capacity, LoRA underperforms FullFT".
+#      r=256 is the recommended post-training-scale SFT rank. THIS is the recipe
+#      to reach for the moment you train on a real instruction mixture.
+#   3. Higher, ~rank-independent LR.  The 1/r adapter scaling makes the optimal
+#      LoRA LR roughly independent of rank, so we keep the SAME 2e-4 the r=16
+#      recipes use — deliberately, NOT scaled down for the bigger rank. (It is
+#      already well above a FullFT LR, which the paper says is correct.)
+#   4. Keep effective batch < 32.  LoRA is less batch-tolerant than FullFT;
+#      batch_size 1 × grad_accum 16 = 16 here, under the ceiling.
+#
+# RL is the mirror image: policy-gradient extracts ~1 bit/episode, so GRPO/DPO
+# need almost no rank (r=1–32). Don't reuse this r=256 recipe for `cf_rl`/
+# `cf_pref` — see the note at the bottom and configs/grpo_3050.yaml.
+#
+# Sizing (honest): r=256 all-linear is ~16× the adapter params of r=16, so the
+# optimizer state grows. On a 1.5B base this still fits the 5060 Ti (16 GB)
+# tier comfortably; r=256 on the 3B base wants a 24 GB+ card (the *ideal* tier)
+# or a shorter seq_len. We pick the 1.5B base here so the recipe is runnable on
+# the minimal tier — scale the base up on bigger hardware.
+out_dir: out/lora_hicap
+seed: 1337
+
+model:
+  name: Qwen/Qwen2.5-Coder-1.5B
+  dtype: bfloat16
+  attn_impl: sdpa
+  trust_remote_code: false
+
+method: lora
+
+# The crux of the recipe: high rank + all-linear. alpha follows the rsLoRA
+# convention (alpha == r is a sane default once rsLoRA scales by alpha/sqrt(r)).
+lora:
+  r: 256                   # ← post-training-scale SFT rank (vs r=16 elsewhere).
+                           # The single knob that turns "cheap but worse" into
+                           # "cheap and equal" on a real instruction mixture.
+  alpha: 256               # with rsLoRA on, effective scale = alpha/sqrt(r);
+                           # alpha=r keeps that scale ~1 and the LR transferable.
+  dropout: 0.05
+  bias: none
+  # ALL linear layers — attention *and* MLP. Narrowing this back to attention-
+  # only is the classic LoRA mistake the paper calls out; the pinning test
+  # asserts the MLP projections stay present.
+  target_modules: ['q_proj', 'k_proj', 'v_proj', 'o_proj',
+                   'gate_proj', 'up_proj', 'down_proj']
+  # rsLoRA ON (alpha/sqrt(r)) is the load-bearing knob at high rank: it stops
+  # r=256 from being effectively down-weighted into uselessness by the default
+  # alpha/r scaling. DoRA is OFF here — it's a *low*-rank quality booster whose
+  # ~15% step-time tax doesn't pay off once you have r=256 of real capacity.
+  use_dora: false
+  use_rslora: true
+
+dataset:
+  source: hf
+  hf_name: ise-uiuc/Magicoder-OSS-Instruct-75K
+  lang_filter: python
+  # The whole point of high rank is a dataset large enough to need it. 20k rows
+  # is where r=16 starts leaving FullFT quality on the table; r=256 keeps up.
+  max_examples: 20000
+  format: chatml
+
+train:
+  max_seq_len: 1024
+  batch_size: 1            # effective batch = 1 × 16 = 16  (< 32 ceiling, per
+  grad_accum: 16           # finding #4 — LoRA is less batch-tolerant than FullFT)
+  epochs: 2
+  lr: 2.0e-4               # SAME as the r=16 recipes — intentionally NOT lowered
+                           # for the higher rank (1/r scaling ⇒ rank-independent
+                           # optimal LR). This is finding #3.
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  grad_clip: 1.0
+  log_every: 10
+  save_every: 200
+  packing: true            # ~2.5× tokens/step at no extra memory — the right
+                           # call once the adapter has the capacity to use them.
+  gradient_checkpointing: true   # r=256 optimizer state is bigger; trade the
+                                 # ~30% recompute for the headroom on 16 GB.
+  use_liger_kernel: true   # fused CE over Qwen's ~150K vocab — frees the memory
+                           # the bigger adapter wants.
+  neftune_noise_alpha: 5
+
+eval:
+  enable: true
+  n_problems: 50
+  n_samples_per_problem: 1
+
+# --- RL note (do NOT copy this rank into cf_rl / cf_pref) ------------------
+# LoRA Without Regret finding #3: RL needs almost no rank. A policy-gradient
+# step carries ~1 bit of information, so r=1–32 is plenty for GRPO/DPO — your
+# RL adapters should be *smaller and cheaper* than this SFT one, not the same.
+# configs/grpo_3050.yaml and the DPO recipes already sit at r=16, which is on
+# the right side of this; there is no reason to raise them toward r=256.

@@ -1,0 +1,54 @@
+# LoRA Without Regret A/B — ARM B: high rank (r=256, the recipe).
+#
+# Identical to ab_lora_r16.yaml in EVERY field except lora.r (256 vs 16) and
+# use_rslora (on, the load-bearing knob at high rank: alpha/sqrt(r) scaling
+# stops r=256 from being down-weighted into uselessness by the default alpha/r).
+# Same base, data, max_examples, LR, schedule, effective batch -> the delta is
+# pure adapter capacity. This is the arm the paper predicts wins once the
+# dataset exceeds low-rank capacity.
+out_dir: out/ab_lora_r256
+seed: 1337
+
+model:
+  name: Qwen/Qwen2.5-Coder-0.5B
+  dtype: bfloat16
+  attn_impl: sdpa
+  trust_remote_code: false
+
+method: lora
+
+lora:
+  r: 256
+  alpha: 256             # with rsLoRA: effective scale = alpha/sqrt(r) ~ 16
+  dropout: 0.05
+  bias: none
+  target_modules: ['q_proj', 'k_proj', 'v_proj', 'o_proj',
+                   'gate_proj', 'up_proj', 'down_proj']   # all-linear (both arms)
+  use_rslora: true       # alpha/sqrt(r) — required at high rank
+
+dataset:
+  source: hf
+  hf_name: ise-uiuc/Magicoder-OSS-Instruct-75K
+  lang_filter: python
+  max_examples: 8000
+  format: chatml
+
+train:
+  max_seq_len: 1024
+  batch_size: 1
+  grad_accum: 16
+  epochs: 1
+  lr: 2.0e-4              # SAME LR as the r=16 arm (rank-independent)
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  grad_clip: 1.0
+  log_every: 10
+  save_every: 200
+  packing: true
+  gradient_checkpointing: false
+  use_liger_kernel: false
+
+eval:
+  enable: false
+  n_problems: 50
+  n_samples_per_problem: 1

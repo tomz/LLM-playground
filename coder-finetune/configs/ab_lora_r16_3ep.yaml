@@ -1,0 +1,57 @@
+# LoRA Without Regret A/B — ARM A: low rank (r=16).
+#
+# Iso-everything baseline against ab_lora_r256.yaml: SAME base, data, tokens,
+# LR, schedule, batch — the ONLY difference is lora.r (16 vs 256) and the
+# rsLoRA scaling that the high-rank arm needs. This is the controlled test of
+# the paper's finding #2: high rank only helps once the dataset exceeds
+# low-rank capacity, so we train on a meaningfully large Python slice (8k rows)
+# where r=16 should start leaving quality on the table.
+#
+# Base: Qwen2.5-Coder-0.5B (cached) so both arms start identical and a single
+# 5060 Ti trains each arm in parallel (A on GPU0, B on GPU1).
+out_dir: out/ab_lora_r16_3ep
+seed: 1337
+
+model:
+  name: Qwen/Qwen2.5-Coder-0.5B
+  dtype: bfloat16
+  attn_impl: sdpa
+  trust_remote_code: false
+
+method: lora
+
+lora:
+  r: 16
+  alpha: 32              # alpha/r = 2.0 (standard LoRA scaling)
+  dropout: 0.05
+  bias: none
+  target_modules: ['q_proj', 'k_proj', 'v_proj', 'o_proj',
+                   'gate_proj', 'up_proj', 'down_proj']   # all-linear (both arms)
+  use_rslora: false      # standard alpha/r scaling at low rank
+
+dataset:
+  source: hf
+  hf_name: ise-uiuc/Magicoder-OSS-Instruct-75K
+  lang_filter: python
+  max_examples: 8000      # large enough to stress low-rank capacity
+  format: chatml
+
+train:
+  max_seq_len: 1024
+  batch_size: 1
+  grad_accum: 16          # effective batch = 16 (< 32, per finding #4)
+  epochs: 3
+  lr: 2.0e-4              # SAME LR both arms (rank-independent, finding #3)
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  grad_clip: 1.0
+  log_every: 10
+  save_every: 200
+  packing: true
+  gradient_checkpointing: false
+  use_liger_kernel: false   # keep the stack minimal/identical across arms
+
+eval:
+  enable: false
+  n_problems: 50
+  n_samples_per_problem: 1

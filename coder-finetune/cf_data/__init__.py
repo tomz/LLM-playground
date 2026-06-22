@@ -63,11 +63,17 @@ def load_builtin(repeat: int = 50):
     return Dataset.from_list(rows)
 
 
-def load_hf(name: str, max_examples: int | None = None, lang_filter: str | None = None):
+def load_hf(name: str, max_examples: int | None = None, lang_filter: str | None = None,
+            shuffle: bool = False, seed: int = 1337):
     from datasets import load_dataset
     ds = load_dataset(name, split="train")
     if lang_filter and "lang" in ds.column_names:
         ds = ds.filter(lambda ex: ex["lang"] == lang_filter)
+    # Shuffle BEFORE the max_examples truncation so a capped subset is a
+    # representative sample of the whole set rather than its first N rows (many
+    # HF datasets are grouped by source/language, so the head is unrepresentative).
+    if shuffle:
+        ds = ds.shuffle(seed=seed)
     if max_examples:
         ds = ds.select(range(min(max_examples, len(ds))))
     return _normalize(ds, name)
@@ -107,7 +113,8 @@ def load(cfg: dict):
     if src == "builtin":
         return load_builtin()
     if src == "hf":
-        return load_hf(cfg["hf_name"], cfg.get("max_examples"), cfg.get("lang_filter"))
+        return load_hf(cfg["hf_name"], cfg.get("max_examples"), cfg.get("lang_filter"),
+                       shuffle=cfg.get("shuffle", False), seed=cfg.get("shuffle_seed", 1337))
     if src == "jsonl":
         return load_jsonl(cfg["jsonl_path"], cfg.get("max_examples"))
     raise ValueError(f"unknown dataset source: {src}")

@@ -1,0 +1,52 @@
+# LoRA Without Regret — SEPARATION run, ARM B: high rank (r=256).
+#
+# Identical to ab_lora_r16_sep.yaml except lora.r (256) + use_rslora (on). The
+# capacity-exceeding 30k multi-language mixture is where the paper predicts the
+# bigger adapter pulls AHEAD of r=16 (vs the tie on the 8k single-language set).
+out_dir: out/ab_lora_r256_sep
+seed: 1337
+
+model:
+  name: Qwen/Qwen2.5-Coder-0.5B
+  dtype: bfloat16
+  attn_impl: sdpa
+  trust_remote_code: false
+
+method: lora
+
+lora:
+  r: 256
+  alpha: 256             # rsLoRA: effective scale = alpha/sqrt(r)
+  dropout: 0.05
+  bias: none
+  target_modules: ['q_proj', 'k_proj', 'v_proj', 'o_proj',
+                   'gate_proj', 'up_proj', 'down_proj']
+  use_rslora: true
+
+dataset:
+  source: hf
+  hf_name: ise-uiuc/Magicoder-OSS-Instruct-75K
+  shuffle: true
+  shuffle_seed: 1337
+  max_examples: 30000
+  format: chatml
+
+train:
+  max_seq_len: 1024
+  batch_size: 1
+  grad_accum: 16
+  epochs: 2
+  lr: 2.0e-4
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  grad_clip: 1.0
+  log_every: 20
+  save_every: 500
+  packing: true
+  gradient_checkpointing: false
+  use_liger_kernel: false
+
+eval:
+  enable: false
+  n_problems: 50
+  n_samples_per_problem: 1
