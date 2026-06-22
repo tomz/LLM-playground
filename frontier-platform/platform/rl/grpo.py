@@ -54,6 +54,21 @@ class GRPOConfig:
     clip_eps_low: float = 0.2         # PPO lower clip (1 - eps_low)
     clip_eps_high: float = 0.2        # PPO upper clip (1 + eps_high); DAPO raises this
     clip_ratio_c: float = 0.0         # outer "dual-clip" bound (0 disables); see grpo_step
+    # --- importance-sampling granularity: GRPO (token) vs GSPO (sequence) ---
+    importance_sampling_level: str = "token"  # "token" = GRPO's per-token ratio
+                                      # (default, unchanged). "sequence" = GSPO
+                                      # (Zheng et al., Qwen): one *length-normalized*
+                                      # importance ratio per sequence, broadcast to
+                                      # its tokens. GSPO is the de-facto MoE-RL recipe
+                                      # (behind Qwen3) — the sequence-level ratio is
+                                      # far less noisy than the token-level one when
+                                      # routing makes per-token ratios jump, which is
+                                      # exactly where token-level GRPO destabilises.
+                                      # NOTE: sequence ratios live on a *different
+                                      # numeric scale*, so they need a ~2-orders-of-
+                                      # magnitude TIGHTER clip than GRPO (e.g.
+                                      # clip_eps ~3e-3 vs 0.2). Set the clips
+                                      # accordingly when switching to "sequence".
     ppo_epochs: int = 1               # inner optimization passes per rollout batch
     max_new_tokens: int = 16
     seq_len: int = 256
@@ -142,6 +157,31 @@ def _shift(ids: torch.Tensor, mask: torch.Tensor):
     return ids[:, :-1], ids[:, 1:], mask[:, 1:]
 
 
+def _sequence_importance_ratio(
+    logp: torch.Tensor, base: torch.Tensor, mask: torch.Tensor
+) -> torch.Tensor:
+    """GSPO sequence-level importance ratio (Zheng et al., Qwen — "Group Sequence
+    Policy Optimization").
+
+    GRPO forms the ratio ``exp(logp_t - base_t)`` **per token**; GSPO forms a
+    single ratio **per sequence**, using the *length-normalized* sum of per-token
+    log-prob differences:
+
+        s_i = exp( (1/|y_i|) * sum_t mask * (logp_t - base_t) )
+
+    and broadcasts ``s_i`` back over the sequence's tokens. The length
+    normalization keeps the ratio on a stable, sequence-length-invariant scale;
+    the result is a far lower-variance importance weight than the token-level
+    ratio when per-token ratios are noisy (e.g. MoE routing makes them jump),
+    which is the exact regime where token-level GRPO becomes unstable. Returns a
+    ``[N, T-1]`` tensor (the per-sequence ratio broadcast over tokens) so it drops
+    into the existing surrogate unchanged.
+    """
+    tok_per_seq = mask.sum(dim=1).clamp_min(1.0)                 # [N]
+    seq_logratio = ((logp - base) * mask).sum(dim=1) / tok_per_seq  # [N]
+    return torch.exp(seq_logratio).unsqueeze(1)                  # [N, 1] -> broadcast
+
+
 def _dual_clip_surrogate(surrogate: torch.Tensor, adv_tok: torch.Tensor,
                          clip_ratio_c: float) -> torch.Tensor:
     """DAPO / dual-clip-PPO outer clip.
@@ -216,7 +256,17 @@ def grpo_step(
             ref_logp = compute_token_logps(ref, x, y)           # [N, T-1]
 
         base = old_logp if old_logp is not None else logp.detach()
-        ratio = torch.exp(logp - base)                          # [N, T-1]
+        if cfg.importance_sampling_level == "sequence":
+            # GSPO: one length-normalized importance ratio per sequence, broadcast
+            # over its tokens (vs GRPO's independent per-token ratio).
+            ratio = _sequence_importance_ratio(logp, base, m)   # [N, 1]
+        elif cfg.importance_sampling_level == "token":
+            ratio = torch.exp(logp - base)                      # [N, T-1]
+        else:
+            raise ValueError(
+                f"unknown importance_sampling_level={cfg.importance_sampling_level!r}; "
+                "want 'token' (GRPO) or 'sequence' (GSPO)"
+            )
         unclipped = ratio * adv_tok
         clipped = torch.clamp(ratio, 1.0 - cfg.clip_eps_low, 1.0 + cfg.clip_eps_high) * adv_tok
         surrogate = torch.minimum(unclipped, clipped)           # [N, T-1]

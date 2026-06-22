@@ -401,6 +401,95 @@ class ConstraintFollowingVerifier:
         return self.reward * sum(res) / len(res)
 
 
+# ---------- RLPR: verifier-free probability reward ----------
+
+class ProbabilityRewardVerifier:
+    """RLVR **without a verifier** — the reward *is* the policy's own probability
+    of the reference answer (RLPR; Yu et al., OpenBMB, arXiv 2506.18254).
+
+    RLVR's reach is gated by "is there an executable checker?" — it needs a
+    rule-based verifier (math equality, unit tests, a constraint regex). RLPR
+    removes that gate: it scores a reasoning trace by how probable it makes the
+    **known reference answer**, under the policy itself, conditioned on the
+    prompt *plus the generated reasoning*:
+
+        reward(prompt, response) = mean_t  P_policy( a_t | prompt, response, a_<t )
+
+    i.e. the **mean decoding probability** of the reference answer tokens. A
+    reasoning trace that actually leads to the answer makes those tokens likely;
+    a wrong or empty one doesn't. Because it's just a forward pass over the
+    reference, it works in **general domains** (chat, open-ended QA) where no
+    executable checker exists — the concrete, buildable instance of the
+    "process / explanation-scoring rewards" Tier-3 bet.
+
+    Design notes:
+      * **Mean of per-token probabilities** (arithmetic), not the sequence
+        product — RLPR found the mean far more stable than the length-sensitive
+        product (which collapses toward 0 for any multi-token answer).
+      * The prompt argument carries the question; ``references[prompt]`` is the
+        answer key. Unknown prompts score 0.0 (no reference to score against).
+      * Lazy torch import (like :class:`CodeUnitTestVerifier`) keeps this module
+        import-light; the forward runs under ``no_grad`` — it's a reward, not a
+        loss term, so no gradient flows through the reward itself.
+      * Drop-in ``Verifier``: ``(prompt, response) -> float`` in ``[0, reward]``,
+        so it composes with ``CompositeReward`` and feeds ``grpo_step`` unchanged.
+    """
+
+    def __init__(self, model, tokenizer, references: dict[str, str], *,
+                 reward: float = 1.0, include_response_context: bool = True):
+        self.model = model
+        self.tokenizer = tokenizer
+        self.references = references
+        self.reward = reward
+        # If True, the reference answer is scored conditioned on prompt+response
+        # (the trace's reasoning is part of the context — the RLPR signal). If
+        # False, it's scored on the prompt alone (an ablation: pure answer
+        # likelihood, ignoring the reasoning).
+        self.include_response_context = include_response_context
+
+    def mean_answer_probability(self, prompt: str, response: str) -> float:
+        """Mean decoding probability of ``references[prompt]`` under the policy.
+
+        Returns 0.0 if there's no reference for this prompt or the reference is
+        empty. The raw signal behind the reward (exposed for logging/tests)."""
+        import torch
+
+        from ..alignment._common import compute_token_logps
+
+        ref = self.references.get(prompt)
+        if not ref:
+            return 0.0
+        context = (prompt + response) if self.include_response_context else prompt
+        prefix_ids = self.tokenizer.encode(context)
+        answer_ids = self.tokenizer.encode(ref)
+        if not answer_ids:
+            return 0.0
+        # Score the answer tokens as a continuation of the prefix. We need the
+        # next-token distribution *at* each answer position, so the model sees
+        # prefix + answer[:-1] and predicts answer.
+        full = prefix_ids + answer_ids
+        if len(full) < 2:
+            return 0.0
+        was_training = self.model.training
+        self.model.eval()
+        try:
+            with torch.no_grad():
+                ids = torch.tensor([full], dtype=torch.long,
+                                   device=next(self.model.parameters()).device)
+                inp, tgt = ids[:, :-1], ids[:, 1:]
+                logp = compute_token_logps(self.model, inp, tgt)[0]   # [T-1]
+            # The last len(answer_ids) target positions are the answer tokens.
+            ans_logp = logp[-len(answer_ids):]
+            mean_prob = float(ans_logp.exp().mean())
+        finally:
+            if was_training:
+                self.model.train()
+        return mean_prob
+
+    def __call__(self, prompt: str, response: str) -> float:
+        return self.reward * self.mean_answer_probability(prompt, response)
+
+
 # ---------- sandboxed code (subprocess + rlimits) ----------
 
 class CodeUnitTestVerifier:
@@ -462,7 +551,7 @@ def make_verifier(kind: str, **kwargs) -> Verifier:
     """Factory for the built-in verifiers.
 
     kind ∈ {'contains', 'regex', 'math_exact', 'length_penalty', 'code_tests',
-    'constraints'}.
+    'constraints', 'probability'}.
     """
     if kind == "contains":
         return reward_contains(**kwargs)
@@ -476,4 +565,8 @@ def make_verifier(kind: str, **kwargs) -> Verifier:
         return CodeUnitTestVerifier(**kwargs)
     if kind == "constraints":
         return ConstraintFollowingVerifier(**kwargs)
+    if kind == "probability":
+        # RLPR: verifier-free reward = policy's mean decoding probability of the
+        # reference answer. Needs model + tokenizer + references in kwargs.
+        return ProbabilityRewardVerifier(**kwargs)
     raise ValueError(f"unknown verifier kind: {kind}")

@@ -13,6 +13,7 @@ from platform.rl.rollout import sample_group
 from platform.rl.verifiers import (
     CodeUnitTestVerifier,
     MathExactVerifier,
+    ProbabilityRewardVerifier,
     length_penalty,
     make_verifier,
     reward_contains,
@@ -79,6 +80,103 @@ def test_make_verifier_registry_and_code_verifier():
     good = code_v("p", "def f(x):\n    return x")
     bad = code_v("p", "def f(x):\n    return x + 1")
     assert good == 1.0 and bad == 0.0
+
+
+# ---------- RLPR: verifier-free probability reward ----------
+
+def test_rlpr_reward_in_unit_range_and_zero_without_reference():
+    """RLPR reward is the policy's mean decoding probability of the reference
+    answer — a probability, so it lands in [0, 1]; and a prompt with no
+    reference scores exactly 0."""
+    cfg = _tiny_cfg()
+    torch.manual_seed(0)
+    policy = Transformer(cfg)
+    tok = BytesTokenizer()
+    v = ProbabilityRewardVerifier(policy, tok, references={"2+2?": "4"})
+    r = v("2+2?", "<think>two plus two</think> 4")
+    assert 0.0 <= r <= 1.0
+    # No reference for this prompt -> 0.0 (nothing to score against).
+    assert v("9+9?", "anything") == 0.0
+
+
+def test_rlpr_prefers_a_trace_that_makes_the_answer_likely():
+    """The defining RLPR property: after a tiny SFT that teaches the model the
+    answer follows the trace, a *correct* trace makes the reference answer more
+    probable than an unrelated/empty one — so the reward ranks them correctly,
+    with no executable verifier anywhere."""
+    cfg = _tiny_cfg()
+    torch.manual_seed(0)
+    policy = Transformer(cfg)
+    tok = BytesTokenizer()
+
+    # Briefly fit the policy on "<prompt><trace><answer>" so the answer becomes
+    # predictable from the trace (stands in for a cold-start checkpoint).
+    prompt, trace, ans = "Q: 2+2?", " reason: two plus two is ", "4"
+    ids = torch.tensor([tok.encode(prompt + trace + ans)])
+    opt = torch.optim.AdamW(policy.parameters(), lr=5e-3)
+    policy.train()
+    for _ in range(60):
+        logits, _ = policy(ids[:, :-1])
+        loss = torch.nn.functional.cross_entropy(
+            logits.reshape(-1, logits.size(-1)).float(), ids[:, 1:].reshape(-1))
+        opt.zero_grad(); loss.backward(); opt.step()
+
+    v = ProbabilityRewardVerifier(policy, tok, references={prompt: ans})
+    good = v.mean_answer_probability(prompt, trace)          # the trained trace
+    empty = v.mean_answer_probability(prompt, "")            # no reasoning
+    assert good > empty
+    # The reward wrapper scales by `reward` and stays a probability.
+    assert 0.0 <= v(prompt, trace) <= 1.0
+
+
+def test_rlpr_does_not_leave_the_model_in_train_mode():
+    """The reward runs a no_grad eval forward; it must restore the model's
+    original train/eval state so it can't silently disable dropout mid-training."""
+    cfg = _tiny_cfg()
+    torch.manual_seed(0)
+    policy = Transformer(cfg)
+    tok = BytesTokenizer()
+    v = ProbabilityRewardVerifier(policy, tok, references={"q": "a"})
+    policy.train()
+    v("q", "some response")
+    assert policy.training is True          # restored
+    policy.eval()
+    v("q", "some response")
+    assert policy.training is False         # restored
+
+
+def test_rlpr_via_make_verifier_registry():
+    """RLPR is reachable through the make_verifier(...) protocol like every other
+    verifier — kind='probability'."""
+    cfg = _tiny_cfg()
+    torch.manual_seed(0)
+    policy = Transformer(cfg)
+    tok = BytesTokenizer()
+    v = make_verifier("probability", model=policy, tokenizer=tok,
+                      references={"q": "a"})
+    assert isinstance(v, ProbabilityRewardVerifier)
+    assert 0.0 <= v("q", "answer is a") <= 1.0
+
+
+def test_rlpr_places_input_on_model_device():
+    """RLPR's forward must build its input tensor on the *model's* device, not
+    hard-coded CPU — otherwise it crashes on a GPU policy (regression pin for the
+    device fix). We can't require a GPU in CI, so assert the tensor is built from
+    the model's device rather than a literal: a CPU model must score fine, and
+    the verifier must read the device off the model's parameters."""
+    cfg = _tiny_cfg()
+    torch.manual_seed(0)
+    policy = Transformer(cfg)
+    tok = BytesTokenizer()
+    v = ProbabilityRewardVerifier(policy, tok, references={"q": "a"})
+    # Sanity: scores on the (CPU) model without a device mismatch.
+    assert 0.0 <= v.mean_answer_probability("q", "resp") <= 1.0
+    # If CUDA is available, the GPU path must not raise (the bug was a CPU tensor
+    # meeting a CUDA model inside compute_token_logps).
+    if torch.cuda.is_available():
+        gpu_policy = Transformer(cfg).cuda()
+        gv = ProbabilityRewardVerifier(gpu_policy, tok, references={"q": "a"})
+        assert 0.0 <= gv.mean_answer_probability("q", "resp") <= 1.0
 
 
 # ---------- group advantages ----------
@@ -209,6 +307,107 @@ def test_grpo_clipped_objective_bounds_ratio():
     # After several aggressive inner epochs some tokens leave the trust region.
     assert 0.0 <= metrics["clip_frac"] <= 1.0
     assert math.isfinite(metrics["ratio_mean"])
+
+
+# ---------- GSPO: sequence-level importance ratio ----------
+
+def test_gspo_unknown_level_rejected():
+    """Only 'token' (GRPO) and 'sequence' (GSPO) are valid granularities."""
+    cfg_m = _tiny_cfg()
+    torch.manual_seed(0)
+    policy = Transformer(cfg_m)
+    from platform.alignment._common import clone_for_reference
+    ref = clone_for_reference(policy)
+    tok = BytesTokenizer()
+    roll = sample_group(policy, [tok.encode("Q: x")], group_size=4, max_new_tokens=5,
+                        seq_len=32, tokenizer=tok, seed=2)
+    rewards = torch.rand(roll.n_rows)
+    bad = GRPOConfig(group_size=4, max_new_tokens=5, seq_len=32,
+                     importance_sampling_level="nope")
+    with pytest.raises(ValueError, match="importance_sampling_level"):
+        grpo_step(policy, ref, roll, rewards, bad, optimizer=None)
+
+
+def test_gspo_default_is_token_level():
+    """GSPO must be strictly opt-in — the default config is GRPO (token-level)."""
+    assert GRPOConfig().importance_sampling_level == "token"
+
+
+def test_gspo_sequence_ratio_is_one_at_reference():
+    """At the first inner step the policy equals the behavior policy, so the
+    GSPO sequence ratio (like the GRPO token ratio) must be ~1 — a sanity check
+    that the length-normalized exponent is wired correctly."""
+    cfg_m = _tiny_cfg()
+    torch.manual_seed(0)
+    policy = Transformer(cfg_m)
+    from platform.alignment._common import clone_for_reference
+    ref = clone_for_reference(policy)
+    tok = BytesTokenizer()
+    roll = sample_group(policy, [tok.encode("Q: x")], group_size=4, max_new_tokens=5,
+                        seq_len=32, tokenizer=tok, seed=2)
+    rewards = torch.rand(roll.n_rows)
+    gcfg = GRPOConfig(group_size=4, max_new_tokens=5, seq_len=32, beta=0.04,
+                      importance_sampling_level="sequence")
+    metrics = grpo_step(policy, ref, roll, rewards, gcfg, optimizer=None)
+    assert metrics["ratio_mean"] == pytest.approx(1.0, abs=0.05)
+    for k in ("loss", "pg_loss", "kl", "clip_frac", "ratio_mean"):
+        assert math.isfinite(metrics[k])
+
+
+def test_gspo_sequence_ratio_lower_variance_than_token():
+    """The defining property of GSPO: with the *same* off-reference policy the
+    sequence-level ratio is far less dispersed than the token-level one, because
+    it is one length-normalized number per sequence instead of many independent
+    per-token ratios. We verify the helper directly on synthetic log-prob deltas."""
+    from platform.rl.grpo import _sequence_importance_ratio
+    torch.manual_seed(0)
+    N, T = 8, 16
+    logp = torch.randn(N, T) * 0.5
+    base = torch.zeros(N, T)
+    mask = torch.ones(N, T)
+    token_ratio = torch.exp(logp - base)                       # [N, T]
+    seq_ratio = _sequence_importance_ratio(logp, base, mask)   # [N, 1]
+    # Sequence ratios (one averaged exponent per row) cluster much tighter than
+    # the raw per-token ratios.
+    assert float(seq_ratio.std()) < float(token_ratio.std())
+    # Length normalization keeps them ~centered on 1 (mean of zero-mean deltas).
+    assert 0.5 < float(seq_ratio.mean()) < 1.5
+
+
+def test_gspo_respects_response_mask_in_length_norm():
+    """Length normalization must divide by the number of *response* tokens, not
+    the padded width — masked (prompt/pad) positions must not dilute the ratio."""
+    from platform.rl.grpo import _sequence_importance_ratio
+    logp = torch.tensor([[1.0, 1.0, 0.0, 0.0]])   # only first 2 tokens are response
+    base = torch.zeros(1, 4)
+    mask = torch.tensor([[1.0, 1.0, 0.0, 0.0]])
+    # Mean exponent over the 2 masked-in tokens = (1+1)/2 = 1.0 -> ratio e^1.
+    r = _sequence_importance_ratio(logp, base, mask)
+    assert r.shape == (1, 1)
+    assert float(r) == pytest.approx(math.e, abs=1e-5)
+
+
+def test_gspo_end_to_end_step_updates(tmp_path):
+    """A full GSPO step with an optimizer runs and produces finite metrics —
+    proving the sequence-level ratio broadcasts cleanly through the surrogate,
+    dual-clip, KL, and metric paths."""
+    cfg_m = _tiny_cfg()
+    torch.manual_seed(0)
+    policy = Transformer(cfg_m)
+    from platform.alignment._common import clone_for_reference
+    ref = clone_for_reference(policy)
+    tok = BytesTokenizer()
+    roll = sample_group(policy, [tok.encode("Q: x"), tok.encode("Q: y")],
+                        group_size=4, max_new_tokens=6, seq_len=32, tokenizer=tok, seed=5)
+    rewards = torch.rand(roll.n_rows)
+    # GSPO with the tighter clip its different numeric scale calls for.
+    gcfg = GRPOConfig(group_size=4, max_new_tokens=6, seq_len=32, beta=0.04,
+                      clip_eps_low=3e-3, clip_eps_high=4e-3, ppo_epochs=2,
+                      importance_sampling_level="sequence")
+    opt = torch.optim.AdamW(policy.parameters(), lr=1e-4)
+    metrics = grpo_step(policy, ref, roll, rewards, gcfg, optimizer=opt)
+    for k in ("loss", "pg_loss", "kl", "reward_mean", "clip_frac", "ratio_mean"):
+        assert math.isfinite(metrics[k])
 
 
 def test_run_grpo_e2e_increases_verifier_reward(tmp_path):

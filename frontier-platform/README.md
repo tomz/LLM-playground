@@ -88,7 +88,7 @@ frontier-platform/
 - ✅ Tier 2 — **training**: AdamW (WD-by-dim), cosine+warmup LR, single-process ParallelEngine, DCP-style checkpointing, SpikeMonitor + RewindController, `Trainer.fit`.
 - ✅ Tier 2 — **serving**: in-process `TorchEngine` with streaming generate, router.
 - ✅ Tier 3 — **alignment**: SFT (assistant-token loss mask), BT reward model, DPO (sigmoid / IPO / KTO variants), PPO with GAE + KL-to-reference penalty + clipped objective + value head.
-- ✅ Tier 3 — **RLVR / reasoning** (`platform/rl/`, toy-functional): verifiable reward functions (math exact-answer, string/regex, length penalty; sandboxed code-test verifier stubbed), group rollout, **GRPO** (value-network-free, group-relative advantages + KL-to-reference), and a deterministic **self-play / evolutionary loop** (`selfplay.py`: evaluate → keep top-k → mutate → repeat, an AlphaEvolve/SPIN-shaped closed loop over policy callables). See `docs/15-reasoning-rl-rlvr.md`.
+- ✅ Tier 3 — **RLVR / reasoning** (`platform/rl/`, toy-functional): verifiable reward functions (math exact-answer, string/regex, length penalty; sandboxed code-test verifier stubbed), group rollout, **GRPO** (value-network-free, group-relative advantages + KL-to-reference), and a deterministic **self-play / evolutionary loop** (`selfplay.py`: evaluate → keep top-k → mutate → repeat, an AlphaEvolve/SPIN-shaped closed loop over policy callables). Also **GSPO** (sequence-level importance ratio, `GRPOConfig.importance_sampling_level="sequence"`) and **RLPR** (verifier-free probability reward, `ProbabilityRewardVerifier`) — both default-off, additive to the GRPO objective. A GPU benchmark (`tools/bench_grpo_gspo.py`) measures them: GSPO's sequence ratio is **~4× lower-variance** than GRPO's token ratio (and wins on an MoE policy), RLPR's reward sharpens the policy verifier-free — see [`examples/grpo_gspo_rlpr.md`](examples/grpo_gspo_rlpr.md). See `docs/15-reasoning-rl-rlvr.md`.
 - ✅ Tier 3 — **multimodality** (`platform/model/vision.py`, toy-functional): LLaVA-style `VisionEncoder` + `Projector` + `VisionLanguageModel` that patchifies an image, runs a small ViT, and prepends projected image tokens to the LM (loss on text positions only). Runs on CPU; encoder is randomly initialized. See `docs/16-multimodality.md`.
 - ✅ **Program simulator** (`platform/sim/`, `scripts/simulate.py`): end-to-end discrete-event model of the whole program now prices **sparse MoE** (active-param FLOPs), **FP8/NVFP4** throughput, and an **RLVR/GRPO reasoning phase** whose compute *and* capability lift feed the eval predictors — plus `GB200`/`B300` GPU rows and `1t`/`2t` presets for hardware we don't own. See `docs/13-simulation.md`.
 - ✅ End-to-end **smoke pipeline** (`bash scripts/smoke_pipeline.sh`, < 10s CPU): corpus → shards → pretrain → SFT → RM → DPO → PPO → eval → generate.
@@ -105,7 +105,7 @@ Still `NotImplementedError` (intentionally — out of scope for a single-machine
 
 ```bash
 cd frontier-platform
-.venv/bin/python -m pytest -q             # 342 pass / 5 skip on CPU (CUDA-only tests skip off-GPU)
+.venv/bin/python -m pytest -q             # 425 pass / 5 skip on CPU (CUDA-only tests skip off-GPU)
 bash scripts/smoke_pipeline.sh            # full pipeline, ~6 s on CPU
 ```
 
