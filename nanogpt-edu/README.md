@@ -199,6 +199,32 @@ exactly the train→serve loop the SOTA watch flags. Runs anywhere (with no
 > On 1 MB of TinyShakespeare the **data** is the bottleneck, not the optimizer,
 > so the gap is modest. To see Muon shine, scale the tokens (next section).
 
+### DeepConf — test-time confidence filtering (verifiable-task benchmark)
+
+The MTP bench is a *train→serve* harvest; DeepConf
+([Fu et al., 2025](https://arxiv.org/abs/2508.15260)) is its *eval-time* sibling
+— it uses the model's **own token-confidence** (per-token logprob over a sliding
+window) to drop low-confidence reasoning traces, either offline (a
+confidence-weighted / -filtered vote over *k* traces) or online (early-abort a
+doomed trace). No training change; `tools/bench_deepconf.py` measures it on a
+**verifiable** char-level addition model (every answer checked against `a+b`):
+
+```bash
+python prepare_addition.py --digits 3 --train 40000 --val 2000
+python train.py --config configs/tiny_add3.py                  # ~87% single-sample acc
+python tools/bench_deepconf.py --ckpt out/tiny_add3/ckpt_best.pt --task add \
+    --problems 500 --traces 16 --tokens 6 --window 3 --online --floor-percentile 25
+python tools/plot_deepconf.py --ckpt out/tiny_add3/ckpt_best.pt # -> examples/deepconf_addition.png
+```
+
+The honest result at 10M scale: **confidence robustly tracks correctness**
+(correct traces +0.68–0.90 nats more confident than wrong), and **online
+early-abort trades tokens for accuracy on a clean curve** (~10% fewer tokens at
+−0.8% accuracy). The offline *vote* lift **ties** majority — DeepConf's headline
+needs large-k (256–512) on long reasoning traces, a sizing fact like FP8/FA-3.
+Full writeup + charts: [`examples/deepconf_addition.md`](examples/deepconf_addition.md).
+The pure confidence helpers are unit-tested in `tests/test_deepconf.py`.
+
 ## Scaling the data — FineWeb-Edu (fixes the overfit story)
 
 The README results above show every non-trivial model overfitting 1 MB of
