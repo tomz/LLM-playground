@@ -41,3 +41,6 @@ out/sim/7b_realgpu/*
 
 # Test-generated sim artifacts
 out/sim/_test/
+
+# Transient run/console logs (canonical metrics live under out/<run>/)
+logs/

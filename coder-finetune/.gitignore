@@ -3,3 +3,6 @@ __pycache__/
 .venv/
 out/
 hf_cache/
+
+# Transient run/console logs (canonical metrics live under out/<run>/)
+logs/
