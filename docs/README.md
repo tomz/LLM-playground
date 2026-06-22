@@ -13,6 +13,7 @@ diff month-over-month and so new findings slot into a predictable place.
 
 | Edition | Theme | Headline harvest |
 |---------|-------|------------------|
+| [2026-06](./2026-06-sota-llm-agi.md) | Stop harvesting, start measuring | Two controlled A/Bs on real hardware — llamafied beats GPT-2 by **16.8 % ppl** (iso-param/iso-token), and FSDP2-over-PCIe flipped from 0.69× to **1.28×** scaling; MAI-Thinking-1 "hill-climbing" harvest (10 components → frontier-platform); SimPO/KTO + DAPO + FlexAttention + self-play + distributed-Muon knobs; single-node DDP for coder-finetune. **Four planned harvests landed and measured:** LoRA Without Regret (r=16 vs r=256 — budget, not size, is the constraint), DeepConf (confidence tracks correctness; token-savings curve), GSPO (~4× lower-variance ratio, wins on MoE) + RLPR (verifier-free reward), plus the open-weight frontier wave (Kimi K2 Thinking, DeepSeek-V3.2, gpt-oss, Olmo 3, nanochat) |
 | [2026-05](./2026-05-sota-llm-agi.md) | Cheaper/faster training on commodity GPUs | Muon (now scale-proven: Moonlight/MuonClip/Megatron), Multi-Token Prediction, Liger Kernel, DoRA/rsLoRA/NEFTune, the GRPO-successor family (DAPO/Dr.GRPO/GSPO) + SimPO/KTO, agentic RL & self-play, NSA/DSA sparse attention, FineWeb-Edu/DCLM data scaling |
 
 ## Cadence & conventions

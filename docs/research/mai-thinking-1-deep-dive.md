@@ -190,7 +190,8 @@ Threads from this paper that map onto our projects:
   are all directly relevant to the RLVR and long-context gaps tracked in
   `frontier-platform/docs/17b-frontier-model-gap-research-v3.md`.
 - **Long-context extension** (Appendix B) — "mid-train short, extend at the end"
-  is a cheap, concrete recipe worth a standalone engineering note.
+  is a cheap, concrete recipe worth a standalone engineering note. **→ written:**
+  [`staged-long-context-extension.md`](./staged-long-context-extension.md).
 - **Reasoning-trace archetypes** (Appendix C) — could be distilled into a reusable
   eval rubric for measuring qualitative reasoning improvement.
 

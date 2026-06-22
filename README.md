@@ -15,7 +15,12 @@ its own tests. Pick the one that matches the scale you care about.
 covering LLM/AGI training, fine-tuning, and inference — ranked by ROI and
 filtered for what's actually harvestable into these projects on consumer
 hardware. Latest edition:
-[**2026-05**](./docs/2026-05-sota-llm-agi.md) (Muon, Multi-Token Prediction,
+[**2026-06**](./docs/2026-06-sota-llm-agi.md) — *stop harvesting, start
+measuring*: two controlled A/Bs on real hardware (llamafied beats GPT-2 by
+**16.8 % ppl**; FSDP2-over-PCIe flipped 0.69× → **1.28×**), the MAI-Thinking-1
+"hill-climbing" harvest, and four planned harvests landed **and measured**
+(LoRA Without Regret, DeepConf, GSPO + RLPR). Prior:
+[2026-05](./docs/2026-05-sota-llm-agi.md) (Muon, Multi-Token Prediction,
 Liger Kernel, DoRA/rsLoRA/NEFTune, FineWeb-Edu/DCLM data scaling).
 
 ## Results gallery
@@ -297,6 +302,35 @@ Plotter: [`scripts/plot_training.py`](coder-finetune/scripts/plot_training.py)
 (single-run) and
 [`scripts/plot_compare_recipes.py`](coder-finetune/scripts/plot_compare_recipes.py)
 (cross-recipe) — both reusable for any TRL `trainer_state.json`.
+
+### SOTA-harvest measurements — the 2026-06 "measure the technique" runs
+
+The [June SOTA edition](./docs/2026-06-sota-llm-agi.md) turned four *planned*
+harvests into measured, charted runs on the 2× 5060 Ti. The throughline is
+honesty: none produced a flashy "we beat it" headline — each surfaced the
+*real* precondition or sizing fact, which is the more useful result.
+
+- **LoRA Without Regret — r=16 vs r=256** (`coder-finetune`,
+  [writeup](coder-finetune/examples/lora_without_regret_ab.md)). Three iso-rank
+  A/Bs: r=256 **ties** r=16 at convergence but **loses at every fixed epoch
+  budget** (the 16× adapter is slow to warm up), and a bigger 30k×9-language
+  mixture *didn't* flip it. **The binding constraint is training budget, not
+  dataset size.**
+  ![LoRA r=16 vs r=256](coder-finetune/examples/lora_without_regret_ab.png)
+
+- **DeepConf — test-time confidence filtering** (`nanogpt-edu`,
+  [writeup](nanogpt-edu/examples/deepconf_addition.md)). On a verifiable
+  char-level addition model: **confidence robustly tracks correctness**, and
+  online early-abort trades tokens for accuracy on a clean curve (~10 % fewer at
+  near-iso accuracy). The offline vote-lift is a large-k/long-trace *sizing fact*.
+  ![DeepConf tradeoff + confidence separation](nanogpt-edu/examples/deepconf_addition.png)
+
+- **GSPO vs GRPO + RLPR** (`frontier-platform`,
+  [writeup](frontier-platform/examples/grpo_gspo_rlpr.md)). GSPO's sequence-level
+  importance ratio is **~4× lower-variance** than GRPO's token ratio and **wins
+  on the MoE policy**; RLPR's verifier-free reward sharpens the policy
+  (answer-prob 0.44 → 0.70) — needing an SFT warm-start + KL anchor.
+  ![GRPO vs GSPO + RLPR](frontier-platform/examples/grpo_gspo_rlpr.png)
 
 ## The five projects
 
