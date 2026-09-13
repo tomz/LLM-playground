@@ -1,0 +1,22 @@
+{
+  "checkpoint": "gpt2_350m_llamafied_fweb_5060ti_2gpu/ckpt_best.pt",
+  "full": {
+    "gpu": 0,
+    "seq_len": 1024,
+    "repeats": 20,
+    "mean_ms": 27.810010799657903,
+    "tokens_per_s": 36821.273007653646,
+    "peak_vram_mb": 1483.13720703125
+  },
+  "compacted": {
+    "gpu": 1,
+    "seq_len": 256,
+    "repeats": 20,
+    "mean_ms": 11.97057869976561,
+    "tokens_per_s": 21385.76642121843,
+    "peak_vram_mb": 1480.13134765625
+  },
+  "token_reduction": 0.75,
+  "latency_reduction": 0.5695586461292255,
+  "methodology": "concurrent one-arm-per-GPU bf16 prefill; three warmups"
+}

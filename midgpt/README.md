@@ -256,6 +256,24 @@ A 200-iter smoke run on WikiText-103:
 > you hit the same hang, reduce `micro_batch`/`grad_accum` and/or
 > `block_size`, or set `grad_checkpoint: false`.
 
+## Retained state and context compaction
+
+`context.py` adds backend-independent agent transcript state, explicit private-
+reasoning retention, rolling truncation, deterministic semantic compaction, and
+required-fact fidelity scoring. Tests pin the key July invariant: under the same
+budget, rolling truncation loses old task facts while compaction preserves old
+decisions and pinned constraints.
+
+A real concurrent **2× RTX 5060 Ti** A/B on the 350M llamafied checkpoint reduced
+retained context 1,024→256 tokens and prefill latency **27.81→11.97 ms (−57.0%)**.
+Peak VRAM stayed ~1.48 GiB because weights dominate at batch 1. Script and raw
+results: [`tools/bench_context_compaction.py`](tools/bench_context_compaction.py)
+and [`examples/context_compaction_2gpu.md`](examples/context_compaction_2gpu.md).
+This measures systems cost; task-level agent quality remains a separate eval.
+`research_search.py` adds the complementary deterministic candidate-search
+benchmark: every failed branch contributes generation tokens and verifier time,
+so a winning candidate cannot hide total search cost.
+
 ## What's still omitted (see `distgpt/`)
 
 FSDP / tensor parallelism / pipeline parallelism / multi-node orchestration /
