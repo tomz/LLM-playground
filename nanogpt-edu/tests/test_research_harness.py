@@ -17,6 +17,8 @@ sys.path.insert(0, str(RESEARCH))
 import harness  # noqa: E402
 import plot as plotmod  # noqa: E402
 import loop as loopmod  # noqa: E402
+import provenance  # noqa: E402
+import context_ab  # noqa: E402
 
 
 # ---- gates ---------------------------------------------------------------
@@ -65,6 +67,71 @@ def test_candidate_description_parses_without_torch():
     # loop reads it via AST, so this must work on CPU with no torch import.
     desc = loopmod.candidate_description()
     assert isinstance(desc, str) and len(desc) > 0
+
+
+def test_attempt_provenance_roundtrip_and_total_cost(tmp_path):
+    path = tmp_path / "attempts.jsonl"
+    first = provenance.AttemptRecord(
+        experiment=1,
+        candidate_sha256="a" * 64,
+        git_revision="abc123",
+        description="baseline",
+        seed=7,
+        budget_kind="tokens",
+        budget_value=1000,
+        status="keep",
+        gate_ok=True,
+        gate_reason="ok",
+        tokens=1000,
+        wall_s=2.5,
+        verifier_cost_s=0.1,
+    )
+    second = provenance.AttemptRecord(
+        experiment=2,
+        candidate_sha256="b" * 64,
+        git_revision="abc123",
+        description="failed branch",
+        seed=8,
+        budget_kind="minutes",
+        budget_value=1.0,
+        status="crash",
+        gate_ok=False,
+        gate_reason="OOM",
+        wall_s=3.0,
+        human_interventions=["stopped runaway worker"],
+    )
+    provenance.append_attempt(path, first)
+    provenance.append_attempt(path, second)
+    rows = list(provenance.read_attempts(path))
+    assert rows == [first, second]
+    assert provenance.total_cost(rows) == {
+        "attempts": 2.0,
+        "tokens": 1000.0,
+        "wall_s": 5.5,
+        "verifier_cost_s": 0.1,
+    }
+
+
+def test_candidate_hash_changes_with_content(tmp_path):
+    candidate = tmp_path / "candidate.py"
+    candidate.write_text("x = 1\n")
+    before = provenance.sha256_file(candidate)
+    candidate.write_text("x = 2\n")
+    assert provenance.sha256_file(candidate) != before
+
+
+def test_minimal_context_ab_exposes_rolling_memory_loss():
+    messages = [
+        context_ab.Message("Never delete production data", pinned=True),
+        context_ab.Message("Codename ORCHID"),
+        context_ab.Message("tool output " * 20),
+        context_ab.Message("worker seven timed out"),
+    ]
+    result = context_ab.run_context_ab(
+        messages, ["Never delete production data", "ORCHID"], char_budget=100,
+    )
+    assert result.compacted_fidelity > result.rolling_fidelity
+    assert result.rolling_chars <= 100 and result.compacted_chars <= 100
 
 
 # ---- Pareto frontier -----------------------------------------------------

@@ -105,3 +105,14 @@ tradeoff the Pareto panel exists to show. See `ledger.tsv` and `progress.png`.
 
 > All runs use bf16 on a 5060 Ti (sm_120). The mechanism is the point; absolute
 > numbers scale with budget and hardware.
+
+## Full attempt provenance
+
+`loop.py` now appends every keep, discard, and crash to `attempts.jsonl` through
+`provenance.py`. The schema records candidate SHA-256, git revision, seed,
+budget kind/value, trained tokens, wall time, gate verdict, verifier cost, human
+interventions, and metadata. The historical `ledger.tsv` remains unchanged for
+plot compatibility; the JSONL sidecar is the audit/cost source of truth and
+includes failed branches in `total_cost()`. `context_ab.py` also provides the
+minimal equal-budget rolling-truncation versus compaction comparison; its CPU
+test demonstrates the expected old-fact loss under rolling truncation.

@@ -31,9 +31,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+from provenance import AttemptRecord, append_attempt, sha256_file
+
 HERE = Path(__file__).resolve().parent
 CANDIDATE = HERE / "candidate.py"
 LEDGER = HERE / "ledger.tsv"
+ATTEMPTS = HERE / "attempts.jsonl"
 FIELDS = ["experiment", "val_bpb", "tok_per_s", "vram_mb", "params_m",
           "tokens", "gen_gap", "status", "description"]
 
@@ -184,6 +187,8 @@ def loop(args) -> None:
         elif args.auto:
             print(f"\n=== baseline (no mutation) {i + 1}/{iters} ===")
         desc = candidate_description()
+        candidate_hash = sha256_file(CANDIDATE)
+        git_revision = _git("rev-parse", "HEAD")
         res = run_once(tokens=args.tokens, minutes=args.minutes,
                        seed=args.seed, keep_git=use_git)
         n += 1
@@ -208,6 +213,24 @@ def loop(args) -> None:
                                               "params_m", "tokens", "gen_gap")}}
         append_row(row)
         rows.append({**row, "status": status})
+        append_attempt(ATTEMPTS, AttemptRecord(
+            experiment=n,
+            candidate_sha256=candidate_hash,
+            git_revision=git_revision,
+            description=desc,
+            seed=args.seed,
+            budget_kind="minutes" if args.minutes is not None else "tokens",
+            budget_value=args.minutes if args.minutes is not None else args.tokens,
+            status=status,
+            gate_ok=bool(res.get("ok", False)),
+            gate_reason=str(res.get("reason", "")),
+            tokens=int(res.get("tokens", 0) or 0),
+            wall_s=float(res.get("wall_s", 0.0) or 0.0),
+            val_bpb=(float(res["val_bpb"])
+                     if res.get("val_bpb") not in (None, "") else None),
+            verifier_cost_s=float(res.get("verifier_cost_s", 0.0) or 0.0),
+            metadata={"auto": bool(args.auto), "iteration": i + 1},
+        ))
     refresh_plot()
     print(f"\n[loop] done — {len([r for r in rows if r['status']=='keep'])} kept of {len(rows)}; "
           f"best val_bpb {running_best(rows):.5f}; chart → progress.png")
