@@ -328,6 +328,19 @@ slice; effective batch scales with GPU count. This is *not* model sharding — s
   `device_count()==0` in the workers while `world_size==2`, it can only pass if
   the topology comes from `WORLD_SIZE` — the same fix 9.2 makes, now proven
   end-to-end through the real launcher instead of simulated env vars.
+### Evaluation integrity and structured proofs
+
+Two dependency-free evaluator modules implement the July–August harvest:
+
+- `eval/task_contract.py` flags overly strict tests, underspecified prompts,
+  low-coverage tests, and prompt/test contradictions with inspectable evidence.
+  Reports always require human adjudication; the tool never silently removes a
+  benchmark task.
+- `eval/structured_proof.py` validates theorem/certificate/citation JSON, checks
+  that the certificate targets the requested theorem, and delegates checking to
+  an injected external verifier. Formal validity and novelty review are separate
+  release conditions; a real Lean process belongs in the existing jail.
+
 - **9.5 — the capstone: a real two-GPU NCCL run** ([`examples/5060ti_2gpu_ddp.md`](examples/5060ti_2gpu_ddp.md)).
   9.4 proves the *wiring* on gloo/CPU with CUDA hidden; this escalates it to
   **two physical RTX 5060 Ti on real NCCL** (`2.29.7+cuda13.2`). A r=16 LoRA on
