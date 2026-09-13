@@ -13,3 +13,8 @@ graphify-out/
 **/.jaaicode/
 microsoft_paper.pdf
 *.pdf
+
+# Transient terminal/data-preparation logs (not experiment result artifacts)
+/tmux-client-*.log
+/tmux-server-*.log
+/midgpt/prepare.log
