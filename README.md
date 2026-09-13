@@ -19,12 +19,13 @@ important correctness risks and a prioritized consolidation plan, see the
 LLM/AGI models, papers, benchmarks, training, fine-tuning, and inference. A
 secondary harvest lens maps techniques onto all five projects, from minimal
 hardware to ideal-scale systems. Latest edition:
-[**2026-09 — draft, month to date through September 7**](./docs/2026-09-sota-llm-agi.md)
-— *more capable agents: cost, control, and evidence*. GPT-6 Astra, Claude
-Fable/Mythos 5.1, Gemini 3.8 Flash/Cyber, and Muse Spark 1.3 advance long-running
-work; the report separates vendor claims from verified implementation, examines
-monitorability and completed-task costs, and carries forward the five-project
-roadmap without claiming new benchmark runs. Prior editions:
+[**2026-09 — draft, month to date through September 13**](./docs/2026-09-sota-llm-agi.md)
+— *capable agents, cheaper state, and evidence about control*. The refresh adds
+DeepSeek-V4.1-Flash's released weights and cache architecture, independent
+Artificial Analysis results, Astra's September 9 safety revision, updated pricing
+and service notices, and Anthropic's retrospective misuse disclosure. It preserves
+the first-week launches and five-project roadmap while separating external
+evidence from local implementation and benchmark claims. Prior editions:
 [2026-08](./docs/2026-08-sota-llm-agi.md) (AI-generated mathematics and formal
 certificates), [2026-07](./docs/2026-07-sota-llm-agi.md) (persistent, auditable
 agents), [2026-06](./docs/2026-06-sota-llm-agi.md) (open-weight reasoning and
