@@ -9,19 +9,27 @@ a laptop CPU, up to an architecture-only blueprint for a frontier-scale
 Each subproject is **independent**: its own README, its own dependencies,
 its own tests. Pick the one that matches the scale you care about.
 
+For a code- and test-backed review of the full monorepo, including the most
+important correctness risks and a prioritized consolidation plan, see the
+[**June 2026 repository architecture assessment**](./docs/repository-assessment-2026-06.md).
+
 ## SOTA Watch — monthly LLM & AGI digest
 
-[`docs/`](./docs/README.md) publishes a **monthly** state-of-the-art digest
-covering LLM/AGI training, fine-tuning, and inference — ranked by ROI and
-filtered for what's actually harvestable into these projects on consumer
-hardware. Latest edition:
-[**2026-06**](./docs/2026-06-sota-llm-agi.md) — *stop harvesting, start
-measuring*: two controlled A/Bs on real hardware (llamafied beats GPT-2 by
-**16.8 % ppl**; FSDP2-over-PCIe flipped 0.69× → **1.28×**), the MAI-Thinking-1
-"hill-climbing" harvest, and four planned harvests landed **and measured**
-(LoRA Without Regret, DeepConf, GSPO + RLPR). Prior:
-[2026-05](./docs/2026-05-sota-llm-agi.md) (Muon, Multi-Token Prediction,
-Liger Kernel, DoRA/rsLoRA/NEFTune, FineWeb-Edu/DCLM data scaling).
+[`docs/`](./docs/README.md) publishes a **monthly, frontier-first** digest of
+LLM/AGI models, papers, benchmarks, training, fine-tuning, and inference. A
+secondary harvest lens maps techniques onto all five projects, from minimal
+hardware to ideal-scale systems. Latest edition:
+[**2026-09 — draft, month to date through September 7**](./docs/2026-09-sota-llm-agi.md)
+— *more capable agents: cost, control, and evidence*. GPT-6 Astra, Claude
+Fable/Mythos 5.1, Gemini 3.8 Flash/Cyber, and Muse Spark 1.3 advance long-running
+work; the report separates vendor claims from verified implementation, examines
+monitorability and completed-task costs, and carries forward the five-project
+roadmap without claiming new benchmark runs. Prior editions:
+[2026-08](./docs/2026-08-sota-llm-agi.md) (AI-generated mathematics and formal
+certificates), [2026-07](./docs/2026-07-sota-llm-agi.md) (persistent, auditable
+agents), [2026-06](./docs/2026-06-sota-llm-agi.md) (open-weight reasoning and
+on-hardware A/Bs), and [2026-05](./docs/2026-05-sota-llm-agi.md) (training-efficiency
+techniques).
 
 ## Results gallery
 

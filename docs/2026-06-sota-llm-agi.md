@@ -2,21 +2,26 @@
 
 **Editor:** LLM-playground maintainers  ·  **Published:** 2026-06  ·  **Status:** published
 
-> Second edition. Theme: **stop harvesting, start measuring.** May catalogued
-> the techniques; June *ran the experiments*. The through-line this month is
-> empirical validation — two controlled, reproducible A/Bs on a modest 2× RTX
-> 5060 Ti box that put real numbers on claims we had only been citing:
-> (1) the **Llama recipe** (RoPE + RMSNorm + SwiGLU + QK-norm) beats GPT-2 by
-> **16.8 % perplexity** at iso-param / iso-token, and (2) **FSDP2 over a
-> no-NVLink PCIe pair** can be flipped from *negative* (0.69×) to *positive*
-> (1.28×) scaling with two specific config/code changes. Alongside the runs:
-> a deep harvest of one new frontier paper — Microsoft AI's **MAI-Thinking-1**
-> "hill-climbing" reasoning report — landing ten reusable components into
-> `frontier-platform`, and the closing-out of May's roadmap (SimPO/KTO, DAPO
-> reward shaping, FlexAttention, self-play, distributed-Muon knobs). And a
-> forward scan of the frontier — LoRA Without Regret, DeepConf, RLPR / GSPO,
-> and an open-weight wave (Kimi K2 Thinking, DeepSeek-V3.2, Qwen3-Next,
-> gpt-oss, …) — sets the next round of harvests and recalibrates the roadmap.
+> Second edition. **The frontier this season** was defined by a wave of
+> **open-weight reasoning models** that narrowed the gap to the closed labs —
+> Moonshot's **Kimi K2 Thinking** (1 T-param MoE, *native INT4 via QAT*, 200–300
+> sequential tool calls), **DeepSeek-V3.2** (production sparse attention),
+> **Qwen3-Next** and **Nemotron Nano 2** (hybrid linear-attention + ultra-sparse
+> MoE), OpenAI's **gpt-oss** (MXFP4 from release), **Olmo 3** (a *fully* open
+> model-flow), and **nanochat** — alongside one candid from-scratch frontier
+> *reasoning* report, Microsoft AI's **MAI-Thinking-1** ("hill-climbing"), and a
+> cluster of sharp method papers (**LoRA Without Regret**, **DeepConf**, **RLPR**,
+> **GSPO**) plus a maturing **automated-AI-research** direction (AI-Scientist-class
+> self-improving loops). That is the subject of this edition.
+>
+> **Our angle, second:** where a frontier development was small enough to
+> *measure honestly* on a 2× RTX 5060 Ti box, we ran it — turning citations into
+> numbers. Two controlled A/Bs anchor the month: the **Llama recipe** (RoPE +
+> RMSNorm + SwiGLU + QK-norm) beat GPT-2 by **16.8 % perplexity** at iso-param /
+> iso-token, and **FSDP2 over a no-NVLink PCIe pair** was flipped from *negative*
+> (0.69×) to *positive* (1.28×) scaling. MAI-Thinking-1 yielded ten reusable
+> components; the method papers landed behind in-repo tests. These runs are
+> *evidence*, not the headline — the headline is the frontier above.
 >
 > **Framing (unchanged):** content is *not* constrained by any one
 > workstation's GPUs. For each project we assume both a **minimal** box and an
@@ -24,11 +29,60 @@
 > sizing note, never a blocker. The May edition
 > ([`2026-05-sota-llm-agi.md`](./2026-05-sota-llm-agi.md)) remains the canonical
 > deep catalogue of each technique's rationale; this edition records **June
-> deltas** — what we measured, what we harvested, and what changed status.
+> deltas** — what moved at the frontier, what we measured, and what changed status.
 
 ---
 
-## TL;DR — this month's harvest
+## The frontier this month
+
+*What moved at the state of the art since the May edition — independent of
+whether we can build it. This is the heart of the edition; our own runs (next
+section) are evidence, not the headline.*
+
+- **Open-weight reasoning models closed on the closed labs.** Moonshot's **Kimi
+  K2 Thinking** (1 T-total / 32 B-active MoE, 256 K ctx) posts SOTA-tier agentic
+  numbers — **44.9 % HLE with tools, 93 % τ²-Bench Telecom, 200–300 sequential
+  tool calls** — and ships **native INT4 via QAT** (~2× decode, 594 GB file) for
+  ~$4.6 M train cost. The "open frontier" is now a *reasoning-agent* frontier.
+  [42]
+- **Efficient-attention architectures went mainstream in shipping models.**
+  **DeepSeek-V3.2** put trainable **sparse attention** (DSA / lightning indexer)
+  into production at ~½ long-context cost; **Qwen3-Next** (80 B/3 B, hybrid 3:1
+  Gated-DeltaNet:full-attn, ultra-sparse MoE) and **Nemotron Nano 2** (9 B hybrid
+  Mamba-Transformer, ~6× throughput) make **hybrid linear-attention** a
+  vLLM-supported reality, not a research bet. [43][44][45]
+- **Low-bit-from-release became the serving default.** OpenAI's **gpt-oss-120b/
+  20b** ship **native MXFP4** MoE weights (120 B on one 80 GB GPU); with Kimi
+  K2's INT4, *quantization-aware training so weights serve losslessly at 4-bit*
+  is now the open-weight norm. [46]
+- **Full reproducibility arrived as a release class.** **Olmo 3** (AI2) released
+  the entire **"model flow"** — every stage, checkpoint, and datum — and
+  Karpathy's **nanochat** put a complete ChatGPT-style stack (tokenizer→
+  pretrain→SFT→RL→web-UI) at ~$100 on one 8×H100 node. [48][49]
+- **From-scratch frontier *reasoning* got a candid field report.** Microsoft AI's
+  **MAI-Thinking-1** (35 B-active / 1 T-total MoE, trained from scratch, no
+  third-party CoT distillation) reached **52.8 % SWE-Bench Pro, 97.0 % AIME 2025,
+  87.7 % LiveCodeBench v6**, and named the recipe — *hill-climbing*: specialists
+  → distill → climb, with adaptive entropy control and zero-init attention. [37]
+- **The method-paper frontier sharpened post-training.** **LoRA Without Regret**
+  (LoRA *matches* full-FT when configured right), **DeepConf** (test-time
+  confidence filtering: 99.9 % AIME 2025 at −84.7 % tokens), **RLPR**
+  (verifier-free RLVR) and **GSPO** (sequence-level MoE-RL, now the de-facto
+  recipe behind Qwen3) each move a real lever. [38][39][40][41]
+- **Automated AI research matured into a recognizable direction.** Closed-loop
+  *propose → run → measure → keep* systems — Sakana's **AI Scientist**, Google's
+  **AI co-scientist**, autonomous architecture search, and single-GPU
+  `autoresearch`-style loops — reframe researcher time as a compute-bound
+  resource. Current honest read: task-local gains, no demonstrated open-ended
+  recursion. [50]
+
+---
+
+## TL;DR — what we harvested (secondary)
+
+*The footnote to the frontier above: what, if anything, we pulled into the repo.
+Where a development was small enough to measure honestly on a 2× RTX 5060 Ti, we
+ran it; everything else is sized, sourced, and roadmapped.*
 
 - **We ran the architecture A/B (midgpt).** A controlled, iso-param /
   iso-token, single-node-DDP comparison at 350 M scale on FineWeb-Edu:
@@ -71,6 +125,12 @@
   *"measures the technique."* Every Tier-1 architecture claim now has an
   in-repo number behind it, reached through ≥2 independent codebases that land
   on the **same FineWeb-Edu scaling curve**.
+- **A minimal instance of the automated-research frontier (nanogpt-edu).** We
+  shipped a tiny token-budgeted *propose → run → measure → keep* harness
+  (`research/`, §15) as the legible minimal-tier version of the AI-Scientist
+  direction — a real 10-rung 5060 Ti ladder banked **val_bpb 2.95 → 2.75** with
+  one honest discard. The mechanism transfers; the absolute gains are a sizing
+  fact of the 10 M / 2 M-token budget.
 - **The forward scan — and two of them landed.** This edition also scoped the
   next round of harvests; **two were not just scoped but shipped *and measured***
   this pass (✅, see §§12–13): **LoRA Without Regret** (TML — the r=16-vs-r=256
@@ -130,6 +190,7 @@ makes disappear.
 | **12** | **🆕 LoRA Without Regret — LoRA *matches* full-FT, configured right** | ✅ shipped + measured (coder-finetune) | **new** — config + pins shipped; 3 A/Bs: tie at convergence, r=16 wins at fixed epoch budget (§ below) |
 | **13** | **🆕 DeepConf — test-time confidence filtering of reasoning traces** | ✅ shipped + measured (nanogpt-edu) | **new** — bench shipped; measured on a verifiable toy (§ below) |
 | **14** | **🆕 Verifier-free RLVR (RLPR) + GSPO going to production** | ✅ shipped + measured (frontier) / track (coder-finetune) | **new** — both in `frontier-platform/rl`; GPU run confirms GSPO ~4× lower-variance + RLPR sharpens reward (§ below) |
+| **15** | **🆕 Automated AI research / self-improving agents (the "AI-Scientist" frontier)** | 🟡 track → minimal illustration shipped (nanogpt-edu) | **new** — the field-level move is closed-loop agents that *propose → run → measure → keep* ML experiments; we shipped a tiny token-budgeted harness as a legible instance (§ below) |
 
 ### § The empirical headline: the Llama recipe wins at 350 M — **shipped + measured**
 
@@ -355,6 +416,62 @@ Two RL-recipe deltas worth recording against our existing GRPO stack:
   model) was fixed in passing. track → `coder-finetune` (GSPO via TRL once we
   exercise an MoE base). Both additive to the GRPO objective we already ship.
 
+### § 15 — Automated AI research / self-improving agents — **frontier theme (minimal illustration shipped, nanogpt-edu)**
+
+The clearest capability-frontier story of the season is not a single model but a
+**direction**: closed-loop agents that *do science on machine learning itself* —
+propose a change, run the experiment, measure it, and keep or revert on evidence,
+with little or no human in the loop. The lineage is now a recognizable arc —
+Sakana AI's **AI Scientist** (end-to-end paper generation), Google's
+**AI co-scientist** (hypothesis generation/ranking on a Gemini backbone),
+autonomous architecture-search systems that discover new attention/optimizer
+variants, and the lighter, reproducible **`autoresearch` / auto-improving-kernel**
+hacks that put the same loop on a single GPU. Why it matters to the field: it
+turns *researcher time* — historically the scarcest input to model progress —
+into a compute-bound, parallelizable resource, and it makes "self-improvement"
+concrete and measurable rather than speculative. The open question the frontier
+is now circling is whether these loops compound (each improvement makes the next
+search better) or saturate; the honest current read is **task-local gains with no
+demonstrated open-ended recursion** — which is exactly why a *legible, honest*
+instance is worth having.
+
+- **Win (field-level):** decouples discovery rate from headcount; reframes ML
+  research as an experiment-throughput problem. Even the toy form encodes a real
+  methodological bar — a kept "win" must be *measured*, *reproducible*, and not
+  an overfit artifact.
+- **Why it fits us (secondary):** `nanogpt-edu` already exposes the levers a
+  searcher would turn (Muon, QK-norm, zero-init, untied embeddings, MTP,
+  FlexAttention) and a fast train/eval loop — so a minimal harness is the *most
+  legible possible* version of the frontier idea, not a scaled-down imitation of
+  it. The honest framing: the **mechanism** (propose→run→measure→keep) is the
+  transferable artifact; the **absolute gains** are a sizing fact of the 10 M /
+  2 M-token budget, exactly like FP8/FA-3 numbers are a sizing fact of H100s.
+- **Scope rule:** the trivially-correct rung is a *built-in mutator* over a
+  seeded search space with hard gates (finite loss, descent below the random-init
+  ceiling, a train↔val generalization cap) and durable git-backed keep/revert;
+  the open rung is driving the same loop with a real LLM agent editing the
+  candidate — same harness, swappable proposer.
+- **Min HW:** the *idea* is hardware-free, but a *meaningful* unattended search is
+  GPU-only (dozens of runs; the harness asserts CUDA). **Ideal:** a real
+  LLM-driven proposer + a multi-GPU fan-out so the search itself parallelizes —
+  the regime where the AI-Scientist systems actually live.
+- **Source:** [50]  ·  **Harvest:** 🟡 minimal illustration shipped → `nanogpt-edu`
+  (`research/`: `candidate.py` the only agent-editable file; `harness.py`
+  token-budgeted train+measure with the three gates; `loop.py` keep/revert with
+  `--auto N` self-mutation; `seed_ledger.py`, `plot.py`; +10 CPU-safe tests,
+  suite 43 → 53). A **real 10-rung single-5060 Ti ladder** improved validation
+  **bits-per-byte 2.95 → 2.75 (≈6.7 %)** with **one honest discard** (added depth
+  *regressed* at the 2 M-token budget — a real under-training signal, kept in the
+  ledger rather than hidden), as throughput fell 339 k → 102 k tok/s and params
+  grew 5.1 M → 14.2 M — the quality-vs-cost tradeoff the Pareto panel exists to
+  expose. Six deliberate improvements over the `autoresearch` /
+  auto-improving-kernel references: **token-budget (not wall-clock)** so a 5060 Ti
+  and an H100 land on the *same* curve; **multi-metric + Pareto**; an
+  **anti-overfit gate** as a training-time correctness bar; a **seeded SOTA search
+  space**; **durable cross-process git keep/revert**; and a **determinism
+  contract** (seeded eval) so a "win" isn't RNG. README:
+  [`nanogpt-edu/research/README.md`](../nanogpt-edu/research/README.md).
+
 ---
 
 ## Tier 1 — open-weight frontier wave (north-star + sizing evidence)
@@ -401,6 +518,7 @@ from Tier-3 watching toward a Tier-2 `distgpt`/`frontier` design note.
 | **Native low-bit via QAT (INT4 / MXFP4)** | Quantization-aware *training/post-training* so weights serve losslessly at 4-bit | ~2× decode, ~½ file size (Kimi K2 INT4 594 GB); 120B on one 80 GB GPU (gpt-oss MXFP4) | Blackwell/Hopper for native kernels; pays off at serve scale | [42],[46] | 🔜 planned — complements FP8/NVFP4 train policy | midgpt, frontier |
 | **Mixture-of-Experts** (fine-grained + shared) | Sparse FFN, more params @ ~const FLOPs | large quality/$ win | ≥3B active-equiv; expert parallelism | [3] | ✅ frontier; **MAI zero-init-attn** de-risks early MoE routing | distgpt, frontier |
 | **3D/5D parallelism + comms overlap** | FSDP2 + TP + PP + EP + SP | near-linear scaling to 1000s of GPUs | multi-node + fast interconnect | [12] | 🟡 → **measured** — genuine 2-GPU FSDP2 calibrated on PCIe (§ below); the interconnect, not the code, is the ceiling | distgpt, frontier |
+| **Distributed serving stack (gateway → orchestrator → engine)** | Disaggregated prefill/decode + KV-cache-aware routing over a GPU fleet (llm-d, NVIDIA Dynamo) atop vLLM/SGLang, fronted by a gateway (LiteLLM/Bifrost) | better fleet utilization + OpenAI-compatible surface; the 2025–26 SOTA self-hosted serving shape | multi-GPU/multi-node serving; K8s for llm-d | [51] | 🔜 track → design note ([`docs/research/llm-serving-and-gateway-stack.md`](./research/llm-serving-and-gateway-stack.md)) | frontier, serving |
 | **Unsloth fast-path** | Custom autograd kernels for LoRA/QLoRA | ~2× faster, ~70% less memory | single-GPU PEFT | [13] | ✅ coder-finetune | coder-finetune |
 | **Single-node DDP (data-parallel)** | Replicate model, shard batch, all-reduce grads | linear-ish on a healthy fabric; the on-ramp to multi-GPU PEFT | ≥2 GPUs; model fits one card | [12] | ✅ **shipped this month** — `coder-finetune/cf_dist`, real-NCCL 2× 5060 Ti proof | coder-finetune |
 | **Spectrum / targeted full-FT** | Full-FT high-SNR layers, freeze rest | beats LoRA at similar memory | mid-size SFT | — | 🔜 planned | coder-finetune |
@@ -469,6 +587,17 @@ Carried forward from May (still the right call to watch, not build):
 - **🆕 From-scratch reasoning ("hill-climbing")** as a *methodology* (vs the
   components we already harvested): specialists → distill → climb at real scale
   is an ideal-tier program for `frontier-platform`, not a minimal-box build.
+- **🆕 Automated AI research / self-improving agents (§15).** The field-level
+  direction — closed-loop *propose → run → measure → keep* on ML itself
+  (AI-Scientist, AI co-scientist, autonomous architecture search). Tracked here
+  as the broad bet; the concrete minimal instance is the Tier-1 §15 harness
+  (`nanogpt-edu/research/`). Honest read: task-local gains, **no demonstrated
+  open-ended recursion** — the open question is whether the loops compound.
+- **🆕 Distributed serving stack (gateways → orchestrator → engines).** llm-d /
+  NVIDIA Dynamo prefill/decode disaggregation + KV-cache-aware routing atop
+  vLLM/SGLang, fronted by a gateway (LiteLLM/Bifrost). The 2025–26 SOTA
+  self-hosted serving shape; an ideal-tier target for `frontier-platform`'s serve
+  path, now scoped in [`docs/research/llm-serving-and-gateway-stack.md`](./research/llm-serving-and-gateway-stack.md).
 
 ---
 
@@ -479,11 +608,11 @@ hardware tier — nothing is "blocked."
 
 | Project | Next harvest | Tier | Notes |
 |---------|--------------|------|-------|
-| nanogpt-edu | full-module MTP; **long-ctx via FlexAttention**; staged long-ctx demo | minimal→ideal | **FlexAttention backend shipped** (`attention_backend: flex`); **DeepConf bench done** (§13 — `tools/bench_deepconf.py` + measured on a verifiable addition toy); next is exercising FlexAttention on a packed-doc / long-ctx config |
+| nanogpt-edu | full-module MTP; **long-ctx via FlexAttention**; staged long-ctx demo; **LLM-driven research loop** | minimal→ideal | **FlexAttention backend shipped** (`attention_backend: flex`); **DeepConf bench done** (§13 — `tools/bench_deepconf.py` + measured on a verifiable addition toy); **automated-research harness shipped** (§15 — `research/`, val_bpb 2.95→2.75, built-in mutator); next is driving that loop with a real LLM proposer, and exercising FlexAttention on a packed-doc / long-ctx config |
 | midgpt | FP8 matmul; FA-3; **finish vLLM export path**; **QAT/INT4 export** | minimal→ideal | **HF-export validator shipped** (vLLM smoke); **llamafied A/B done (B wins 16.8 %)**; **zero-init-attn + FlexAttention landed**; FP8/FA-3 light up on 8× H100; native-low-bit-via-QAT export (Kimi K2/gpt-oss) is the serving-precision rung |
 | distgpt | **Muon (distributed) — knobs landed**; FP8; MoE + expert parallelism; MLA; **hybrid linear-attn note** | ideal | **2-GPU FSDP2 calibrated (1.28× on PCIe)**; **distributed-Muon weight-decay/update-scale shipped**; validate the rest at multi-node + NVLink; hybrid Gated-DeltaNet/Mamba MoE is a new design-note target |
 | coder-finetune | **Spectrum**; full-FT 7B; multi-node scale-out; r=256 to convergence on a 100k+ mixture | minimal→ideal | **DAPO knobs + SimPO/KTO shipped**; **single-node DDP shipped** (`cf_dist`, real-NCCL proof); **LoRA-Without-Regret done** (§12 — `lora_hicap.yaml` + pins + 3 measured A/Bs; budget-not-size is the binding constraint); next is targeted full-FT (Spectrum), training r=256 to convergence on a bigger mixture, and beyond one node |
-| frontier-platform | sparse attention (1M ctx, NSA/DSA); real vLLM/SGLang backend; hardware MoE-RL run for GSPO at scale | ideal | **MAI-Thinking-1 harvested (10 components)**; **self-play loop shipped**; **GSPO + RLPR measured** (§14, `tools/bench_grpo_gspo.py` — GSPO ~4× lower-variance, wins on MoE; RLPR sharpens reward); **staged long-ctx note written**; remaining work is real backends, a data org, trainable sparse attention, and a frontier-scale MoE-RL run |
+| frontier-platform | sparse attention (1M ctx, NSA/DSA); **real vLLM/SGLang + llm-d serving backend**; hardware MoE-RL run for GSPO at scale | ideal | **MAI-Thinking-1 harvested (10 components)**; **self-play loop shipped**; **GSPO + RLPR measured** (§14, `tools/bench_grpo_gspo.py` — GSPO ~4× lower-variance, wins on MoE; RLPR sharpens reward); **staged long-ctx note written**; **serving-stack scoped** ([`docs/research/llm-serving-and-gateway-stack.md`](./research/llm-serving-and-gateway-stack.md) — gateway→llm-d/Dynamo→vLLM/SGLang); remaining work is real backends, a data org, trainable sparse attention, and a frontier-scale MoE-RL run |
 
 ---
 
@@ -556,6 +685,22 @@ Config-gated, default-off where it touches existing behavior; full test coverage
   the policy 0.44 → 0.70** with an SFT warm-start + KL anchor. Fixed a device bug
   in `ProbabilityRewardVerifier` (CPU tensor on a GPU model) + a regression pin
   (`tests/test_rl.py`, +1).
+
+### Automated-research harness (`b06d2c7`, §15)
+
+- **`nanogpt-edu` — autonomous research loop** (`b06d2c7`). A self-contained
+  "automated ML researcher" under `research/`: an agent edits **one file**
+  (`candidate.py` — a `KNOBS` dict + optional `patch_model` hook), `harness.py`
+  trains it under a **token budget** and measures `val_bpb` + throughput/VRAM/
+  params behind three hard gates (finite loss, descent below the random-init
+  ceiling, a train↔val generalization cap), and `loop.py` keeps/reverts via
+  durable **git** commits (`--auto N` self-mutates over a seeded SOTA search
+  space). `seed_ledger.py` + `plot.py` render a 2-panel quality-vs-cost Pareto
+  chart (scipy-free PCHIP fallback). A real **10-rung 5060 Ti ladder** banked
+  **val_bpb 2.95 → 2.75** with one honest discard (added depth regressed at the
+  token budget). +10 CPU-safe tests, suite **43 → 53**. Framed SOTA-first as the
+  minimal-tier instance of the AI-Scientist frontier (§15). README:
+  [`nanogpt-edu/research/README.md`](../nanogpt-edu/research/README.md).
 
 ### Closing May's roadmap (`dd3bc03` + follow-ups)
 
@@ -654,6 +799,25 @@ New and changed for June; the May edition carries the full catalogue (sources
     mid-train→SFT→RL→web UI) trainable for ~$100 on one 8×H100 node.
     <https://github.com/karpathy/nanochat>.
 
+**Automated-research / serving-stack frontier (sources [50]–[51]):**
+
+50. Automated AI research / self-improving-agent lineage — Sakana AI, *The AI
+    Scientist* (end-to-end automated research) <https://github.com/SakanaAI/AI-Scientist>;
+    Google, *Towards an AI co-scientist* <https://research.google/blog/accelerating-scientific-breakthroughs-with-an-ai-co-scientist/>;
+    and the single-GPU reproducible hacks Karpathy, *autoresearch*
+    <https://github.com/karpathy/autoresearch> + *auto-improving-kernel*
+    <https://github.com/jyotilakra92/auto-improving-kernel> our minimal harness
+    adapts. Field theme: closed-loop *propose → run → measure → keep* ML
+    experimentation; current evidence is task-local gains, no demonstrated
+    open-ended recursion.
+51. *The LLM Serving & Gateway Stack* — landscape survey of self-hosted serving:
+    gateways/routers (LiteLLM, Bifrost, Portkey), inference engines (vLLM,
+    SGLang, TensorRT-LLM), and distributed orchestration (llm-d — Red Hat/Google/
+    IBM, May 2025; NVIDIA Dynamo) with prefill/decode disaggregation + KV-cache-
+    aware routing. Digest:
+    [`docs/research/llm-serving-and-gateway-stack.md`](./research/llm-serving-and-gateway-stack.md)
+    (12 cited sources within).
+
 **Reproducible references (our own runs this month):**
 
 R1. **midgpt llamafied A/B** — [`midgpt/examples/5060ti_350m_llamafied_AB.md`](../midgpt/examples/5060ti_350m_llamafied_AB.md)
@@ -662,6 +826,9 @@ R2. **distgpt 2-GPU FSDP2 calibration + full run** — [`distgpt/examples/5060ti
     (1c0949b perf fix, 2-GPU config, both loss charts, DCP checkpoints).
 R3. **coder-finetune real-NCCL 2-GPU DDP proof** — [`coder-finetune/examples/5060ti_2gpu_ddp.md`](../coder-finetune/examples/5060ti_2gpu_ddp.md)
     (`cf_dist`, `scripts/run_5060ti_2gpu_ddp.sh`, NCCL evidence log).
+R4. **nanogpt-edu autonomous-research ladder** — [`nanogpt-edu/research/`](../nanogpt-edu/research/README.md)
+    (`ledger.tsv` + `progress.png`: real 10-rung single-5060 Ti run, val_bpb
+    2.95 → 2.75 with one honest discard; `harness.py`/`loop.py` + 10 tests).
 
 > **Methodology note.** This edition is run-led: the two A/Bs (R1, R2) and the
 > DDP proof (R3) are primary evidence executed on-machine this month; numbers

@@ -3,21 +3,43 @@
   Copy to docs/YYYY-MM-sota-llm-agi.md, then fill in. Keep section order stable
   so editions diff cleanly month-over-month. Delete these HTML comments.
 
+  PURPOSE (read first): this is a digest of WHAT'S NEW AT THE FRONTIER of LLM &
+  AGI — models, papers, benchmarks, techniques. It is NOT a changelog of this
+  repo. Lead every section and every entry with the external development and why
+  it matters to the field; only THEN note what (if any) we harvested. If the
+  edition reads like release notes for LLM-playground, it has drifted. Budget:
+  the frontier is the majority of the edition; our in-repo runs are evidence,
+  not the headline. Frontier items we can't build are still in scope (tag them
+  harvest: none / track) — never omit SOTA just because it isn't actionable.
+
   Framing rule: do NOT constrain content to any one machine's GPUs. For each
   project, assume both a MINIMAL and an IDEAL hardware envelope are available
   and recommend what is correct at that scale. "Harvest status" tracks whether
-  we've implemented it in-repo; hardware is a sizing note, never a blocker.
+  we've implemented it in-repo; it is a SECONDARY tag and hardware is a sizing
+  note, never a blocker.
 -->
 # SOTA Watch — LLM & AGI · YYYY-MM
 
 **Editor:** <name/handle>  ·  **Published:** YYYY-MM-DD  ·  **Status:** draft | published
 
-> One-paragraph theme for the month. What's the through-line? What changed
-> since last edition? Who is this edition most useful for?
+> One-paragraph theme for the month. **Lead with the frontier:** what moved at
+> the state of the art since last edition (models, papers, benchmarks)? What's
+> the through-line? Who is this edition most useful for? Mention our own harvest
+> only after the field-level story is set.
 
-## TL;DR — this month's harvest
+## The frontier this month
 
-<!-- 3–6 bullets. Lead with what we shipped into the repo this month. -->
+<!-- SOTA-FIRST. 4–8 bullets on what's new in LLM & AGI at large, independent of
+     whether we can build it: frontier model releases, landmark papers, benchmark
+     movement, capability/safety milestones. This is the heart of the edition.
+     Each bullet: what happened · why it matters to the field · source. -->
+
+- …
+
+## TL;DR — what we harvested
+
+<!-- SECONDARY. 3–6 bullets on what (if anything) we pulled into the repo this
+     month. Keep it short; it is the footnote to "The frontier this month". -->
 
 - …
 
