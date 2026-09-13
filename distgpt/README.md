@@ -159,6 +159,15 @@ half-broken Blackwell GPU in the same host poisoning `cuInit`, and why
 the framework's bf16-only design NaNs on Pascal fp16) plus the
 sidecar `.venv-pascal/` and PCI-unbind workarounds that got it running.
 
+## Resumable rollout and verifier work queue
+
+`distgpt/eval/rollout_queue.py` defines the backend contract for stateful rollout
+workers: deterministic ordering, exclusive leases, retry after expiration,
+stale-worker rejection, idempotent completion, dead-lettering, parent lineage,
+and schema-versioned snapshot/restore. The shipped implementation is in-memory
+and CPU-testable; Redis/etcd production adapters must preserve the same state
+machine. It does not pretend to be a distributed database.
+
 ## What's *not* in scope
 
 - Custom CUDA kernels (we lean on PyTorch SDPA + Transformer Engine if installed)
