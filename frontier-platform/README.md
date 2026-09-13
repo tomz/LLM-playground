@@ -168,6 +168,25 @@ the only thing that changes is wall-clock and $ burned:
 
 ![real vs modeled](out/sim/compare_7b_modeled_vs_real.png)
 
+## Stateful-agent and auditable-research control plane
+
+The July–August 2026 harvest adds four dependency-free reference protocols:
+
+- `platform/serving/programmatic_tools.py` executes model-written tool plans
+  under hard call/output budgets with per-call provenance and filtering.
+- `platform/serving/multi_agent.py` fans out deterministic worker branches under
+  one token ceiling and reconciles by score or majority.
+- `platform/safety/selfplay_redteam.py` builds deduplicated self-play curricula
+  while keeping a fingerprint-checked held-out attack set as the release gate.
+- `platform/infra/research_artifacts.py` records failed attempts, model/prompt
+  identity, human edits, complete generation/verifier/reviewer/preparation cost,
+  certificates, and independent novelty/significance review.
+
+These are CPU-testable backend contracts, not fake fleet implementations.
+Production boundaries and invariants are documented in
+[`docs/15-july-august-2026-harvest.md`](docs/15-july-august-2026-harvest.md).
+Existing `NotImplementedError` production interfaces remain unchanged.
+
 ### What the plots make obvious
 
 1. **Cost is super-linear in model size.** 1B → 400B is 333× the
