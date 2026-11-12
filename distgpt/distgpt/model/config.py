@@ -86,6 +86,10 @@ class ModelConfig:
     mtp_tokens: int = 0
     # Weight on the averaged-per-head MTP loss added to the main next-token CE.
     mtp_weight: float = 0.3
+    # Opt-in document masking for packed sequences: the EOT token id. Attention
+    # stays within a document (EOT closes and belongs to it) and RoPE positions
+    # restart per document. ``None`` = plain causal (default). Dense GQA only.
+    doc_mask_eot: int | None = None
 
     @property
     def head_dim(self) -> int:

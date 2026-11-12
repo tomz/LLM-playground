@@ -1,0 +1,42 @@
+{
+  "device": "NVIDIA GeForce RTX 5060 Ti",
+  "torch": "2.12.0+cu130",
+  "params_m": 124,
+  "dtype": "bf16 autocast",
+  "batch": 1,
+  "new_tokens": 256,
+  "decode": "greedy",
+  "rows": [
+    {
+      "prompt_tokens": 64,
+      "full_tok_s": 358.5,
+      "cached_tok_s": 324.2,
+      "speedup": 0.9,
+      "identical": true
+    },
+    {
+      "prompt_tokens": 256,
+      "full_tok_s": 304.3,
+      "cached_tok_s": 323.6,
+      "speedup": 1.06,
+      "identical": true
+    },
+    {
+      "prompt_tokens": 512,
+      "full_tok_s": 211.7,
+      "cached_tok_s": 323.6,
+      "speedup": 1.53,
+      "identical": true
+    },
+    {
+      "prompt_tokens": 768,
+      "full_tok_s": 158.7,
+      "cached_tok_s": 326.4,
+      "speedup": 2.06,
+      "identical": false,
+      "first_divergent_new_token": 134,
+      "full_path_top2_margin": 0.01562
+    }
+  ],
+  "note": "Python-loop decode, dynamic cache, no torch.compile/CUDA graphs; one run per point. Under bf16 the cached and full paths use different attention kernels, so a near-tied greedy argmax may flip; divergence rows record the full path's top-2 logit margin. The CPU fp32 test suite requires exact equality."
+}

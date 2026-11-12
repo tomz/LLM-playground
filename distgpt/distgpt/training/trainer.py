@@ -36,7 +36,7 @@ from ..utils.state import atomic_json, capture_rng_state, restore_rng_state
 from .checkpoint import CheckpointManager, _collective_call
 from .gradients import clip_grad_norm
 from .muon import build_muon_and_adamw
-from .optim import build_optimizer, cosine_lr
+from .optim import build_optimizer, scheduled_lr
 from .stability import SpikeMonitor, RewindController
 
 LOG = logging.getLogger(__name__)
@@ -126,6 +126,7 @@ def validate_config(cfg: dict, world: int, device_type: str) -> tuple[int, int, 
         raise ValueError("optim.grad_clip must be finite and nonnegative")
     if cfg["optim"].get("optimizer", "adamw") not in ("adamw", "muon"):
         raise ValueError(f"unknown optim.optimizer: {cfg['optim']['optimizer']!r}; expected 'adamw' or 'muon'")
+    scheduled_lr(0, cfg["optim"])  # validate lr_schedule / WSD settings before any mutation
     return dp, tp, pp
 
 
@@ -278,7 +279,7 @@ def train(cfg: dict, data_dir_override: str | None = None) -> None:
         started, measured_steps = time.perf_counter(), 0
         while next_step < stop:
             step = next_step
-            scheduled = cosine_lr(step, optim["warmup_steps"], total, optim["lr"], optim["min_lr"])
+            scheduled = scheduled_lr(step, optim)
             effective_lr = scheduled * rewind.lr_multiplier()
             scale = effective_lr / optim["lr"]
             for optimizer, lrs in zip(optims, base_lrs):

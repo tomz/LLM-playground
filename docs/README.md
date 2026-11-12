@@ -27,6 +27,9 @@ tiny two-GPU FSDP checks passed**. See its
 [independent test profiles](./testing-and-reproducibility.md). These are
 correctness and integration results, not frontier-model quality measurements.
 
+The [**post-repair SOTA gap analysis**](./sota-gap-analysis-2026-11.md) ranks
+the next improvements (P0–P2) with acceptance gates for each project.
+
 The [**June 2026 repository architecture assessment**](./repository-assessment-2026-06.md)
 is the earlier code- and test-backed baseline. November explicitly revisits its
 major findings rather than assuming they are still open or already fixed.

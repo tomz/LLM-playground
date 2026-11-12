@@ -12,7 +12,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from data import ShardDataset
 from model import GPT, GPTConfig
 from stability import RewindController, SpikeMonitor
-from utils import JsonlLogger, cosine_lr
+from utils import JsonlLogger, scheduled_lr
 from utils.checkpoint import checkpoint_exists, load_training_checkpoint, save_training_checkpoint
 
 
@@ -256,8 +256,7 @@ def main():
     t0 = time.time()
     it = start_iter
     while it < cfg["optim"]["max_iters"]:
-        lr = cosine_lr(it, cfg["optim"]["warmup_iters"], cfg["optim"]["lr_decay_iters"],
-                       cfg["optim"]["lr"], cfg["optim"]["min_lr"])
+        lr = scheduled_lr(it, cfg["optim"])
         # Scale every optimizer's groups by the same cosine multiplier relative to
         # each group's own base LR (so Muon's higher LR and AdamW's lower LR decay
         # on one shared schedule). Apply the rewinder's per-step LR multiplier on

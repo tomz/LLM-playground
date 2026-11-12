@@ -54,6 +54,12 @@ class GPTConfig:
     mtp_tokens: int = 0
     mtp_weight: float = 0.3
     attention_backend: str = "sdpa"  # "sdpa" default; "flex" for mask experiments.
+    # Document masking for packed sequences (opt-in). When set to the EOT token
+    # id, attention is restricted to the current document (EOT closes a doc and
+    # belongs to it) and positions restart at 0 for each document, so a packed
+    # document's logits equal those of the same document run alone. ``None``
+    # keeps plain causal attention across boundaries (GPT-2 behaviour).
+    doc_mask_eot: int | None = None
 
     @property
     def head_dim(self) -> int:
@@ -107,15 +113,42 @@ def _apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.
     """Apply RoPE to a [B, H, T, D] tensor. The Llama convention pairs the
     first and second halves of the head dim (not adjacent pairs); we follow
     that convention so a future weight-export to LlamaForCausalLM round-trips
-    without a rotation rewrite."""
+    without a rotation rewrite. ``cos``/``sin`` are either a shared ``[T, D/2]``
+    table or per-sequence ``[B, T, D/2]`` (document-reset positions)."""
     x1, x2 = x[..., : x.shape[-1] // 2], x[..., x.shape[-1] // 2 :]
-    cos = cos[None, None, : x.shape[-2], :]
-    sin = sin[None, None, : x.shape[-2], :]
+    if cos.dim() == 3:
+        cos, sin = cos[:, None], sin[:, None]
+    else:
+        cos = cos[None, None, : x.shape[-2], :]
+        sin = sin[None, None, : x.shape[-2], :]
     return torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
 
 
-def _causal_attention(q, k, v, *, dropout_p: float, backend: str = "sdpa"):
+def document_layout(idx: torch.Tensor, eot: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return ``(doc_ids, positions)`` for a packed ``[B, T]`` batch.
+
+    An EOT token closes and belongs to its document, so ``doc_ids[t]`` counts
+    EOTs strictly before ``t``. ``positions`` restart at 0 for each document.
+    """
+    is_eot = (idx == eot).long()
+    doc = torch.cumsum(is_eot, dim=1) - is_eot
+    T = idx.size(1)
+    ar = torch.arange(T, device=idx.device).expand_as(idx)
+    new_doc = torch.ones_like(is_eot, dtype=torch.bool)
+    new_doc[:, 1:] = doc[:, 1:] != doc[:, :-1]
+    start = torch.cummax(torch.where(new_doc, ar, torch.zeros_like(ar)), dim=1).values
+    return doc, ar - start
+
+
+def _causal_attention(q, k, v, *, dropout_p: float, backend: str = "sdpa",
+                      doc_ids: torch.Tensor | None = None):
     if backend == "sdpa":
+        if doc_ids is not None:
+            T = q.size(-2)
+            causal = torch.ones(T, T, dtype=torch.bool, device=q.device).tril()
+            mask = (doc_ids[:, :, None] == doc_ids[:, None, :]) & causal
+            return F.scaled_dot_product_attention(q, k, v, attn_mask=mask[:, None],
+                                                  dropout_p=dropout_p)
         return F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p, is_causal=True)
     if backend == "flex":
         if dropout_p:
@@ -130,10 +163,16 @@ def _causal_attention(q, k, v, *, dropout_p: float, backend: str = "sdpa"):
         # NOTE: the causal block mask is rebuilt every call (not cached). Fine
         # for this experimental/no-grad path; a real training run should cache
         # per-T masks and wrap flex_attention in torch.compile for the fused kernel.
-        block_mask = create_block_mask(
-            lambda _b, _h, q_idx, kv_idx: q_idx >= kv_idx,
-            B=None, H=None, Q_LEN=T, KV_LEN=T, device=q.device,
-        )
+        if doc_ids is None:
+            block_mask = create_block_mask(
+                lambda _b, _h, q_idx, kv_idx: q_idx >= kv_idx,
+                B=None, H=None, Q_LEN=T, KV_LEN=T, device=q.device,
+            )
+        else:
+            def doc_causal(b, _h, q_idx, kv_idx):
+                return (q_idx >= kv_idx) & (doc_ids[b, q_idx] == doc_ids[b, kv_idx])
+            block_mask = create_block_mask(doc_causal, B=q.size(0), H=None,
+                                           Q_LEN=T, KV_LEN=T, device=q.device)
         return flex_attention(q, k, v, block_mask=block_mask)
     raise ValueError(f"unknown attention_backend={backend!r}; want 'sdpa' or 'flex'")
 
@@ -153,7 +192,8 @@ class CausalSelfAttention(nn.Module):
         # at the model level so all blocks share one (cos, sin) buffer.
         self.use_rope = cfg.pos_kind == "rope"
 
-    def forward(self, x, rope: tuple[torch.Tensor, torch.Tensor] | None = None):
+    def forward(self, x, rope: tuple[torch.Tensor, torch.Tensor] | None = None,
+                doc_ids: torch.Tensor | None = None, cache: list | None = None):
         B, T, C = x.shape
         H, D = self.cfg.n_head, self.cfg.head_dim
         q, k, v = self.qkv(x).split(C, dim=-1)
@@ -168,11 +208,25 @@ class CausalSelfAttention(nn.Module):
             cos, sin = rope
             q = _apply_rope(q, cos, sin)
             k = _apply_rope(k, cos, sin)
+        if cache is not None:
+            # KV-cached inference: ``cache`` is a mutable [k, v] pair (or empty).
+            if cache:
+                k = torch.cat([cache[0], k], dim=2)
+                v = torch.cat([cache[1], v], dim=2)
+            prefix = k.size(2) - T
+            cache[:] = [k, v]
+            if prefix == 0:
+                y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+            else:
+                # New queries see the whole prefix plus earlier new tokens.
+                mask = torch.ones(T, k.size(2), dtype=torch.bool, device=q.device).tril(prefix)
+                y = F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
+            return self.proj(y.transpose(1, 2).contiguous().view(B, T, C))
         # SDPA chooses Flash / mem-efficient automatically; FlexAttention is an
         # opt-in path for custom-mask experiments.
         y = _causal_attention(
             q, k, v, dropout_p=self.dropout if self.training else 0.0,
-            backend=self.cfg.attention_backend,
+            backend=self.cfg.attention_backend, doc_ids=doc_ids,
         )
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         return self.proj(y)
@@ -230,8 +284,9 @@ class Block(nn.Module):
         self.ln2 = _make_norm(cfg.norm_kind, cfg.d_model, bias=cfg.bias)
         self.mlp = _make_mlp(cfg)
 
-    def forward(self, x, rope: tuple[torch.Tensor, torch.Tensor] | None = None):
-        x = x + self.attn(self.ln1(x), rope=rope)
+    def forward(self, x, rope: tuple[torch.Tensor, torch.Tensor] | None = None,
+                doc_ids: torch.Tensor | None = None, cache: list | None = None):
+        x = x + self.attn(self.ln1(x), rope=rope, doc_ids=doc_ids, cache=cache)
         x = x + self.mlp(self.ln2(x))
         return x
 
@@ -357,18 +412,23 @@ class GPT(nn.Module):
         # Position encoding: either the learned pos_emb is added to tok_emb
         # (GPT-2) or RoPE is built and threaded into each block's attention
         # (Llama). When RoPE is on, the embedding is just tok_emb (no add).
+        doc_ids = positions = None
+        if self.cfg.doc_mask_eot is not None:
+            doc_ids, positions = document_layout(idx, self.cfg.doc_mask_eot)
         if self.pos_emb is not None:
-            pos = torch.arange(T, device=idx.device)
+            pos = positions if positions is not None else torch.arange(T, device=idx.device)
             x = self.drop(self.tok_emb(idx) + self.pos_emb(pos))
             rope = None
         else:
             x = self.drop(self.tok_emb(idx))
             rope = self._rope_for(x)
+            if positions is not None:
+                rope = (rope[0][positions], rope[1][positions])
         for blk in self.blocks:
             if self.grad_checkpoint and self.training:
-                x = checkpoint(blk, x, rope, use_reentrant=False)
+                x = checkpoint(blk, x, rope, doc_ids, use_reentrant=False)
             else:
-                x = blk(x, rope=rope)
+                x = blk(x, rope=rope, doc_ids=doc_ids)
         x = self.ln_f(x)
         if targets is None:
             if return_full_logits:
@@ -428,6 +488,70 @@ class GPT(nn.Module):
         return torch.optim.AdamW(groups, lr=lr, betas=betas, fused=fused)
 
     @torch.no_grad()
+    @torch.no_grad()
+    def _cached_logits(self, idx: torch.Tensor, caches: list[list], start: int) -> torch.Tensor:
+        """Run only the new tokens ``idx`` at absolute positions ``start..``."""
+        T = idx.size(1)
+        if self.pos_emb is not None:
+            x = self.tok_emb(idx) + self.pos_emb(torch.arange(start, start + T, device=idx.device))
+            rope = None
+        else:
+            x = self.tok_emb(idx)
+            cos, sin = self._rope_for(x)
+            rope = (cos[start:start + T], sin[start:start + T])
+        for blk, cache in zip(self.blocks, caches):
+            x = blk(x, rope=rope, cache=cache)
+        return self.lm_head(self.ln_f(x[:, [-1], :]))[:, -1, :]
+
+    def _next_token(self, logits, temperature, top_k, top_p):
+        if temperature == 0:
+            return logits.argmax(dim=-1, keepdim=True)
+        logits = logits / max(temperature, 1e-6)
+        if top_k is not None:
+            v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+            logits = logits.masked_fill(logits < v[:, [-1]], -float("inf"))
+        if top_p is not None and 0.0 < top_p < 1.0:
+            sorted_logits, sorted_idx = torch.sort(logits, descending=True, dim=-1)
+            cumprobs = sorted_logits.softmax(dim=-1).cumsum(dim=-1)
+            mask = cumprobs > top_p
+            mask[..., 1:] = mask[..., :-1].clone()
+            mask[..., 0] = False
+            sorted_logits = sorted_logits.masked_fill(mask, -float("inf"))
+            logits = torch.full_like(logits, -float("inf"))
+            logits.scatter_(1, sorted_idx, sorted_logits)
+        return torch.multinomial(F.softmax(logits, dim=-1), num_samples=1)
+
+    @torch.no_grad()
+    def generate_cached(self, idx, max_new_tokens, temperature: float = 1.0,
+                        top_k: int | None = None, top_p: float | None = None):
+        """KV-cached sampling, token-for-token equivalent to :meth:`generate`.
+
+        Each step processes one new token against cached K/V instead of the
+        whole window. When the window would exceed ``block_size`` the cache is
+        rebuilt from the last ``block_size - 1`` tokens, matching ``generate``'s
+        sliding crop. Document masking and the flex backend use ``generate``.
+        """
+        if self.cfg.doc_mask_eot is not None or self.cfg.attention_backend != "sdpa":
+            return self.generate(idx, max_new_tokens, temperature, top_k, top_p)
+        caches: list[list] = [[] for _ in self.blocks]
+        ctx = idx[:, -self.cfg.block_size:]
+        logits = self._cached_logits(ctx, caches, 0)
+        length = ctx.size(1)
+        for step in range(max_new_tokens):
+            nxt = self._next_token(logits, temperature, top_k, top_p)
+            idx = torch.cat([idx, nxt], dim=1)
+            if step == max_new_tokens - 1:
+                break
+            if length + 1 > self.cfg.block_size:
+                caches = [[] for _ in self.blocks]
+                ctx = idx[:, -self.cfg.block_size:]
+                logits = self._cached_logits(ctx, caches, 0)
+                length = ctx.size(1)
+            else:
+                logits = self._cached_logits(nxt, caches, length)
+                length += 1
+        return idx
+
     def generate(self, idx, max_new_tokens, temperature: float = 1.0,
                  top_k: int | None = None, top_p: float | None = None):
         """Autoregressive sampling.

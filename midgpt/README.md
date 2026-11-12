@@ -212,6 +212,28 @@ learns the vocab + bigrams, then a long slow descent to ~4.0 as it
 actually starts modelling text. Val tracks train to within 0.05 — the
 model is undertrained-by-design (0.37× Chinchilla), not overfit.
 
+## P0 SOTA features (opt-in, Nov 2026)
+
+All three are default-off, so existing recipes are unchanged. Status and acceptance
+gates are tracked in the [SOTA gap analysis](../docs/sota-gap-analysis-2026-11.md).
+
+- **WSD schedule:** `optim.lr_schedule: wsd` (`wsd_decay_frac`, default 0.2;
+  `wsd_decay_shape: linear | 1-sqrt`). Loss A/B vs cosine is not yet run.
+- **Document masking:** `model.doc_mask_eot: 50256` keeps attention within each
+  packed document and restarts positions. Tests show packed logits equal
+  isolated-document logits. Uses a dense mask, so throughput is not yet measured.
+- **KV-cached sampling:** `GPT.generate_cached(...)` has the same arguments and
+  outputs as `generate`. It helps at long context and is slower for short prompts.
+
+![LR schedules](docs/figures/lr_schedules.png)
+
+![Document mask](docs/figures/doc_mask.png)
+
+![KV-cache decode speed](docs/figures/kv_cache_speed.png)
+
+Regenerate: `python tools/bench_kv_cache.py --out docs/figures/kv_cache_bench.json`
+(GPU) then `python tools/plot_sota_p0.py`.
+
 ## Layout
 
 ```

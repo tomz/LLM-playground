@@ -58,6 +58,43 @@ def cosine_lr(it: int, warmup: int, decay: int, lr: float, min_lr: float) -> flo
     return min_lr + 0.5 * (lr - min_lr) * (1 + math.cos(math.pi * progress))
 
 
+def wsd_lr(it: int, warmup: int, total: int, lr: float, min_lr: float,
+           decay_frac: float = 0.2, shape: str = "linear") -> float:
+    """Warmup-stable-decay schedule (Hägele et al. 2024, "Scaling Laws and
+    Compute-Optimal Training Beyond Fixed Training Durations").
+
+    Linear warmup, constant ``lr`` plateau, then a cooldown over the final
+    ``decay_frac`` of post-warmup steps to ``min_lr``. ``shape`` is ``linear``
+    or ``1-sqrt`` (the paper's best-performing cooldown).
+    """
+    if not 0.0 < decay_frac <= 1.0:
+        raise ValueError(f"decay_frac must be in (0, 1], got {decay_frac}")
+    if shape not in {"linear", "1-sqrt"}:
+        raise ValueError(f"unknown WSD decay shape {shape!r}")
+    if it < warmup:
+        return lr * (it + 1) / max(1, warmup)
+    if it >= total:
+        return min_lr
+    decay_steps = max(1, int(round(decay_frac * max(1, total - warmup))))
+    start = total - decay_steps
+    if it < start:
+        return lr
+    progress = (it - start) / decay_steps
+    factor = 1.0 - progress if shape == "linear" else 1.0 - math.sqrt(progress)
+    return min_lr + (lr - min_lr) * factor
+
+
+def scheduled_lr(it: int, cfg: dict) -> float:
+    """Dispatch on ``cfg['lr_schedule']`` (default ``cosine`` for compatibility)."""
+    kind = cfg.get("lr_schedule", "cosine")
+    args = (it, cfg["warmup_iters"], cfg["lr_decay_iters"], cfg["lr"], cfg["min_lr"])
+    if kind == "cosine":
+        return cosine_lr(*args)
+    if kind == "wsd":
+        return wsd_lr(*args, decay_frac=cfg.get("wsd_decay_frac", 0.2),
+                      shape=cfg.get("wsd_decay_shape", "linear"))
+    raise ValueError(f"unknown lr_schedule {kind!r}; expected 'cosine' or 'wsd'")
+
 
 @torch.no_grad()
 def evaluate(model, datasets, cfg, ctx, *, eval_seed: int) -> dict:
@@ -235,7 +272,7 @@ def main():
     tokens_per_step = cfg["batch_size"] * grad_accum * cfg["block_size"]
     t0 = time.time()
     for it in range(start_iter, cfg["max_iters"]):
-        lr = cosine_lr(it, cfg["warmup_iters"], cfg["lr_decay_iters"], cfg["lr"], cfg["min_lr"])
+        lr = scheduled_lr(it, cfg)
         # Scale every optimizer's groups by the same cosine multiplier, relative
         # to each group's own base LR (so Muon's higher LR and AdamW's lower LR
         # both decay on the same schedule).

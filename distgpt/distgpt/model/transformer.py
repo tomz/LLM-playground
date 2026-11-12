@@ -31,10 +31,25 @@ def build_rope(seq_len: int, head_dim: int, base: float, device, dtype):
 
 
 def apply_rope(x, cos, sin):
+    """``cos``/``sin``: shared ``[T, D/2]`` table or per-sequence ``[B, T, D/2]``."""
     x1, x2 = x[..., : x.shape[-1] // 2], x[..., x.shape[-1] // 2 :]
-    cos = cos[None, None, : x.shape[-2], :]
-    sin = sin[None, None, : x.shape[-2], :]
+    if cos.dim() == 3:
+        cos, sin = cos[:, None], sin[:, None]
+    else:
+        cos = cos[None, None, : x.shape[-2], :]
+        sin = sin[None, None, : x.shape[-2], :]
     return torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
+
+
+def document_layout(idx: torch.Tensor, eot: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """``(doc_ids, positions)`` for a packed ``[B, T]`` batch; EOT closes its doc."""
+    is_eot = (idx == eot).long()
+    doc = torch.cumsum(is_eot, dim=1) - is_eot
+    ar = torch.arange(idx.size(1), device=idx.device).expand_as(idx)
+    new_doc = torch.ones_like(is_eot, dtype=torch.bool)
+    new_doc[:, 1:] = doc[:, 1:] != doc[:, :-1]
+    start = torch.cummax(torch.where(new_doc, ar, torch.zeros_like(ar)), dim=1).values
+    return doc, ar - start
 
 
 class GQAttention(nn.Module):
@@ -51,7 +66,7 @@ class GQAttention(nn.Module):
         self.q_norm = RMSNorm(D, cfg.rms_eps) if cfg.qk_norm else None
         self.k_norm = RMSNorm(D, cfg.rms_eps) if cfg.qk_norm else None
 
-    def forward(self, x, cos, sin):
+    def forward(self, x, cos, sin, doc_ids=None):
         B, T, _ = x.shape
         D = self.cfg.head_dim
         # Under tensor parallelism the q/k/v projections are column-sharded,
@@ -75,7 +90,12 @@ class GQAttention(nn.Module):
             rep = H // Hk_local
             k = k.repeat_interleave(rep, dim=1)
             v = v.repeat_interleave(rep, dim=1)
-        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        if doc_ids is None:
+            y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        else:
+            causal = torch.ones(T, T, dtype=torch.bool, device=q.device).tril()
+            mask = (doc_ids[:, :, None] == doc_ids[:, None, :]) & causal
+            y = F.scaled_dot_product_attention(q, k, v, attn_mask=mask[:, None])
         y = y.transpose(1, 2).contiguous().view(B, T, H * D)
         return self.o_proj(y)
 
@@ -434,8 +454,11 @@ class Block(nn.Module):
         # loss on ``self.ffn.last_aux_loss`` for ``GPT.forward`` to pick up.
         self.ffn = MoEFFN(cfg) if cfg.moe_enabled else SwiGLU(cfg.d_model, cfg.d_ffn)
 
-    def forward(self, x, cos, sin):
-        x = x + self.attn(self.attn_norm(x), cos, sin)
+    def forward(self, x, cos, sin, doc_ids=None):
+        if doc_ids is None:
+            x = x + self.attn(self.attn_norm(x), cos, sin)
+        else:
+            x = x + self.attn(self.attn_norm(x), cos, sin, doc_ids)
         x = x + self.ffn(self.ffn_norm(x))
         return x
 
@@ -514,15 +537,21 @@ class GPT(nn.Module):
     def forward(self, idx, targets: torch.Tensor | None = None):
         x = self.tok_emb(idx)
         cos, sin = self._rope_for(x)
+        doc_ids = None
+        if self.cfg.doc_mask_eot is not None:
+            if self.cfg.mla_enabled:
+                raise NotImplementedError("doc_mask_eot currently supports dense GQA attention only")
+            doc_ids, positions = document_layout(idx, self.cfg.doc_mask_eot)
+            cos, sin = cos[positions], sin[positions]
         for i, blk in enumerate(self.layers):
             do_ckpt = (
                 self.activation_ckpt == "full"
                 or (self.activation_ckpt == "selective" and i % 2 == 0)
             )
             if do_ckpt and self.training:
-                x = checkpoint(blk, x, cos, sin, use_reentrant=False)
+                x = checkpoint(blk, x, cos, sin, doc_ids, use_reentrant=False)
             else:
-                x = blk(x, cos, sin)
+                x = blk(x, cos, sin, doc_ids)
         x = self.final_norm(x)
         if targets is None:
             return self.lm_head(x[:, [-1], :]), None
