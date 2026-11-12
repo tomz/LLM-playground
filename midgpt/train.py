@@ -12,7 +12,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from data import ShardDataset
 from model import GPT, GPTConfig
 from stability import RewindController, SpikeMonitor
-from utils import JsonlLogger, cosine_lr, save_ckpt
+from utils import JsonlLogger, cosine_lr
+from utils.checkpoint import checkpoint_exists, load_training_checkpoint, save_training_checkpoint
 
 
 def setup_ddp() -> tuple[bool, int, int, int]:
@@ -176,34 +177,64 @@ def main():
     ckpt_path = os.path.join(cfg["out_dir"], "ckpt.pt")
     best_path = os.path.join(cfg["out_dir"], "ckpt_best.pt")
 
-    def _load_ckpt(path: str) -> int:
-        """Reload model/optim/scaler/RNG state from ``path``. Returns the
-        iteration to resume from (= ``saved_iter + 1``). Shared between
-        ``--resume`` startup and the SpikeMonitor's rewind path."""
-        nonlocal best_val
-        # CPU-load: see Tier 6.1 bug — saved RNG ByteTensors must stay
-        # ByteTensors, so we don't ``map_location=device``.
-        sd = torch.load(path, map_location="cpu", weights_only=False)
-        inner.load_state_dict(sd["model"])
-        # Backward-compatible: old checkpoints stored a single "optim"; new ones
-        # store a list of optimizer state dicts under "optims" (Muon + AdamW).
-        if "optims" in sd:
-            for opt, osd in zip(optimizers, sd["optims"]):
-                opt.load_state_dict(osd)
-        elif "optim" in sd:
-            optimizers[0].load_state_dict(sd["optim"])
-        if "scaler" in sd and sd["scaler"] is not None:
-            scaler.load_state_dict(sd["scaler"])
-        if "rng_state" in sd:
-            torch.set_rng_state(sd["rng_state"].to("cpu", dtype=torch.uint8))
-        if is_cuda and sd.get("cuda_rng_state") is not None:
-            torch.cuda.set_rng_state(sd["cuda_rng_state"].to("cpu", dtype=torch.uint8))
-        if "gen_state" in sd and sd["gen_state"] is not None:
-            gen.set_state(sd["gen_state"].to("cpu", dtype=torch.uint8))
-        best_val = sd.get("best_val", best_val)
-        return sd["iter"] + 1
+    spike_monitor = None
+    rewinder = None
 
-    if args.resume and os.path.exists(ckpt_path):
+    def _load_ckpt(path: str, *, restore_rewinder: bool = True) -> int:
+        """Collective completed-step restore; never clone rank zero's RNG."""
+        nonlocal best_val
+        restored = load_training_checkpoint(
+            path, model=inner, optimizers=optimizers, scaler=scaler,
+            generator=gen, device=device, cfg=cfg,
+        )
+        # Rewinding weights must not forget a better already-published model.
+        best_val = restored["best_val"] if restore_rewinder else min(best_val, restored["best_val"])
+        control = restored["control"]
+        if spike_monitor is not None and "spike_monitor" in control:
+            spike_monitor.load_state_dict(control["spike_monitor"])
+        if restore_rewinder and rewinder is not None and "rewinder" in control:
+            rewinder.load_state_dict(control["rewinder"])
+        return restored["next_iter"]
+
+    def _save(path: str, it: int) -> None:
+        """Every rank participates, including best/periodic/final checkpoints."""
+        control = {}
+        if spike_monitor is not None:
+            control["spike_monitor"] = spike_monitor.state_dict()
+        if rewinder is not None:
+            control["rewinder"] = rewinder.state_dict()
+        save_training_checkpoint(
+            path, model=inner, optimizers=optimizers, scaler=scaler,
+            generator=gen, device=device, iteration=it, cfg=cfg,
+            best_val=best_val, control=control,
+        )
+
+    # Loss-spike protection is default-off. Restore controller state on process
+    # restart, but keep the run-wide rewind count when loading an older snapshot
+    # within this run. Observe before publication so a known spike never replaces
+    # the last good checkpoint and saved windows include the completed step.
+    stab_cfg = cfg.get("stability") or {}
+    if stab_cfg.get("spike_monitor"):
+        spike_monitor = SpikeMonitor(
+            window=int(stab_cfg.get("spike_window", 200)),
+            sigma=float(stab_cfg.get("spike_sigma", 5.0)),
+            min_abs_jump=float(stab_cfg.get("spike_min_abs_jump", 2.0)),
+        )
+        rewinder = RewindController(
+            load_ckpt_fn=lambda path: _load_ckpt(path, restore_rewinder=False),
+            last_ckpt_path_fn=lambda: ckpt_path if checkpoint_exists(ckpt_path) else None,
+            lr_floor=float(stab_cfg.get("rewind_lr_floor", 1e-3)),
+            max_rewinds=int(stab_cfg.get("max_rewinds", 5)),
+            cooldown_steps=int(stab_cfg.get("rewind_cooldown_steps", 1000)),
+        )
+        if is_master:
+            print(f"stability: SpikeMonitor(sigma={spike_monitor.sigma}, "
+                  f"min_abs_jump={spike_monitor.min_abs_jump}) "
+                  f"+ Rewinder(max={rewinder.max_rewinds})")
+
+    if args.resume:
+        if not checkpoint_exists(ckpt_path):
+            raise FileNotFoundError(f"--resume requested but no checkpoint at {ckpt_path}")
         start_iter = _load_ckpt(ckpt_path)
         if is_master:
             print(f"resumed @ iter {start_iter} (best_val={best_val:.4f})")
@@ -221,42 +252,6 @@ def main():
     ckpt_int = cfg["train"]["ckpt_interval"]
     block = cfg["model"]["block_size"]
     tokens_per_step = micro_bs * accum * world * block
-
-    def _save(path: str, it: int):
-        save_ckpt(path, dict(
-            model=inner.state_dict(),
-            optims=[opt.state_dict() for opt in optimizers],
-            scaler=scaler.state_dict() if scaler.is_enabled() else None,
-            iter=it, cfg=cfg, best_val=best_val,
-            rng_state=torch.get_rng_state(),
-            cuda_rng_state=torch.cuda.get_rng_state() if is_cuda else None,
-            gen_state=gen.get_state(),
-        ))
-
-    # Loss-spike protection (default-off). When enabled the trainer monitors the
-    # per-step loss against a sliding window; on a 2-threshold spike (z-score AND
-    # absolute jump) it rewinds to the last good ``ckpt.pt`` and halves the LR
-    # for a cooldown window. See stability.py for the heuristics and bug history.
-    stab_cfg = cfg.get("stability") or {}
-    spike_monitor = None
-    rewinder = None
-    if stab_cfg.get("spike_monitor"):
-        spike_monitor = SpikeMonitor(
-            window=int(stab_cfg.get("spike_window", 200)),
-            sigma=float(stab_cfg.get("spike_sigma", 5.0)),
-            min_abs_jump=float(stab_cfg.get("spike_min_abs_jump", 2.0)),
-        )
-        rewinder = RewindController(
-            load_ckpt_fn=_load_ckpt,
-            last_ckpt_path_fn=lambda: ckpt_path if os.path.exists(ckpt_path) else None,
-            lr_floor=float(stab_cfg.get("rewind_lr_floor", 1e-3)),
-            max_rewinds=int(stab_cfg.get("max_rewinds", 5)),
-            cooldown_steps=int(stab_cfg.get("rewind_cooldown_steps", 1000)),
-        )
-        if is_master:
-            print(f"stability: SpikeMonitor(sigma={spike_monitor.sigma}, "
-                  f"min_abs_jump={spike_monitor.min_abs_jump}) "
-                  f"+ Rewinder(max={rewinder.max_rewinds})")
 
     t0 = time.time()
     it = start_iter
@@ -311,33 +306,8 @@ def main():
             logger.log(**row)
             if wb: wb.log(row, step=it)
 
-        if it > 0 and it % eval_int == 0:
-            # Eval runs on EVERY rank (mean is all-reduced across DP) so the
-            # reported val loss covers the full val set rather than rank-0's
-            # slice. Old code ran eval inside `if is_master:` on a rank-sharded
-            # val set → val ppl was measured on only 1/world of the val set.
-            ev = evaluate(inner, {"val": val_ds}, cfg["train"]["eval_iters"],
-                          micro_bs, ctx, eval_seed=cfg["seed"] + 12345,
-                          world=world, device=device)
-            if is_master:
-                print(f"           eval | val {ev['val']:.4f} | ppl {torch.tensor(ev['val']).exp().item():.2f}")
-                logger.log(iter=it, **{f"eval_{k}": v for k, v in ev.items()})
-                if wb: wb.log({f"eval/{k}": v for k, v in ev.items()}, step=it)
-                if ev["val"] < best_val:
-                    best_val = ev["val"]
-                    _save(best_path, it)
-                    print(f"           best val {best_val:.4f} → saved {best_path}")
-
-        if is_master and it > 0 and it % ckpt_int == 0:
-            _save(ckpt_path, it)
-            print(f"           saved ckpt -> {ckpt_path}")
-
-        # Spike check (default-off). All ranks need to make the same decision
-        # so the loop progress stays in lockstep; we always broadcast the
-        # rank-0 spike verdict (the all-reduced ``step_loss`` is identical on
-        # every rank, but the SpikeMonitor's internal window is built from
-        # the same numbers so the verdict is identical anyway — broadcasting
-        # is belt-and-braces for floating-point edge cases).
+        # Observe before checkpointing so the saved controller includes this
+        # step and a spike cannot overwrite the last good snapshot.
         if spike_monitor is not None:
             spike = spike_monitor.observe(step_loss)
             if use_ddp:
@@ -348,17 +318,39 @@ def main():
                 if is_master:
                     print(f"           ⚠ spike at iter {it} loss={step_loss:.4f}; "
                           f"rewinding (n={rewinder.n_rewinds + 1}/{rewinder.max_rewinds})")
+                previous_rewinds = rewinder.n_rewinds
                 next_it = rewinder.on_spike(it)
-                if next_it != it:
+                if rewinder.n_rewinds != previous_rewinds:
+                    # Even next_it == it means a real restore: repeat that
+                    # update instead of skipping it after loading old weights.
                     it = next_it
                     continue
-                # No checkpoint to rewind to (we haven't saved one yet) or
-                # max_rewinds exhausted — fall through and continue training.
+
+        if it > 0 and it % eval_int == 0:
+            ev = evaluate(inner, {"val": val_ds}, cfg["train"]["eval_iters"],
+                          micro_bs, ctx, eval_seed=cfg["seed"] + 12345,
+                          world=world, device=device)
+            if is_master:
+                print(f"           eval | val {ev['val']:.4f} | ppl {torch.tensor(ev['val']).exp().item():.2f}")
+                logger.log(iter=it, **{f"eval_{k}": v for k, v in ev.items()})
+                if wb: wb.log({f"eval/{k}": v for k, v in ev.items()}, step=it)
+            # The reduced validation value is shared, so the decision and
+            # best_val must be updated on EVERY rank before the collective save.
+            if ev["val"] < best_val:
+                best_val = ev["val"]
+                _save(best_path, it)
+                if is_master:
+                    print(f"           best val {best_val:.4f} → saved {best_path}")
+
+        if it > 0 and it % ckpt_int == 0:
+            _save(ckpt_path, it)
+            if is_master:
+                print(f"           saved ckpt -> {ckpt_path}")
 
         it += 1
 
+    _save(ckpt_path, it - 1)
     if is_master:
-        _save(ckpt_path, cfg["optim"]["max_iters"] - 1)
         logger.close()
         if wb: wb.finish()
         print(f"done -> {ckpt_path}  best val {best_val:.4f} -> {best_path}")

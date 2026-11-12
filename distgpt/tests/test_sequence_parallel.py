@@ -103,7 +103,7 @@ def test_trainer_accepts_sequence_parallel_config(tmp_path: pathlib.Path):
         },
         "train": {
             "micro_batch": 2, "grad_accum": 1,
-            "log_every": 1, "eval_every": 99, "ckpt_every": 99,
+            "log_every": 1, "eval_every": 0, "ckpt_every": 99,
         },
     }
     train(cfg)

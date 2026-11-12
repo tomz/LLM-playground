@@ -3,6 +3,9 @@ seed: 1337
 
 model:
   name: Qwen/Qwen2.5-Coder-0.5B
+  revision: 8123ea2e9354afb7ffcc6c8641d1b2f5ecf18301
+  tokenizer_revision: 8123ea2e9354afb7ffcc6c8641d1b2f5ecf18301
+  local_files_only: true
   dtype: bfloat16
   attn_impl: sdpa            # 'sdpa' | 'flash_attention_2' | 'eager'
   trust_remote_code: false
@@ -10,6 +13,8 @@ model:
 method: full                 # 'full' | 'lora' | 'qlora'
 
 dataset:
+  validation_fraction: 0.1
+  group_by: null  # Auto group metadata plus exact-prompt connectivity; never row-random leakage.
   source: builtin            # 'builtin' | 'hf' | 'jsonl'
   hf_name: null              # e.g. 'ise-uiuc/Magicoder-OSS-Instruct-75K'
   jsonl_path: null
@@ -17,6 +22,7 @@ dataset:
   format: chatml             # 'chatml' | 'alpaca'
 
 train:
+  loss_scope: all_tokens  # Explicit legacy objective; assistant_only needs generation markers.
   max_seq_len: 1024
   batch_size: 1
   grad_accum: 8              # effective batch = 8

@@ -1,0 +1,14 @@
+# Tested direct-dependency profile; Python 3.11/3.14 CPU/Gloo CI.
+# Not a transitive lockfile. GPU and multi-node recipes need separate evidence.
+torch==2.12.0
+numpy==2.4.6
+PyYAML==6.0.3
+tqdm==4.68.2
+transformers==5.8.0
+safetensors==0.8.0
+tokenizers==0.22.2
+pytest==9.0.3
+pytest-timeout==2.4.0
+packaging==26.2
+setuptools==81.0.0
+wheel==0.47.0

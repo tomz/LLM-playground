@@ -12,7 +12,7 @@
 
 - **BF16** weights, BF16 activations, FP32 master weights & optimizer state, FP8
   matmul on Hopper/Blackwell via Transformer Engine. The precision policy lives
-  in `platform/training/precision.py` (`PrecisionPolicy`): set
+  in `frontier_platform/training/precision.py` (`PrecisionPolicy`): set
   `ParallelConfig.precision="fp8"` and the trainer wraps every forward in
   `te.fp8_autocast` (under bf16 autocast) when Transformer Engine + a Hopper/
   Blackwell GPU are present, transparently falling back to bf16 (Ampere) or fp32

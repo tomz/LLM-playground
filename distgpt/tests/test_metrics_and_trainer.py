@@ -124,7 +124,7 @@ def test_trainer_log_includes_new_metrics(tmp_path: Path):
         },
         "train": {
             "micro_batch": 2, "grad_accum": 1,
-            "log_every": 1, "eval_every": 1, "ckpt_every": 1,
+            "log_every": 1, "eval_every": 0, "ckpt_every": 1,
             "compile": False,
         },
     }
@@ -181,7 +181,7 @@ def test_trainer_compile_knob_does_not_break_run(tmp_path: Path):
         },
         "train": {
             "micro_batch": 1, "grad_accum": 1,
-            "log_every": 1, "eval_every": 99, "ckpt_every": 99,
+            "log_every": 1, "eval_every": 0, "ckpt_every": 99,
             "compile": True,   # the bit we're testing
         },
     }

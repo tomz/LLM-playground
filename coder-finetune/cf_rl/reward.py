@@ -32,7 +32,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from eval.run_humaneval import build_program, run_many  # noqa: E402
+from eval.run_humaneval import build_program  # noqa: E402
+from eval.python_jail import DockerPythonExecutor, ExecutorUnavailable  # noqa: E402
 
 
 def _completion_text(completion) -> str:
@@ -55,44 +56,50 @@ def code_unit_test_reward(
     test=None,
     entry_point=None,
     prompt_code=None,
-    timeout: float = 5.0,
+    executor: DockerPythonExecutor | None = None,
+    verdict_sink=None,
     all_or_nothing: bool = True,
     **kwargs,
 ) -> list[float]:
-    """GRPO reward: 1.0 if the completion passes its hidden unit test(s), else 0.0.
+    """Score all candidates in Docker; unassessed candidates abort the update.
 
-    Args follow TRL's reward-function contract: ``completions`` is the batch of
-    sampled generations; ``test`` / ``entry_point`` / ``prompt_code`` are the
-    per-example dataset columns broadcast as parallel lists. Each completion is
-    assembled into a runnable program (prompt stub + completion + test harness)
-    and executed in the rlimit-bounded sandbox via ``run_many`` (currently
-    sequential — see eval/run_humaneval.py:run_many for why).
+    The operator must supply an executor. Missing tests, mismatched columns,
+    unavailable images, protocol errors, and cleanup failures are not incorrect
+    solutions and must never silently become zero reward. Results are delivered
+    to verdict_sink before raising so failed attempts remain auditable.
     """
-    assert completions is not None, "GRPO passes completions=..."
+    if completions is None:
+        raise ValueError("GRPO must provide completions")
+    if not all_or_nothing:
+        raise ValueError("only all-or-nothing unit-test rewards are implemented")
+    legacy = {"timeout", "max_workers", "mp_mode", "limits", "silence_output"} & kwargs.keys()
+    if legacy:
+        raise ValueError(f"legacy execution options are unsupported: {sorted(legacy)}; configure execution.limits")
     n = len(completions)
-    tests = test if test is not None else [""] * n
-    entries = entry_point if entry_point is not None else [""] * n
+    if not n:
+        return []
+    if executor is None:
+        raise ExecutorUnavailable("GRPO requires an explicitly configured DockerPythonExecutor; no host fallback")
     stubs = prompt_code if prompt_code is not None else [""] * n
-
-    # Two-pass: first build all programs (and mark which slots are invalid),
-    # then dispatch the runnable ones in one batch, then merge the results
-    # back. Keeps result order identical to the per-row loop and makes the
-    # batch path the single integration point should run_many ever go parallel.
-    programs: list[str] = []
-    runnable_idx: list[int] = []
-    for i, (comp, tst, entry, stub) in enumerate(zip(completions, tests, entries, stubs)):
-        if not tst or not entry:
-            continue
-        text = _completion_text(comp)
-        programs.append(build_program(stub or "", text, tst, entry))
-        runnable_idx.append(i)
-
-    results = run_many(programs, timeout=timeout)
-
-    rewards: list[float] = [0.0] * n
-    for i, (ok, _msg) in zip(runnable_idx, results):
-        rewards[i] = 1.0 if ok else 0.0
-    return rewards
+    for name, column in (("test", test), ("entry_point", entry_point), ("prompt_code", stubs)):
+        if not isinstance(column, (list, tuple)) or len(column) != n:
+            raise ValueError(f"{name} must have exactly {n} entries")
+        if any(not isinstance(value, str) or (not value and name != "prompt_code") for value in column):
+            raise ValueError(f"{name} contains missing or invalid values")
+    programs = [build_program(stub, _completion_text(completion), tests, entry)
+                for completion, tests, entry, stub in zip(completions, test, entry_point, stubs, strict=True)]
+    results = executor.run_many(programs)
+    if len(results) != n:
+        raise ExecutorUnavailable("verifier returned an incomplete reward batch")
+    if verdict_sink is not None:
+        for index, result in enumerate(results):
+            verdict_sink({"sample_index": index, "completion": _completion_text(completions[index]),
+                          "prompt_code": stubs[index], "entry_point": entry_point[index],
+                          "test": test[index], **result.to_dict()})
+    unknown = [result.outcome for result in results if result.passed is None]
+    if unknown:
+        raise ExecutorUnavailable(f"unassessed GRPO candidates: {unknown}; refusing a fabricated zero reward")
+    return [1.0 if result.passed else 0.0 for result in results]
 
 
 _FENCE_RE = re.compile(r"```(?:python)?\n(.*?)```", re.DOTALL)

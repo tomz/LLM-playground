@@ -1,11 +1,11 @@
-"""Multimodal (vision-language) adapter tests — see platform/model/vision.py."""
+"""Multimodal (vision-language) adapter tests — see frontier_platform/model/vision.py."""
 from __future__ import annotations
 
 import torch
 
-from platform.model.config import ModelConfig
-from platform.model.transformer import Transformer
-from platform.model.vision import (
+from frontier_platform.model.config import ModelConfig
+from frontier_platform.model.transformer import Transformer
+from frontier_platform.model.vision import (
     Projector,
     VisionConfig,
     VisionEncoder,

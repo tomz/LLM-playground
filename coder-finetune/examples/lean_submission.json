@@ -1,0 +1,6 @@
+{
+  "theorem": "∀ n : Nat, n + 0 = n",
+  "certificate": "by intro n; rfl",
+  "informal_argument": "Adding zero on the right reduces definitionally to n.",
+  "citations": ["Lean Init: Nat.add"]
+}

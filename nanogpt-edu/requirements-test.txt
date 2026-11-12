@@ -1,0 +1,9 @@
+# Install CPU torch from its official index first when running CPU CI.
+-c constraints-ci.txt
+-r requirements.txt
+matplotlib
+pytest
+pytest-timeout
+packaging
+setuptools
+wheel

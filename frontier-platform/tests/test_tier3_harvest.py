@@ -13,8 +13,8 @@ from pathlib import Path
 import pytest
 import torch
 
-from platform.model.config import ModelConfig
-from platform.model.transformer import Transformer
+from frontier_platform.model.config import ModelConfig
+from frontier_platform.model.transformer import Transformer
 
 
 def _tiny_cfg(**kw) -> ModelConfig:
@@ -101,7 +101,7 @@ def test_zero_init_works_with_mla():
 # 9. Hill-climb orchestrator
 # =====================================================================
 
-from platform.rl.hillclimb import (  # noqa: E402
+from frontier_platform.rl.hillclimb import (  # noqa: E402
     HillClimbConfig,
     HillClimbResult,
     Specialist,
@@ -109,7 +109,7 @@ from platform.rl.hillclimb import (  # noqa: E402
     run_hill_climb,
     train_specialist,
 )
-from platform.rl.verifiers import reward_contains  # noqa: E402
+from frontier_platform.rl.verifiers import reward_contains  # noqa: E402
 
 
 def _specialists() -> list[Specialist]:

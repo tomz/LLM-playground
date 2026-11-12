@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from platform.data.acquire import (
+from frontier_platform.data.acquire import (
     ArxivSource,
     CommonCrawlSource,
     GitHubSource,

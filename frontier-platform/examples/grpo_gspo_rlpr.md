@@ -1,7 +1,7 @@
 # GRPO vs GSPO + RLPR — measured on one GPU
 
 **What:** a hardware measurement of the two §14 RL harvests against the shipped
-GRPO learner (`platform/rl/grpo.py`, `platform/rl/verifiers.py`), on a small
+GRPO learner (`frontier_platform/rl/grpo.py`, `frontier_platform/rl/verifiers.py`), on a small
 **MoE** policy (GSPO's actual target regime) and a dense one. Driven by
 `tools/bench_grpo_gspo.py` — a *measurement*, not a new code path; it exercises
 `grpo_step` / `ProbabilityRewardVerifier` unchanged.
@@ -21,7 +21,7 @@ GRPO learner (`platform/rl/grpo.py`, `platform/rl/verifiers.py`), on a small
   executable checker anywhere; the reward is just a forward pass.
 - **One real bug fixed on the way:** `ProbabilityRewardVerifier` built its input
   tensor on CPU, so RLPR crashed on a GPU model — now placed on the model's
-  device (`platform/rl/verifiers.py`).
+  device (`frontier_platform/rl/verifiers.py`).
 
 Runs in ~13–23 s on one RTX 5060 Ti. CPU-runnable too (slower).
 

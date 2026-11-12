@@ -10,15 +10,15 @@ from pathlib import Path
 import pytest
 import torch
 
-from platform.model.config import ModelConfig
-from platform.model.transformer import Transformer
-from platform.rl.reward import (
+from frontier_platform.model.config import ModelConfig
+from frontier_platform.model.transformer import Transformer
+from frontier_platform.rl.reward import (
     CompositeReward,
     RewardConfig,
     language_consistency_reward,
     soft_length_penalty,
 )
-from platform.rl.verifiers import MathExactVerifier, reward_contains
+from frontier_platform.rl.verifiers import MathExactVerifier, reward_contains
 
 
 def _tiny_cfg() -> ModelConfig:
@@ -165,8 +165,8 @@ def test_soft_length_penalty_still_standalone():
 
 def test_composite_with_difficulty_and_tokenizer_runs_in_grpo(tmp_path):
     """End-to-end: a difficulty-aware composite reward drives a short GRPO run."""
-    from platform.rl.grpo import GRPOConfig, run_grpo
-    from platform.tokenizer.bytes import BytesTokenizer
+    from frontier_platform.rl.grpo import GRPOConfig, run_grpo
+    from frontier_platform.tokenizer.bytes import BytesTokenizer
 
     cfg_m = _tiny_cfg()
     base = tmp_path / "base.pt"

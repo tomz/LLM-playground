@@ -11,9 +11,10 @@ def test_lease_exclusivity_and_idempotent_completion():
     lease = queue.acquire("worker-1", now=10.0, lease_s=5.0)
     assert lease is not None and lease.item.item_id == "a"
     assert queue.acquire("worker-2", now=10.0) is None
-    assert not queue.complete("a", "worker-2", {}, now=11.0)
-    assert queue.complete("a", "worker-1", {"reward": 1.0}, now=11.0)
-    assert queue.complete("a", "worker-1", {"reward": 0.0}, now=12.0)
+    assert not queue.complete("a", "worker-2", {}, now=11.0, lease_token=lease.token)
+    assert not queue.complete("a", "worker-1", {}, now=11.0)
+    assert queue.complete("a", "worker-1", {"reward": 1.0}, now=11.0, lease_token=lease.token)
+    assert queue.complete("a", "worker-1", {"reward": 0.0}, now=12.0, lease_token=lease.token)
     assert queue.completed["a"].result == {"reward": 1.0}
 
 
@@ -24,17 +25,17 @@ def test_expired_lease_retries_and_rejects_stale_worker():
     lease = queue.acquire("new", now=2.0, lease_s=5.0)
     assert lease is not None and lease.item.attempt == 1
     assert not queue.complete("a", "old", {}, now=2.5)
-    assert queue.complete("a", "new", {"ok": True}, now=3.0)
+    assert queue.complete("a", "new", {"ok": True}, now=3.0, lease_token=lease.token)
 
 
 def test_fail_requeues_then_dead_letters():
     queue = RolloutQueue()
     queue.submit(WorkItem("a", {}, created_at=1.0))
-    queue.acquire("w", now=0.0)
-    assert queue.fail("a", "w", "transient", now=1.0, max_attempts=2)
+    first = queue.acquire("w", now=0.0)
+    assert queue.fail("a", "w", "transient", now=1.0, max_attempts=2, lease_token=first.token)
     lease = queue.acquire("w", now=2.0)
     assert lease is not None and lease.item.attempt == 1
-    assert queue.fail("a", "w", "permanent", now=3.0, max_attempts=2)
+    assert queue.fail("a", "w", "permanent", now=3.0, max_attempts=2, lease_token=lease.token)
     assert queue.failed == {"a": "permanent"}
 
 
@@ -55,4 +56,4 @@ def test_lease_is_expired_at_its_deadline():
     assert not queue.fail("a", "old", "too late", now=1.0)
     renewed = queue.acquire("new", now=1.0, lease_s=1.0)
     assert renewed is not None and renewed.item.attempt == 1
-    assert queue.complete("a", "new", {}, now=1.5)
+    assert queue.complete("a", "new", {}, now=1.5, lease_token=renewed.token)

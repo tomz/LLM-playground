@@ -91,25 +91,63 @@ def candidate_description() -> str:
     return "(no description)"
 
 
-def run_once(*, tokens: int, minutes: float | None, seed: int, keep_git: bool) -> dict:
-    """Run the harness on the current candidate and return its Result dict."""
+def run_once(*, tokens: int, minutes: float | None, seed: int, keep_git: bool,
+             timeout_s: float | None = None) -> dict:
+    """Run one search-validation attempt, retaining failures and elapsed work.
+
+    A missing/invalid result cannot establish generated/trained-token or verifier
+    cost. A whole-process timeout is optional and separate from the harness's
+    training timer. Final-holdout measurements may never feed this search loop.
+    """
     import json
+    import math
     import tempfile
+    from time import perf_counter
+
+    if timeout_s is not None and (isinstance(timeout_s, bool)
+            or not math.isfinite(timeout_s) or timeout_s <= 0):
+        raise ValueError("timeout_s must be finite and positive")
+    started = perf_counter()
+    result = {"ok": False, "reason": "harness result unavailable", "tokens": None,
+              "verifier_cost_s": None, "val_bpb": None}
     with tempfile.NamedTemporaryFile("r", suffix=".json", delete=False) as tf:
-        out_json = tf.name
+        out_json = Path(tf.name)
     cmd = [sys.executable, str(HERE / "harness.py"),
-           "--candidate", str(CANDIDATE), "--seed", str(seed),
-           "--json-out", out_json]
-    if minutes is not None:
-        cmd += ["--minutes", str(minutes)]
-    else:
-        cmd += ["--tokens", str(tokens)]
-    proc = subprocess.run(cmd, cwd=HERE, capture_output=True, text=True, check=False)
-    if proc.returncode != 0:
-        # A crash (bad patch, OOM, syntax error in candidate) → not ok.
-        return {"ok": False, "reason": f"harness crashed (rc={proc.returncode})",
-                "stderr": proc.stderr[-800:]}
-    return json.loads(Path(out_json).read_text())
+           "--candidate", str(CANDIDATE), "--seed", str(seed), "--json-out", str(out_json)]
+    cmd += ["--minutes", str(minutes)] if minutes is not None else ["--tokens", str(tokens)]
+    try:
+        proc = subprocess.run(cmd, cwd=HERE, capture_output=True, text=True,
+                              check=False, timeout=timeout_s)
+        try:
+            parsed = json.loads(out_json.read_text())
+            if not isinstance(parsed, dict) or type(parsed.get("ok")) is not bool:
+                raise ValueError("result must contain a Boolean ok field")
+            for key in ("tokens", "wall_s", "verifier_cost_s", "val_bpb"):
+                value = parsed.get(key)
+                if value is not None and (isinstance(value, bool)
+                        or not isinstance(value, (int, float)) or not math.isfinite(value)
+                        or value < 0 or (key == "tokens" and type(value) is not int)):
+                    raise ValueError(f"invalid measured {key}")
+            if parsed["ok"] and parsed.get("val_bpb") is None:
+                raise ValueError("passing result requires a measured validation score")
+            result.update(parsed)
+            if (parsed.get("evaluation_role", "search_validation") != "search_validation"
+                    or parsed.get("evaluation_split", "val") != "val"):
+                result.update(ok=False, reason="sealed/final-holdout results cannot enter search selection")
+        except (OSError, ValueError, TypeError) as exc:
+            result["reason"] = f"missing or malformed harness result: {type(exc).__name__}"
+        if proc.returncode != 0:
+            result.update(ok=False, reason=f"harness crashed (rc={proc.returncode})",
+                          stderr=(proc.stderr or "")[-800:])
+    except subprocess.TimeoutExpired:
+        result.update(ok=False, reason="harness process timeout")
+    except OSError as exc:
+        result.update(ok=False, reason=f"harness launch failed: {type(exc).__name__}")
+    finally:
+        out_json.unlink(missing_ok=True)
+        result["training_wall_s"] = result.get("wall_s")
+        result["wall_s"] = perf_counter() - started
+    return result
 
 
 def keep(desc: str, *, use_git: bool, snapshot: dict) -> None:
@@ -224,12 +262,17 @@ def loop(args) -> None:
             status=status,
             gate_ok=bool(res.get("ok", False)),
             gate_reason=str(res.get("reason", "")),
-            tokens=int(res.get("tokens", 0) or 0),
-            wall_s=float(res.get("wall_s", 0.0) or 0.0),
+            tokens=res.get("tokens"),
+            wall_s=float(res["wall_s"]),
             val_bpb=(float(res["val_bpb"])
                      if res.get("val_bpb") not in (None, "") else None),
-            verifier_cost_s=float(res.get("verifier_cost_s", 0.0) or 0.0),
-            metadata={"auto": bool(args.auto), "iteration": i + 1},
+            verifier_cost_s=res.get("verifier_cost_s"),
+            metadata={"auto": bool(args.auto), "iteration": i + 1,
+                      **{key: res.get(key) for key in (
+                          "evaluation_role", "evaluation_split", "byte_normalization",
+                          "bytes_per_token", "data_manifest_sha256", "harness_contract_version",
+                          "training_wall_s", "stderr",
+                      )}},
         ))
     refresh_plot()
     print(f"\n[loop] done — {len([r for r in rows if r['status']=='keep'])} kept of {len(rows)}; "
@@ -238,7 +281,7 @@ def loop(args) -> None:
 
 def main():
     ap = argparse.ArgumentParser(description="autoresearch keep/revert loop")
-    ap.add_argument("--tokens", type=int, default=2_000_000, help="per-experiment token budget")
+    ap.add_argument("--tokens", type=int, default=2_097_152, help="exact token budget; must divide into full candidate steps")
     ap.add_argument("--minutes", type=float, default=None, help="wall-clock budget instead of tokens")
     ap.add_argument("--seed", type=int, default=1337)
     ap.add_argument("--auto", type=int, default=0,

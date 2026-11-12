@@ -1,7 +1,7 @@
-"""Agentic / tool-use environment tests (platform/rl/agentic.py, gap #4)."""
+"""Agentic / tool-use environment tests (frontier_platform/rl/agentic.py, gap #4)."""
 from __future__ import annotations
 
-from platform.rl.agentic import (
+from frontier_platform.rl.agentic import (
     FINAL,
     TOOL_CALL,
     ToolEnv,
@@ -10,7 +10,7 @@ from platform.rl.agentic import (
     parse_action,
     rollout_episode,
 )
-from platform.rl.selfplay import Candidate, run_selfplay, scripted_policy
+from frontier_platform.rl.selfplay import Candidate, run_selfplay, scripted_policy
 
 
 def test_parse_action_tool_final_noop():

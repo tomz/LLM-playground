@@ -14,15 +14,15 @@ import argparse, json, os, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from platform.sim.cluster import Cluster
-from platform.sim.alignment_sim import AlignmentSpec
-from platform.sim.reasoning_rl_sim import ReasoningRLSpec
-from platform.sim.serving_sim import ServingTier
-from platform.sim.orchestrator import ProgramSpec, run_program
-from platform.sim.gpu_probe import (
+from frontier_platform.sim.cluster import Cluster
+from frontier_platform.sim.alignment_sim import AlignmentSpec
+from frontier_platform.sim.reasoning_rl_sim import ReasoningRLSpec
+from frontier_platform.sim.serving_sim import ServingTier
+from frontier_platform.sim.orchestrator import ProgramSpec, run_program
+from frontier_platform.sim.gpu_probe import (
     have_cuda, probe_all, register_in_gpu_specs, format_probe_report,
 )
-from platform.sim.real_train import measure_real_throughput, format_real_train_report
+from frontier_platform.sim.real_train import measure_real_throughput, format_real_train_report
 
 
 PRESETS = {
@@ -126,7 +126,7 @@ def report(result: dict, spec: ProgramSpec) -> None:
     print(f" ALIGN:    sft_quality {al['sft_quality']:.3f}  rlhf_quality {al['rlhf_quality']:.3f}")
     rl = result.get("reasoning_rl", {})
     if rl.get("rl_compute_flops", 0) > 0:
-        from platform.sim.scaling import compute_flops
+        from frontier_platform.sim.scaling import compute_flops
         pretrain_flops = compute_flops(spec.active_params, spec.total_tokens)
         pct = rl["rl_compute_flops"] / max(1.0, pretrain_flops) * 100
         print(f" REASON-RL: reasoning_quality {rl['reasoning_quality']:.3f}  "

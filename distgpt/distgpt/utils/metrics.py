@@ -16,37 +16,31 @@ import torch
 # ---------------------------------------------------------------------------
 
 
+def _logical_norm(tensors: list[torch.Tensor], norm_type: float) -> float:
+    """Reduce sharded norms as scalars; never stack DTensors with local tensors."""
+    from torch.distributed.tensor import DTensor, Replicate
+
+    norms = []
+    for tensor in tensors:
+        value = tensor.detach().float()
+        if isinstance(value, DTensor) and any(p.is_partial() for p in value.placements):
+            value = value.redistribute(placements=[Replicate()] * value.device_mesh.ndim)
+        norm = torch.linalg.vector_norm(value, norm_type)
+        if isinstance(norm, DTensor):
+            norm = norm.full_tensor()
+        norms.append(norm)
+    return float(torch.linalg.vector_norm(torch.stack(norms), norm_type)) if norms else 0.0
+
+
 def compute_grad_norm(model: torch.nn.Module, norm_type: float = 2.0) -> float:
-    """L2 norm of all gradients, computed identically to ``clip_grad_norm_``
-    but without applying any clipping. Use this on the no-clip path so the
-    log still has the diagnostic. Returns 0.0 if no grads are populated."""
-    grads = [
-        p.grad for p in model.parameters()
-        if p.grad is not None and p.requires_grad
-    ]
-    if not grads:
-        return 0.0
-    # Match torch.nn.utils.clip_grad_norm_'s computation exactly so the
-    # values are comparable across runs that do/don't clip.
-    device = grads[0].device
-    total = torch.stack(
-        [torch.linalg.vector_norm(g.detach().to(torch.float32), norm_type)
-         for g in grads]
-    ).to(device)
-    return float(torch.linalg.vector_norm(total, norm_type))
+    """Logical model norm, counting replicated gradients once. Collective for TP."""
+    return _logical_norm([p.grad for p in model.parameters()
+                          if p.grad is not None and p.requires_grad], norm_type)
 
 
 def compute_param_norm(model: torch.nn.Module, norm_type: float = 2.0) -> float:
-    """L2 of all model parameters. Slow on big models so sample sparsely
-    (the trainer takes one sample every 10× log_every)."""
-    params = [p.detach().to(torch.float32) for p in model.parameters()
-              if p.requires_grad]
-    if not params:
-        return 0.0
-    return float(torch.linalg.vector_norm(
-        torch.stack([torch.linalg.vector_norm(p, norm_type) for p in params]),
-        norm_type,
-    ))
+    """Logical parameter norm. Every TP rank must participate in this reduction."""
+    return _logical_norm([p for p in model.parameters() if p.requires_grad], norm_type)
 
 
 # ---------------------------------------------------------------------------

@@ -1,12 +1,12 @@
 from __future__ import annotations
 import torch
 
-from platform.model.transformer import Transformer
-from platform.model.config import ModelConfig
-from platform.training.optim import OptimConfig, build_optimizer
-from platform.training.checkpoint import CheckpointManager
-from platform.training.parallel import ParallelEngine, ParallelConfig
-from platform.training.stability import SpikeMonitor, RewindController
+from frontier_platform.model.transformer import Transformer
+from frontier_platform.model.config import ModelConfig
+from frontier_platform.training.optim import OptimConfig, build_optimizer
+from frontier_platform.training.checkpoint import CheckpointManager
+from frontier_platform.training.parallel import ParallelEngine, ParallelConfig
+from frontier_platform.training.stability import SpikeMonitor, RewindController
 
 
 def _engine():

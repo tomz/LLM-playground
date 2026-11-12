@@ -10,6 +10,9 @@ seed: 1337
 
 model:
   name: Qwen/Qwen2.5-Coder-0.5B
+  revision: 8123ea2e9354afb7ffcc6c8641d1b2f5ecf18301
+  tokenizer_revision: 8123ea2e9354afb7ffcc6c8641d1b2f5ecf18301
+  local_files_only: true
   dtype: bfloat16
   attn_impl: sdpa
   trust_remote_code: false
@@ -32,6 +35,8 @@ lora:
 # is applied in cf_data.load_builtin (default repeat=50 → 800 rows).
 # 320 * 1 epoch * micro_batch=1 / grad_accum=4  =  80 optimizer steps.
 dataset:
+  validation_fraction: 0.1
+  group_by: null  # Auto group metadata plus exact-prompt connectivity; never row-random leakage.
   source: builtin
   hf_name: null
   jsonl_path: null
@@ -39,6 +44,7 @@ dataset:
   format: chatml
 
 train:
+  loss_scope: all_tokens  # Explicit legacy objective; assistant_only needs generation markers.
   max_seq_len: 512        # builtin replies are short; 512 is plenty
   batch_size: 1
   grad_accum: 4           # effective batch = 4

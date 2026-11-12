@@ -1,432 +1,354 @@
-"""The training loop. Wires model + parallelism + data + optim + ckpt + logging.
+"""Validated single-process, DDP, dense CUDA FSDP, and restricted TP paths.
 
-Pipeline-parallelism note
--------------------------
-When PP > 1 the schedule (`Schedule1F1B`) runs both forward AND backward over
-its `n_microbatches` configured at construction time, so we set
-`n_microbatches = grad_accum` once and execute it as a SINGLE step — there is
-no outer `for _ in range(accum)` loop nor a manual `loss.backward()`. The
-schedule reports per-microbatch losses on the last PP rank only; intermediate
-ranks see no loss tensor.
-
-Eval under PP
--------------
-The old code returned ``nan`` for any pipelined eval, which silently disabled
-``best.txt`` tracking. We now build a separate Schedule1F1B with
-``n_microbatches=1`` and run it once at eval time; the last PP rank produces
-the loss, gathers across DP, and broadcasts to all ranks so logging /
-best-checkpoint logic works the same as in the non-PP case.
-
-Compilation
------------
-``train.compile: true`` runs ``torch.compile(model, mode='reduce-overhead')``
-on the wrapped model (after TP/PP/FSDP composition). Skipped when PP > 1
-because ``Schedule1F1B``'s graph-capture doesn't currently round-trip with
-``torch.compile`` cleanly.
-
-Metrics
--------
-Every log step records:
-  * ``loss``: DP-averaged cross-entropy
-  * ``lr``: cosine-with-warmup schedule value × rewind multiplier
-  * ``ms``, ``tok_per_s``, ``tok_per_s_per_gpu``: wall-clock throughput
-  * ``mfu``: model-FLOPs-utilization vs the device's peak (when known)
-  * ``grad_norm`` (pre-clip): the single best early-warning signal for
-    divergence — a diverging run usually announces itself in grad-norm
-    100+ steps before the loss spikes.
-  * ``param_norm``: aggregate L2 of model parameters (sanity check that
-    weight-decay is doing what you expect).
+PP and DP×TP remain fail-closed until composition/restart parity is established.
+Their lower-level modules remain available for explicit experiments.
+Checkpoints are saved only at completed optimizer-update boundaries. Evaluation
+uses independent, content-identified shards and cannot consume training data/RNG.
 """
 from __future__ import annotations
-import contextlib, os, time
+
+import contextlib
+from dataclasses import asdict
+import json
+import logging
+import math
+import os
+from pathlib import Path
+import random
+import time
+from typing import Callable
+
+import numpy as np
 import torch
 import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel
 
+from ..data.streaming import StreamingLoader, assert_disjoint
 from ..model.config import ModelConfig
 from ..model.transformer import GPT
-from ..parallel.mesh import build_mesh
-from ..parallel.fsdp import apply_fsdp
+from ..parallel.mesh import ParallelContext, build_mesh, resolve_dimensions
 from ..parallel.tensor import apply_tp
-from ..parallel.pipeline import build_pipeline
-from ..data.streaming import StreamingLoader
-from ..utils.dist import init as dist_init, destroy as dist_destroy, is_master, all_reduce_mean
+from ..parallel.fsdp import apply_fsdp
+from ..utils.dist import init as dist_init, destroy as dist_destroy, is_master
 from ..utils.logging import Logger
-from ..utils.metrics import (
-    compute_grad_norm, compute_param_norm, estimate_mfu, peak_tflops_for_device,
-)
-from .optim import build_optimizer, cosine_lr
+from ..utils.metrics import compute_param_norm, estimate_mfu, peak_tflops_for_device
+from ..utils.state import atomic_json, capture_rng_state, restore_rng_state
+from .checkpoint import CheckpointManager, _collective_call
+from .gradients import clip_grad_norm
 from .muon import build_muon_and_adamw
-from .precision import resolve_fp8_recipe, autocast_fp8_context, log_fp8_choice
-from .checkpoint import CheckpointManager
+from .optim import build_optimizer, cosine_lr
 from .stability import SpikeMonitor, RewindController
 
+LOG = logging.getLogger(__name__)
 DTYPES = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}
 
 
-def _maybe_compile(model, enabled: bool, pp_active: bool) -> object:
-    """Wrap with ``torch.compile`` when requested and safe.
-
-    ``pp_active=True`` skips compilation because PyTorch's pipelining schedule
-    captures its own graph and the two layers of graph capture don't currently
-    compose. We log the decision so users notice when their compile=true got
-    quietly ignored under PP.
-
-    We use ``mode="default"`` rather than ``"reduce-overhead"`` because the
-    latter enables CUDA Graph trees, which interact badly with the lazy RoPE
-    cache (``GPT._rope`` is overwritten across steps and CUDA Graph trees
-    treat it as a live output between calls). ``"default"`` still gets the
-    inductor kernel fusion speedup at the cost of a few extra CPU launches
-    per step. If you need cudagraphs, either pre-allocate RoPE in
-    ``GPT.__init__`` as a buffer or use ``"reduce-overhead"`` after that
-    refactor.
-    """
+def _maybe_compile(model: torch.nn.Module, enabled: bool, pp_active: bool) -> torch.nn.Module:
+    """Optional single-process compile; never silently change precision."""
     if not enabled:
         return model
     if pp_active:
-        if is_master():
-            print("[compile] disabled (PP active; torch.compile + Schedule1F1B "
-                  "don't compose yet)")
-        return model
-    try:
-        compiled = torch.compile(model, mode="default", fullgraph=False)
-        if is_master():
-            print("[compile] torch.compile(mode='default') applied")
-        return compiled
-    except Exception as e:
-        # If compile fails (older torch / unsupported op), fall back gracefully
-        # rather than killing a multi-day run.
-        if is_master():
-            print(f"[compile] failed: {type(e).__name__}: {e}; running uncompiled")
-        return model
+        raise ValueError("torch.compile with pipeline parallelism is unsupported")
+    return torch.compile(model, mode="default", fullgraph=False)
 
 
-def train(cfg: dict, data_dir_override: str | None = None) -> None:
-    rank, local_rank, world = dist_init()
-    colocate = os.environ.get("DISTGPT_COLOCATE_RANKS") == "1"
-    device = ("cuda:0" if colocate else f"cuda:{local_rank}") if torch.cuda.is_available() else "cpu"
-    is_cuda = device.startswith("cuda")
-    dtype = DTYPES[cfg["dtype"]]
-    if is_master():
-        os.makedirs(cfg["out_dir"], exist_ok=True)
-        print(f"[init] rank={rank}/{world} device={device} dtype={dtype}")
-
-    torch.manual_seed(cfg["seed"])
-
-    pcfg = cfg["parallel"]
-    mesh, dp, tp, pp = build_mesh(world, pcfg["dp"], pcfg["tp"], pcfg["pp"], "cuda" if is_cuda else "cpu")
-    if is_master():
-        print(f"[mesh] dp={dp} tp={tp} pp={pp}")
-
-    mcfg = ModelConfig(**cfg["model"])
-    if is_master():
-        print(f"[model] {mcfg.param_count()/1e9:.2f}B params")
-    model = GPT(mcfg, activation_ckpt=pcfg["activation_ckpt"]).to(device=device, dtype=dtype)
-
-    # Apply parallelism: TP first, then PP (which trims to local stage), then
-    # FSDP on the data dim.
-    pp_schedule = None
-    is_last_pp_rank = True
-    if mesh is not None:
-        model = apply_tp(model, mesh["tp"],
-                          sequence_parallel=pcfg.get("sequence_parallel", False))
-        model, pp_schedule = build_pipeline(model, mesh["pp"], n_microbatches=cfg["train"]["grad_accum"])
-        if pp_schedule is not None:
-            pp_mesh = mesh["pp"]
-            is_last_pp_rank = (pp_mesh.get_local_rank() == pp_mesh.size() - 1)
-        if pcfg["zero"] == "fsdp":
-            model = apply_fsdp(model, mesh["dp"], dtype,
-                                reshard_after_forward=pcfg.get("reshard_after_forward", True))
-
-    model = _maybe_compile(model, cfg["train"].get("compile", False),
-                            pp_active=pp_schedule is not None)
-
-    optim_kind = cfg["optim"].get("optimizer", "adamw")
-    if optim_kind == "muon":
-        # Dual Muon (hidden 2D weights) + AdamW (embeddings / heads / 1-D)
-        # on one shared cosine schedule. ``muon_lr`` defaults to 20× the
-        # ``adamw_lr`` because Muon's update is scaled to RMS≈1 already
-        # (the modded-nanogpt convention; tune per-run if you change ndim).
-        muon_lr = cfg["optim"].get("muon_lr", cfg["optim"]["lr"] * 100)
-        optims = build_muon_and_adamw(
-            model,
-            muon_lr=muon_lr,
-            adamw_lr=cfg["optim"]["lr"],
-            muon_momentum=cfg["optim"].get("muon_momentum", 0.95),
-            muon_weight_decay=cfg["optim"].get("muon_weight_decay", 0.0),
-            muon_update_scale=cfg["optim"].get("muon_update_scale"),
-            adamw_betas=cfg["optim"]["betas"],
-            weight_decay=cfg["optim"]["weight_decay"],
-            fused=is_cuda,
-        )
-        if is_master():
-            n_muon = sum(1 for o in optims if o.__class__.__name__ == "Muon")
-            n_adam = sum(1 for o in optims if o.__class__.__name__ == "AdamW")
-            print(f"[optim] muon={n_muon} adamw={n_adam} (dual schedule)")
-    elif optim_kind == "adamw":
-        optims = [build_optimizer(
-            model, cfg["optim"]["lr"], cfg["optim"]["betas"],
-            cfg["optim"]["weight_decay"], fused=is_cuda,
-        )]
-    else:
-        raise ValueError(
-            f"unknown optim.optimizer={optim_kind!r}; expected 'adamw' or 'muon'"
-        )
-
-    data_dir = data_dir_override or cfg["data"]["dir"]
-    loader = StreamingLoader(
-        data_dir, cfg["data"]["seq_len"], cfg["train"]["micro_batch"],
-        rank=rank, world_size=world, seed=cfg["seed"], device=device,
-    )
-    ckpt = CheckpointManager(cfg["out_dir"], cfg["run_id"])
-    spike = SpikeMonitor()
-    rewind = RewindController(ckpt)
-    logger = Logger(
-        os.path.join(cfg["out_dir"], "log.jsonl") if cfg["log"]["jsonl"] else None,
-        cfg["log"].get("wandb_project"), cfg,
-    )
-
-    # Snapshot the per-group base LRs so we can re-apply the schedule on top
-    # of them without losing per-optimizer scaling (Muon's LR is much higher
-    # than AdamW's; the cosine should preserve the ratio, not collapse them).
-    _base_lrs = [
-        [g["lr"] for g in o.param_groups] for o in optims
-    ]
-
-    # Resume / warm-start logic. Priority order:
-    #   1. Native resume: if `out_dir/run_id/ckpts/` has a step dir, pick up
-    #      where we left off (model + optim + loader cursor + step counter).
-    #   2. Warm start: `load_ckpt: path` in YAML loads weights only from an
-    #      external checkpoint and starts at step 0 with a fresh optim and
-    #      loader. Used by cooldown / longctx / domain-adapt recipes.
-    #   3. Cold start: brand-new model, step 0.
-    if ckpt.latest() is not None:
-        start = ckpt.load(model, optims, loader, step="latest")
-        if is_master():
-            print(f"[resume] @ step {start}")
-    elif cfg.get("load_ckpt"):
-        warm_path = cfg["load_ckpt"]
-        if is_master():
-            print(f"[warm-start] loading weights from {warm_path}")
-        ckpt.load_weights_only(model, warm_path)
-        start = 0
-    else:
-        start = 0
-    best_val = float("inf")
-
-    accum = cfg["train"]["grad_accum"]
+def validate_config(cfg: dict, world: int, device_type: str) -> tuple[int, int, int]:
+    """Fail before group/model/data allocation for unsupported training modes."""
+    parallel, training = cfg["parallel"], cfg["train"]
+    dp, tp, pp = resolve_dimensions(world, parallel["dp"], parallel["tp"], parallel["pp"])
+    if pp != 1:
+        raise NotImplementedError("integrated PP training is disabled: macro-batch, gradient and restart parity are unvalidated; use the lower-level pipeline experiment")
+    if dp > 1 and tp > 1:
+        raise NotImplementedError("integrated DP×TP training is disabled pending mixed-topology parity")
+    if parallel["zero"] not in ("none", "fsdp"):
+        raise ValueError("parallel.zero must be 'none' or 'fsdp'")
+    if parallel["zero"] == "fsdp" and dp > 1:
+        if device_type != "cuda":
+            raise NotImplementedError("FSDP trainer requires CUDA; use zero: none for CPU DDP")
+        if cfg["optim"].get("optimizer", "adamw") != "adamw":
+            raise NotImplementedError("FSDP trainer optimizer parity currently covers AdamW only")
+        if parallel.get("activation_ckpt", "none") != "none":
+            raise NotImplementedError("FSDP activation-checkpoint integration needs separate parity evidence")
+        if type(parallel.get("reshard_after_forward", True)) is not bool:
+            raise ValueError("reshard_after_forward must be a boolean")
+    dtype = cfg["dtype"]
+    if dtype not in DTYPES:
+        raise ValueError(f"unknown dtype: {dtype!r}")
+    if dtype == "float16":
+        raise ValueError("float16 training requires a validated GradScaler/restart path; use float32 or CUDA bfloat16")
+    if dtype == "bfloat16" and device_type != "cuda":
+        raise ValueError("CPU trainer supports float32 only; bfloat16 AMP requires CUDA")
+    if dtype == "bfloat16" and not torch.cuda.is_bf16_supported():
+        raise ValueError("the selected CUDA device does not support bfloat16")
+    if training.get("fp8", "off") not in ("off", False, None):
+        raise ValueError("FP8 trainer integration is unvalidated (ordinary Linear layers are not TE-converted); set train.fp8: 'off'")
+    if training.get("compile", False) and world > 1:
+        raise NotImplementedError("distributed torch.compile integration is gated on parity tests")
+    if parallel.get("activation_ckpt", "none") not in ("none", "full", "selective"):
+        raise ValueError("unknown activation checkpoint policy")
+    model = ModelConfig(**cfg["model"])
+    if dp > 1 and (model.moe_enabled or model.mla_enabled or model.mtp_tokens):
+        raise NotImplementedError("DDP trainer currently validates dense GQA only; MoE/MLA/MTP remain single-process experiments")
+    if tp > 1:
+        if tp != 2 or device_type != "cpu" or dtype != "float32":
+            raise NotImplementedError("trainer TP currently validates TP=2 on CPU/Gloo float32 only")
+        if (model.moe_enabled or model.mla_enabled or model.mtp_tokens or model.qk_norm
+                or model.tie_embeddings or model.fused_ce):
+            raise NotImplementedError("TP trainer requires dense GQA, untied embeddings, qk_norm=false, mtp_tokens=0 and fused_ce=false")
+        if cfg["optim"].get("optimizer", "adamw") != "adamw":
+            raise NotImplementedError("TP trainer optimizer parity currently covers AdamW only")
+        if any(value % tp for value in (model.n_head, model.n_kv_head, model.vocab_size, model.d_ffn)):
+            raise ValueError("TP heads, KV heads, vocabulary and FFN dimensions must divide by tp")
+        if parallel.get("sequence_parallel", False) and cfg["data"]["seq_len"] % tp:
+            raise ValueError("sequence length must divide by tp for sequence parallelism")
+    if model.fused_ce and device_type != "cuda":
+        raise ValueError("fused_ce requires CUDA; the CPU reference uses dense cross entropy")
+    for key in ("micro_batch", "grad_accum", "log_every"):
+        if type(training[key]) is not int or training[key] < 1:
+            raise ValueError(f"train.{key} must be a positive integer")
+    for key in ("eval_every", "ckpt_every"):
+        if type(training[key]) is not int or training[key] < 0:
+            raise ValueError(f"train.{key} must be nonnegative (0 explicitly disables it)")
+    if training["eval_every"] and not (cfg["data"].get("val_dir") or cfg["data"].get("val_manifest")):
+        raise ValueError("evaluation requires data.val_dir or data.val_manifest; set train.eval_every: 0 to disable it explicitly")
+    if training.get("eval_batches", 1) < 1:
+        raise ValueError("train.eval_batches must be positive")
+    if cfg["data"]["seq_len"] > model.max_seq_len:
+        raise ValueError("data.seq_len exceeds model.max_seq_len")
     total = cfg["optim"]["total_steps"]
-    log_every = cfg["train"]["log_every"]
-    eval_every = cfg["train"]["eval_every"]
-    ckpt_every = cfg["train"]["ckpt_every"]
-    tokens_per_step = cfg["train"]["micro_batch"] * accum * dp * cfg["data"]["seq_len"]
-    bf16_autocast = torch.amp.autocast("cuda", dtype=dtype) if is_cuda else contextlib.nullcontext()
-    # FP8 (Transformer Engine) wraps the bf16 autocast when train.fp8 != "off".
-    # The recipe resolver downgrades to no-FP8 on unsupported HW/dtype with a
-    # warning, so a misconfigured run keeps training in bf16 instead of erroring.
-    fp8_recipe = resolve_fp8_recipe(cfg.get("train", {}).get("fp8", "off"), device, dtype)
-    if is_master():
-        log_fp8_choice(fp8_recipe, dtype)
-
-    @contextlib.contextmanager
-    def autocast():
-        """Combined fp8 (optional) + bf16 autocast. Re-entered every step
-        so TE's amax-history buffers update correctly per-iteration."""
-        with autocast_fp8_context(fp8_recipe), bf16_autocast:
-            yield
-
-    # Peak device throughput for MFU. None on CPU / unrecognized GPU — MFU
-    # is then omitted from the log rather than reported as a wrong number.
-    peak_tflops = peak_tflops_for_device(dtype)
-    if is_master() and peak_tflops is not None:
-        print(f"[mfu] peak {peak_tflops:.1f} TFLOP/s @ {dtype}")
-
-    t0 = time.time()
-    step = start
-    while step < total:
-        base_lr = cosine_lr(step, cfg["optim"]["warmup_steps"], total,
-                            cfg["optim"]["lr"], cfg["optim"]["min_lr"])
-        eff_lr = base_lr * rewind.lr_multiplier()
-        # Apply the cosine schedule by scaling each param group's *original*
-        # LR by the same factor — that way Muon (whose base is 100× AdamW's)
-        # keeps its relative LR through warmup/decay.
-        scale = eff_lr / max(cfg["optim"]["lr"], 1e-12)
-        for o_idx, o in enumerate(optims):
-            for g_idx, g in enumerate(o.param_groups):
-                g["lr"] = _base_lrs[o_idx][g_idx] * scale
-
-        for o in optims:
-            o.zero_grad(set_to_none=True)
-        loss_acc = 0.0
-        if pp_schedule is None:
-            # No pipelining: regular gradient accumulation. Under FSDP2 we
-            # gate gradient sync so the reduce-scatter fires only on the LAST
-            # micro-step instead of all `accum` of them — on a PCIe fabric
-            # (no NVLink) that single change is the difference between
-            # comm-bound (~6% MFU) and compute-bound. `set_requires_grad_sync`
-            # is a no-op on non-FSDP models, so this is safe single-GPU too.
-            sync_gate = getattr(model, "set_requires_gradient_sync", None)
-            for micro in range(accum):
-                if sync_gate is not None:
-                    sync_gate(micro == accum - 1)
-                x, y = loader.next_batch()
-                with autocast():
-                    _, loss = model(x, y)
-                    loss = loss / accum
-                loss.backward()
-                loss_acc += loss.detach().float().item()
-            step_loss = loss_acc  # already averaged across micro-steps
-        else:
-            # Pipelined: schedule.step() runs forward + backward over its own
-            # n_microbatches (= accum). Pull a single concatenated batch.
-            x, y = loader.next_batch()
-            losses: list[torch.Tensor] = []
-            with autocast():
-                if is_last_pp_rank:
-                    pp_schedule.step(x, target=y, losses=losses)
-                else:
-                    pp_schedule.step(x)
-            if losses:
-                step_loss = sum(l.detach().float().item() for l in losses) / len(losses)
-            else:
-                step_loss = 0.0  # non-tail PP ranks don't see a loss tensor
-
-        # Pre-clip grad norm: the single best early-warning signal for
-        # divergence. clip_grad_norm_ returns the (pre-clip) total norm so
-        # we get it for free; expose it in the log.
-        if cfg["optim"]["grad_clip"]:
-            gnorm = torch.nn.utils.clip_grad_norm_(model.parameters(), cfg["optim"]["grad_clip"])
-            grad_norm = float(gnorm) if isinstance(gnorm, torch.Tensor) else gnorm
-        else:
-            grad_norm = compute_grad_norm(model)
-        for o in optims:
-            o.step()
-
-        # Aggregate loss across DP for accurate logging. PP intermediates have
-        # 0.0 — we average only across the DP dim, not the PP dim, so they
-        # don't drag the value down.
-        loss_t = torch.tensor(step_loss, device=device)
-        loss_t = all_reduce_mean(loss_t)
-        loss_val = loss_t.item()
-
-        if is_last_pp_rank and spike.observe(loss_val):
-            if is_master():
-                print(f"[spike] step={step} loss={loss_val:.3f} — rewinding")
-            step = rewind.on_spike(model, optims, loader, step)
-            continue
-
-        if step % log_every == 0:
-            dt = (time.time() - t0) / max(1, log_every); t0 = time.time()
-            tps = tokens_per_step / dt
-            tps_per_gpu = tps / max(1, world)
-            metrics = dict(loss=loss_val, lr=eff_lr, ms=dt * 1000,
-                            tok_per_s=tps, tok_per_s_per_gpu=tps_per_gpu,
-                            grad_norm=grad_norm)
-            # Param norm is a few hundred ms per call on large models; sample
-            # every 10× log_every to keep it cheap.
-            if (step // log_every) % 10 == 0:
-                metrics["param_norm"] = compute_param_norm(model)
-            if peak_tflops is not None:
-                mfu = estimate_mfu(mcfg, tokens_per_step, dt, peak_tflops,
-                                    world_size=world)
-                if mfu is not None:
-                    metrics["mfu"] = mfu
-            if is_master():
-                mfu_str = f" | mfu {metrics.get('mfu', 0)*100:.1f}%" if "mfu" in metrics else ""
-                print(f"step {step:7d} | loss {loss_val:.4f} | lr {eff_lr:.2e} "
-                       f"| gnorm {grad_norm:.3f} | {dt*1000:.0f} ms "
-                       f"| {tps/1e6:.2f}M tok/s{mfu_str}")
-            logger.log(step, **metrics)
-
-        if step > 0 and step % ckpt_every == 0:
-            path = ckpt.save(model, optims, loader, step)
-            if is_master():
-                print(f"[ckpt] saved → {path}")
-
-        if step > 0 and step % eval_every == 0:
-            ev = _eval_one_batch(model, loader, autocast, pp_schedule,
-                                  is_last_pp_rank, accum, mesh, device, world)
-            if is_master():
-                print(f"           eval | loss {ev:.4f}")
-            logger.log(step, eval_loss=ev)
-            if ev == ev and ev < best_val:  # NaN-safe
-                best_val = ev
-                bp = ckpt.save(model, optims, loader, step)
-                # Mark as "best" via a sibling sentinel file (DCP dirs are
-                # already step-named; we just leave a pointer).
-                if is_master():
-                    with open(os.path.join(ckpt.root, "best.txt"), "w") as f:
-                        f.write(f"step_{step:09d}\n")
-                    print(f"           best val {best_val:.4f} → {bp}")
-            model.train()
-
-        step += 1
-
-    if is_master():
-        print("[done]")
-    # `ckpt.save` is a collective (dcp.save + dist.barrier) — every rank
-    # must participate, not just rank-0. The old `if is_master(): ckpt.save`
-    # gated the entire collective on rank-0 and deadlocked on rank-1+ as
-    # soon as either side hit a barrier. Bug was invisible because no
-    # multi-rank test ever exercised the final-save path.
-    ckpt.save(model, optims, loader, total)
-    if is_master():
-        if is_cuda:
-            alloc = torch.cuda.max_memory_allocated(0) // (1024 * 1024)
-            resv = torch.cuda.max_memory_reserved(0) // (1024 * 1024)
-            print(f"[vram] peak_alloc={alloc} MiB  peak_reserved={resv} MiB")
-    logger.close()
-    # Synchronize one last time so every rank exits dist together; without
-    # this rank-0's slower final FS writes (DCP fsync, JSONL flush) can
-    # outlive rank-1's destroy() and rank-1 already-destroyed group makes
-    # rank-0's destroy() take a slow path.
-    if dist.is_initialized():
-        dist.barrier()
-    dist_destroy()
+    if type(total) is not int or total < 1:
+        raise ValueError("optim.total_steps must be a positive integer")
+    stop = training.get("stop_after", total)
+    if type(stop) is not int or not 0 <= stop <= total:
+        raise ValueError("train.stop_after must be a completed-update boundary in [0, total_steps]")
+    clip = cfg["optim"]["grad_clip"]
+    if not math.isfinite(clip) or clip < 0:
+        raise ValueError("optim.grad_clip must be finite and nonnegative")
+    if cfg["optim"].get("optimizer", "adamw") not in ("adamw", "muon"):
+        raise ValueError(f"unknown optim.optimizer: {cfg['optim']['optimizer']!r}; expected 'adamw' or 'muon'")
+    return dp, tp, pp
 
 
-def _eval_one_batch(model, loader, autocast, pp_schedule, is_last_pp_rank,
-                     accum, mesh, device, world) -> float:
-    """Single-batch held-out loss that works under both non-PP and PP.
-
-    Under PP we build a side eval schedule with ``n_microbatches=1`` (a real
-    PP eval pass) so the last rank produces the loss; we then DP-average
-    and broadcast back so every rank logs the same value. Under non-PP this
-    is just ``model(x, y)`` like before.
-    """
-    from torch.distributed.pipelining import Schedule1F1B
-
+def evaluate(model: torch.nn.Module, loader: StreamingLoader,
+             autocast: Callable, topology: ParallelContext, batches: int = 1) -> float:
+    """A fixed held-out prefix, without altering cursor, mode, grads, or RNG."""
+    cursor, rng, training = loader.state_dict(), capture_rng_state(), model.training
+    total = 0.0
     model.eval()
     try:
         with torch.no_grad():
-            xs, ys = loader.next_batch()
-            with autocast():
-                if pp_schedule is None:
-                    _, ev_loss = model(xs, ys)
-                    ev = all_reduce_mean(ev_loss.detach().float()).item()
-                    return ev
-                # PP path: build a 1-microbatch eval schedule on the same
-                # stage. We reuse the existing stage attached to pp_schedule.
-                stage = pp_schedule._stage  # private but stable across 2.4-2.7
-                eval_schedule = Schedule1F1B(stage, n_microbatches=1)
-                losses: list[torch.Tensor] = []
-                if is_last_pp_rank:
-                    eval_schedule.step(xs, target=ys, losses=losses)
-                    ev_loss = (sum(l.float() for l in losses) / max(1, len(losses)))
-                    ev_t = ev_loss.detach()
-                else:
-                    eval_schedule.step(xs)
-                    ev_t = torch.tensor(0.0, device=device)
-                # DP-average over DP ranks only; then broadcast from the
-                # last PP rank so every rank in the world logs the same
-                # value (rank-0 might not be the last PP rank).
-                ev_t = all_reduce_mean(ev_t)
-                if mesh is not None and "pp" in mesh.mesh_dim_names:
-                    pp_mesh = mesh["pp"]
-                    src = pp_mesh.size() - 1  # last PP rank within pp dim
-                    # Use the pp-dim subgroup for the broadcast so we only
-                    # talk to peers along the pp axis.
-                    if pp_mesh.size() > 1:
-                        dist.broadcast(ev_t, src=src, group=pp_mesh.get_group())
-                return float(ev_t.item())
+            for _ in range(batches):
+                x, y = loader.next_batch()
+                with autocast():
+                    _, loss = model(x, y)
+                total += topology.mean_dp(loss.detach().float()).item()
+        return total / batches
     finally:
-        model.train()
+        loader.load_state_dict(cursor)
+        restore_rng_state(rng)
+        model.train(training)
+
+
+def _make_loaders(cfg: dict, topology: ParallelContext, device: str,
+                  override: str | None) -> tuple[StreamingLoader, StreamingLoader | None]:
+    data = cfg["data"]
+    common = dict(seq_len=data["seq_len"], micro_batch=cfg["train"]["micro_batch"],
+                  rank=topology.dp_rank, world_size=topology.dp, seed=cfg["seed"], device=device)
+    loader = StreamingLoader(override or data.get("dir"), **common,
+                              manifest_path=None if override else data.get("manifest"))
+    validation = None
+    if data.get("val_dir") or data.get("val_manifest"):
+        validation = StreamingLoader(data.get("val_dir"), **common,
+                                      manifest_path=data.get("val_manifest"))
+        assert_disjoint(loader, validation)
+    return loader, validation
+
+
+def _record_manifests(run_dir: Path, loader: StreamingLoader,
+                      validation: StreamingLoader | None) -> None:
+    if not is_master():
+        return
+    run_dir.mkdir(parents=True, exist_ok=True)
+    for name, source in (("train", loader), ("validation", validation)):
+        if source is None:
+            continue
+        path = run_dir / f"{name}_manifest.json"
+        if path.exists() and json.loads(path.read_text()) != source.manifest:
+            raise ValueError(f"immutable run manifest changed: {path}")
+        atomic_json(path, source.manifest)
+
+
+def train(cfg: dict, data_dir_override: str | None = None) -> None:
+    """Run to total_steps (or stop_after) and publish an exact boundary restart."""
+    world = dist.get_world_size() if dist.is_initialized() else int(os.environ.get("WORLD_SIZE", 1))
+    device_type = "cuda" if torch.cuda.is_available() else "cpu"
+    validate_config(cfg, world, device_type)
+    logger = None
+    try:
+        rank, _, world = dist_init()
+        device = f"cuda:{torch.cuda.current_device()}" if device_type == "cuda" else "cpu"
+        dtype = DTYPES[cfg["dtype"]]
+        mesh, dp, tp, pp = build_mesh(world, **{k: cfg["parallel"][k] for k in ("dp", "tp", "pp")},
+                                      device_type=device_type)
+        topology = ParallelContext(rank, dp, tp, pp, mesh)
+        # Same initialization on every model-parallel rank. Stochastic training
+        # later uses a per-DP seed; TP peers keep identical streams.
+        torch.manual_seed(cfg["seed"])
+        mcfg = ModelConfig(**cfg["model"])
+        model = GPT(mcfg, activation_ckpt=cfg["parallel"]["activation_ckpt"]).to(device=device)
+        # FP32 parameters/optimizer moments, including CUDA bf16 autocast runs.
+        if tp > 1:
+            apply_tp(model, mesh["tp"], sequence_parallel=cfg["parallel"].get("sequence_parallel", False))
+        fsdp_active = dp > 1 and cfg["parallel"]["zero"] == "fsdp"
+        if fsdp_active:
+            model = apply_fsdp(model, mesh["dp"], torch.float32,
+                               reshard_after_forward=cfg["parallel"].get("reshard_after_forward", True))
+        elif dp > 1:
+            model = DistributedDataParallel(model, process_group=mesh["dp"].get_group(),
+                                             device_ids=[torch.cuda.current_device()] if device_type == "cuda" else None,
+                                             broadcast_buffers=False)
+        model = _maybe_compile(model, cfg["train"].get("compile", False), pp_active=False)
+        optim = cfg["optim"]
+        if optim.get("optimizer", "adamw") == "muon":
+            optims = build_muon_and_adamw(
+                model, muon_lr=optim.get("muon_lr", optim["lr"] * 100), adamw_lr=optim["lr"],
+                muon_momentum=optim.get("muon_momentum", 0.95),
+                muon_weight_decay=optim.get("muon_weight_decay", 0.0),
+                muon_update_scale=optim.get("muon_update_scale"), adamw_betas=optim["betas"],
+                weight_decay=optim["weight_decay"], fused=device_type == "cuda")
+        else:
+            optims = [build_optimizer(model, optim["lr"], optim["betas"], optim["weight_decay"], fused=device_type == "cuda")]
+        base_lrs = [[g["lr"] for g in o.param_groups] for o in optims]
+        loader, validation = _collective_call(lambda: _make_loaders(cfg, topology, device, data_dir_override), "data setup")
+        ckpt = CheckpointManager(cfg["out_dir"], cfg["run_id"],
+                                  keep_last=cfg["train"].get("keep_last", 5), topology=topology.dimensions)
+        spike, rewind = SpikeMonitor(), RewindController(ckpt)
+        contract = {"model": asdict(mcfg), "optimizer": optim,
+                    "dtype": cfg["dtype"], "device_type": device_type,
+                    "grad_accum": cfg["train"]["grad_accum"],
+                    "activation_ckpt": cfg["parallel"]["activation_ckpt"],
+                    "zero": cfg["parallel"]["zero"],
+                    "reshard_after_forward": cfg["parallel"].get("reshard_after_forward", True),
+                    "sequence_parallel": cfg["parallel"].get("sequence_parallel", False),
+                    "validation_manifest": validation.manifest_sha256 if validation else None}
+        # Normalize tuple/list distinctions to the JSON representation on disk.
+        contract = json.loads(json.dumps(contract))
+        torch.manual_seed(cfg["seed"] + topology.dp_rank)
+        random.seed(cfg["seed"] + topology.dp_rank)
+        np.random.seed(cfg["seed"] + topology.dp_rank)
+        next_step, best_val = 0, None
+        last_saved = ckpt.discover_latest()
+        if last_saved is not None:
+            runtime = {}
+            next_step = ckpt.load(model, optims, loader, step=last_saved, runtime_state=runtime,
+                                  expected_runtime={"contract": contract})
+            spike.load_state_dict(runtime["spike"])
+            rewind.load_state_dict(runtime["rewind"])
+            best_val, base_lrs = runtime["best_val"], runtime["base_lrs"]
+            LOG.info("resuming at next update %d", next_step)
+        elif cfg.get("load_ckpt"):
+            ckpt.load_weights_only(model, cfg["load_ckpt"], allow_legacy=cfg.get("load_legacy_weights", False))
+        else:
+            _collective_call(ckpt.reject_legacy_resume, "legacy restart validation")
+        run_dir = Path(cfg["out_dir"]) / cfg["run_id"]
+        _collective_call(lambda: _record_manifests(run_dir, loader, validation), "run manifest")
+        logger = Logger(str(Path(cfg["out_dir"]) / "log.jsonl") if cfg["log"]["jsonl"] else None,
+                        cfg["log"].get("wandb_project"), cfg)
+        logger.log(next_step, event="init", device=device, compute_dtype=cfg["dtype"], parameter_dtype="float32",
+                   **topology.dimensions, next_step=next_step, train_manifest=loader.manifest_sha256,
+                   validation_manifest=validation.manifest_sha256 if validation else None)
+
+        @contextlib.contextmanager
+        def autocast():
+            if dtype == torch.bfloat16:
+                with torch.amp.autocast(device_type, dtype=dtype):
+                    yield
+            else:
+                yield
+
+        def runtime_state() -> dict:
+            return {"contract": contract, "best_val": best_val, "base_lrs": base_lrs,
+                    "spike": spike.state_dict(), "rewind": rewind.state_dict()}
+
+        total = optim["total_steps"]
+        stop = cfg["train"].get("stop_after", total)
+        accum = cfg["train"]["grad_accum"]
+        tokens_per_step = cfg["train"]["micro_batch"] * accum * dp * cfg["data"]["seq_len"]
+        peak = peak_tflops_for_device(dtype)
+        started, measured_steps = time.perf_counter(), 0
+        while next_step < stop:
+            step = next_step
+            scheduled = cosine_lr(step, optim["warmup_steps"], total, optim["lr"], optim["min_lr"])
+            effective_lr = scheduled * rewind.lr_multiplier()
+            scale = effective_lr / optim["lr"]
+            for optimizer, lrs in zip(optims, base_lrs):
+                for group, lr in zip(optimizer.param_groups, lrs):
+                    group["lr"] = lr * scale
+                optimizer.zero_grad(set_to_none=True)
+            loss_sum = torch.zeros((), device=device)
+            for micro in range(accum):
+                if fsdp_active:
+                    model.set_requires_gradient_sync(micro == accum - 1)
+                no_sync = model.no_sync() if isinstance(model, DistributedDataParallel) and micro < accum - 1 else contextlib.nullcontext()
+                with no_sync:
+                    x, y = loader.next_batch()
+                    with autocast():
+                        _, loss = model(x, y)
+                        loss = loss / accum
+                    loss.backward()
+                    loss_sum += loss.detach().float()
+            loss_value = topology.mean_dp(loss_sum).item()
+            grad_norm = clip_grad_norm(model, optim["grad_clip"])
+            if topology.any_rank(not math.isfinite(loss_value) or not math.isfinite(grad_norm), device):
+                raise FloatingPointError("nonfinite loss/gradient on a rank; no optimizer update or checkpoint was published")
+            for optimizer in optims:
+                optimizer.step()
+            next_step += 1
+            measured_steps += 1
+            if topology.any_rank(spike.observe(loss_value), device):
+                restored = {}
+                count = rewind.n_rewinds
+                next_step = rewind.on_spike(model, optims, loader, next_step, runtime_state=restored)
+                if rewind.n_rewinds != count:
+                    spike.load_state_dict(restored["spike"])
+                    best_val, base_lrs = restored["best_val"], restored["base_lrs"]
+                    logger.log(next_step, event="rewind", **rewind.state_dict())
+                    started, measured_steps = time.perf_counter(), 0
+                    continue
+            if step % cfg["train"]["log_every"] == 0:
+                if device_type == "cuda":
+                    torch.cuda.synchronize()
+                elapsed = (time.perf_counter() - started) / measured_steps
+                metrics = {"loss": loss_value, "lr": effective_lr, "ms": elapsed * 1000,
+                           "tok_per_s": tokens_per_step / elapsed,
+                           "tok_per_s_per_gpu": tokens_per_step / elapsed / world,
+                           "grad_norm": grad_norm, "next_step": next_step}
+                if (step // cfg["train"]["log_every"]) % 10 == 0:
+                    metrics["param_norm"] = compute_param_norm(model)
+                if peak is not None:
+                    metrics["mfu"] = estimate_mfu(mcfg, tokens_per_step, elapsed, peak, world)
+                logger.log(step, **metrics)
+                started, measured_steps = time.perf_counter(), 0
+            improved = False
+            every_eval = cfg["train"]["eval_every"]
+            if every_eval and next_step % every_eval == 0:
+                value = evaluate(model, validation, autocast, topology, cfg["train"].get("eval_batches", 1))
+                if topology.any_rank(not math.isfinite(value), device):
+                    raise FloatingPointError("nonfinite held-out loss")
+                logger.log(step, eval_loss=value, next_step=next_step,
+                           validation_manifest=validation.manifest_sha256)
+                improved = best_val is None or value < best_val
+                if improved:
+                    best_val = value
+            every_ckpt = cfg["train"]["ckpt_every"]
+            if improved or (every_ckpt and next_step % every_ckpt == 0):
+                ckpt.save(model, optims, loader, next_step, runtime_state=runtime_state(), is_best=improved)
+                last_saved = next_step
+        if last_saved != next_step:
+            ckpt.save(model, optims, loader, next_step, runtime_state=runtime_state())
+        if dist.is_initialized():
+            dist.barrier()
+    finally:
+        if logger is not None:
+            logger.close()
+        dist_destroy()

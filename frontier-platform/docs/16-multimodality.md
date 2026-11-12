@@ -2,7 +2,7 @@
 
 > **Status: design stub + MM-1 skeleton.** Gap #2 in
 > `14-gap-analysis-vs-frontier.md`. A LLaVA-style adapter exists in
-> `platform/model/vision.py` (`VisionEncoder` + `Projector` +
+> `frontier_platform/model/vision.py` (`VisionEncoder` + `Projector` +
 > `VisionLanguageModel`): it patchifies an image, runs a ViT, projects patches
 > into the LM hidden space, and prepends them as image tokens, computing loss on
 > text positions only. It runs end-to-end on CPU with the tiny test model
@@ -64,13 +64,13 @@ Multimodality is not one module; it perturbs the whole pipeline:
 ## Minimum viable MM-1 build
 
 1. ✅ **Done:** vision encoder + projector + VLM forward in
-   `platform/model/vision.py` (`VisionEncoder`, `Projector`,
+   `frontier_platform/model/vision.py` (`VisionEncoder`, `Projector`,
    `VisionLanguageModel`), with a `from_pretrained` path that loads a real
    SigLIP/ViT tower (graceful fallback to in-house ViT). Image tokens are
    prepended to text embeddings; loss is on text positions only. `freeze_encoder`
    supports projector-only alignment.
 2. Extend the tokenizer contract with image placeholder tokens.
-3. Add an interleaved image-text data path: `platform/data/multimodal.py`
+3. Add an interleaved image-text data path: `frontier_platform/data/multimodal.py`
    (acquire, perceptual-dedup, caption/OCR pairing, shard with image refs).
 4. Two-stage train: (a) projector-only alignment on caption data, (b) joint
    instruction tuning on multimodal SFT.

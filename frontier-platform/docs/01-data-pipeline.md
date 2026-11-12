@@ -28,11 +28,11 @@ For a 10T-token run you must tokenize ~50 TB of text. At 50 MB/s/node CPU throug
 
 ## Skeleton modules
 
-- `platform/data/acquire.py` — source connectors
-- `platform/data/extract.py` — HTML/PDF/code extraction
-- `platform/data/filter.py` — quality + toxicity
-- `platform/data/dedup.py` — minhash + suffix array
-- `platform/data/decontaminate.py` — eval-set scrub
-- `platform/data/mix.py` — domain weighting
-- `platform/data/shard.py` — tokenize + write shards
-- `platform/data/loader.py` — streaming dataloader
+- `frontier_platform/data/acquire.py` — source connectors
+- `frontier_platform/data/extract.py` — HTML/PDF/code extraction
+- `frontier_platform/data/filter.py` — quality + toxicity
+- `frontier_platform/data/dedup.py` — minhash + suffix array
+- `frontier_platform/data/decontaminate.py` — eval-set scrub
+- `frontier_platform/data/mix.py` — domain weighting
+- `frontier_platform/data/shard.py` — tokenize + write shards
+- `frontier_platform/data/loader.py` — streaming dataloader

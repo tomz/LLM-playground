@@ -4,10 +4,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from platform.eval.harness import Evaluator, EvalRequest
-from platform.eval.arena import compute_elo
-from platform.eval.contamination import ContaminationIndex, contamination_report
-from platform.eval.benchmarks_2026 import (
+from frontier_platform.eval.harness import Evaluator, EvalRequest
+from frontier_platform.eval.arena import compute_elo
+from frontier_platform.eval.contamination import ContaminationIndex, contamination_report
+from frontier_platform.eval.benchmarks_2026 import (
     ARCAGI2Adapter,
     HLEAdapter,
     LiveCodeBenchAdapter,
@@ -216,8 +216,8 @@ def test_mmmu_adapter_skips_image_only_examples(tmp_path):
     assert out["accuracy"] == 1.0
 
 
-def test_live_code_bench_adapter_runs_sandboxed_tests(tmp_path):
-    adapter = LiveCodeBenchAdapter()
+def test_live_code_bench_adapter_runs_explicit_trusted_fixture_tests(tmp_path):
+    adapter = LiveCodeBenchAdapter(trusted_test_only=True)
     fixture = _write_jsonl(tmp_path / "lcb.jsonl", [
         {"id": "add", "problem": "add(a,b)", "tests": ["assert add(1, 2) == 3"]},
         {"id": "bad", "problem": "mul(a,b)", "tests": ["assert mul(2, 3) == 6"]},

@@ -22,7 +22,7 @@ import warnings
 
 import pytest
 
-from platform.safety.classifiers import (
+from frontier_platform.safety.classifiers import (
     CATEGORIES,
     ClassifierEnsemble,
     InputClassifier,

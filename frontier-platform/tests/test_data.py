@@ -2,16 +2,16 @@ import json
 import numpy as np
 
 
-from platform.data.acquire import LocalFilesSource, JsonlSource
-from platform.data.extract import _html_to_text
-from platform.data.filter import (
+from frontier_platform.data.acquire import LocalFilesSource, JsonlSource
+from frontier_platform.data.extract import _html_to_text
+from frontier_platform.data.filter import (
     detect_language, gopher_rules, quality_classifier, pipeline,
 )
-from platform.data.dedup import MinHashDeduper, stream_exact_dedup
-from platform.data.decontaminate import Decontaminator
-from platform.data.shard import tokenize_and_shard
-from platform.data.mix import DomainSpec, MixtureSampler
-from platform.data.loader import StreamingLoader
+from frontier_platform.data.dedup import MinHashDeduper, stream_exact_dedup
+from frontier_platform.data.decontaminate import Decontaminator
+from frontier_platform.data.shard import tokenize_and_shard
+from frontier_platform.data.mix import DomainSpec, MixtureSampler
+from frontier_platform.data.loader import StreamingLoader
 
 
 

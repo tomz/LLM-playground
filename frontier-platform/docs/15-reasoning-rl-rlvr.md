@@ -4,7 +4,7 @@
 > capability gap identified in `14-gap-analysis-vs-frontier.md` (gap #1). 2025 was
 > *"the year of reasoning, RLVR, and GRPO"*; this blueprint's
 > `07-alignment-sft-rlhf.md` stops at the 2024 SFT→RM→PPO/DPO paradigm. This doc
-> specifies the missing post-training regime. A toy-functional `platform/rl/` now
+> specifies the missing post-training regime. A toy-functional `frontier_platform/rl/` now
 > exists (`verifiers.py` + `rollout.py` group sampler + `grpo.py` GRPO learner +
 > `coldstart.py` reasoning-SFT + `reward.py` shaping); it runs the full
 > sample→verify→advantage→update loop on CPU with the byte tokenizer and the tiny
@@ -61,10 +61,10 @@ Key properties vs. PPO (`07`): no critic/value head → ~2× less memory; reward
 external and deterministic → no reward-model drift; group-relative baseline →
 stable advantages without GAE.
 
-## The missing subsystem: `platform/rl/`
+## The missing subsystem: `frontier_platform/rl/`
 
 This is an **async actor–learner system**, not a loss function. Components
-(✅ = toy-functional in `platform/rl/`; ⬜ = production hook still open):
+(✅ = toy-functional in `frontier_platform/rl/`; ⬜ = production hook still open):
 
 | Module | Status | Responsibility |
 |--------|--------|----------------|
@@ -117,7 +117,7 @@ length/repetition/anti-spam guards into one bounded scalar, and exposes
 
 ## Simulator hook (`13-simulation.md`)
 
-Add `platform/sim/reasoning_rl_sim.py`: model rollout compute (G × samples ×
+Add `frontier_platform/sim/reasoning_rl_sim.py`: model rollout compute (G × samples ×
 seq_len), verifier CPU cost, and a capability bump that depends on *post-training*
 compute — today the sim's eval scores are pretraining-only and wouldn't move if
 you added RL.

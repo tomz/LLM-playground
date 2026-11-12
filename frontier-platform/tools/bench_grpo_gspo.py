@@ -38,31 +38,19 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# The local package is literally named `platform`, which shadows stdlib
-# `platform`. torch imports stdlib platform at load time, so evict any stdlib
-# `platform` modules first, import torch (binds the real stdlib platform), then
-# let our local `platform` package resolve for the platform.* imports below —
-# the same dance tests/conftest.py does.
-for _m in [k for k in list(sys.modules) if k == "platform" or k.startswith("platform.")]:
-    del sys.modules[_m]
-_orig_path = list(sys.path)
-sys.path[:] = [p for p in sys.path if p not in ("", ".", str(ROOT))]
-import torch  # noqa: E402  (binds torch to stdlib platform)
-sys.path[:] = [str(ROOT)] + _orig_path
-for _m in [k for k in list(sys.modules) if k == "platform" or k.startswith("platform.")]:
-    del sys.modules[_m]
+import torch  # noqa: E402
 
-from platform.alignment._common import clone_for_reference, compute_token_logps  # noqa: E402
-from platform.model.config import ModelConfig  # noqa: E402
-from platform.model.transformer import Transformer  # noqa: E402
-from platform.rl.grpo import (  # noqa: E402
+from frontier_platform.alignment._common import clone_for_reference, compute_token_logps  # noqa: E402
+from frontier_platform.model.config import ModelConfig  # noqa: E402
+from frontier_platform.model.transformer import Transformer  # noqa: E402
+from frontier_platform.rl.grpo import (  # noqa: E402
     GRPOConfig,
     _sequence_importance_ratio,
     grpo_step,
 )
-from platform.rl.rollout import sample_group  # noqa: E402
-from platform.rl.verifiers import ProbabilityRewardVerifier, reward_contains  # noqa: E402
-from platform.tokenizer.bytes import BytesTokenizer  # noqa: E402
+from frontier_platform.rl.rollout import sample_group  # noqa: E402
+from frontier_platform.rl.verifiers import ProbabilityRewardVerifier, reward_contains  # noqa: E402
+from frontier_platform.tokenizer.bytes import BytesTokenizer  # noqa: E402
 
 
 def _make_policy(moe: bool, device: str, seed: int = 0) -> Transformer:

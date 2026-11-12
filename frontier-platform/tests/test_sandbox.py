@@ -1,12 +1,12 @@
-"""Sandboxed code-execution + code verifier tests (platform/rl/sandbox.py)."""
+"""Sandboxed code-execution + code verifier tests (frontier_platform/rl/sandbox.py)."""
 from __future__ import annotations
 
 import sys
 
 import pytest
 
-from platform.rl.sandbox import SandboxLimits, run_in_sandbox
-from platform.rl.verifiers import CodeUnitTestVerifier
+from frontier_platform.rl.sandbox import SandboxLimits, run_in_sandbox
+from frontier_platform.rl.verifiers import CodeUnitTestVerifier
 
 _POSIX = sys.platform != "win32"
 
@@ -57,13 +57,13 @@ def test_sandbox_cannot_crash_host_on_exception():
 # ---------- CodeUnitTestVerifier ----------
 
 def test_code_verifier_extracts_fenced_code():
-    v = CodeUnitTestVerifier(tests=["assert solve(10) == 20"])
+    v = CodeUnitTestVerifier(trusted_test_only=True, tests=["assert solve(10) == 20"])
     response = "Here is my solution:\n```python\ndef solve(n):\n    return n * 2\n```\nDone."
     assert v("double it", response) == 1.0
 
 
 def test_code_verifier_partial_credit():
-    v = CodeUnitTestVerifier(
+    v = CodeUnitTestVerifier(trusted_test_only=True,
         tests=["assert f(1) == 1", "assert f(2) == 4", "assert f(3) == 9"],
         all_or_nothing=False,
     )
@@ -74,6 +74,6 @@ def test_code_verifier_partial_credit():
 
 
 def test_code_verifier_all_or_nothing_default():
-    v = CodeUnitTestVerifier(tests=["assert f(1) == 1", "assert f(2) == 4"])
+    v = CodeUnitTestVerifier(trusted_test_only=True, tests=["assert f(1) == 1", "assert f(2) == 4"])
     assert v("square", "def f(x):\n    return x") == 0.0   # only 1/2 -> 0
     assert v("square", "def f(x):\n    return x * x") == 1.0

@@ -128,7 +128,7 @@ def _tiny_train_cfg(run_id: str, out_dir: Path, data_dir: Path,
         },
         "train": {
             "micro_batch": 2, "grad_accum": 1,
-            "log_every": 1, "eval_every": 99, "ckpt_every": 1,
+            "log_every": 1, "eval_every": 0, "ckpt_every": 1,
         },
     }
     if load_ckpt is not None:
@@ -202,24 +202,20 @@ def test_native_resume_takes_priority_over_warm_start(tmp_path: Path):
     # Phase 1: pretrain into out_x.
     out_x = tmp_path / "out_x"
     cfg_x = _tiny_train_cfg("run_x", out_x, data_dir)
+    cfg_x["optim"]["total_steps"] = 4
+    cfg_x["train"]["stop_after"] = 2
     train(cfg_x)
-    ckpt_x = sorted((out_x / "run_x" / "ckpts").glob("step_*"))[-1]
 
-    # Phase 2: same run_id + out_dir, with a load_ckpt pointer. Trainer
-    # must IGNORE load_ckpt and resume from out_dir's own latest ckpt.
+    # A missing warm-start source proves native resume takes priority.
     cfg_resume = _tiny_train_cfg(
-        "run_x", out_x, data_dir, load_ckpt=str(ckpt_x)
+        "run_x", out_x, data_dir, load_ckpt=str(tmp_path / "unused_warm_start")
     )
-    cfg_resume["optim"]["total_steps"] = 4  # extend so the resume has work to do
+    cfg_resume["optim"]["total_steps"] = 4  # preserve the schedule
     train(cfg_resume)
-    log = (out_x / "log.jsonl").read_text().splitlines()
-    # The resumed run must reach steps > 1 (continuation), proving it
-    # resumed rather than warm-started at step 0 and re-doing step 1.
     import json
-    max_step = max(json.loads(line).get("step", -1) for line in log)
-    assert max_step >= 2, (
-        f"resume didn't advance past phase-1 progress; max_step={max_step}"
-    )
+    rows = [json.loads(line) for line in (out_x / "log.jsonl").read_text().splitlines()]
+    assert [r["next_step"] for r in rows if r.get("event") == "init"] == [0, 2]
+    assert [r["step"] for r in rows if "loss" in r] == [0, 1, 2, 3]
 
 
 def test_warm_start_with_missing_ckpt_path_errors_clearly(tmp_path: Path):

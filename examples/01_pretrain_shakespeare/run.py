@@ -23,18 +23,18 @@ HERE = Path(__file__).resolve().parent
 OUT = HERE / "out"
 
 # --- platform imports (rely on `pip install -e frontier-platform`) ---
-from platform.tokenizer.bpe import TokenizerConfig, Tokenizer, train as train_bpe
-from platform.data.acquire import RawDoc
-from platform.data.shard import tokenize_and_shard
-from platform.data.mix import DomainSpec, MixtureSampler
-from platform.data.loader import StreamingLoader
-from platform.model.config import ModelConfig
-from platform.model.transformer import Transformer
-from platform.training.optim import OptimConfig, build_optimizer
-from platform.training.trainer import Trainer, TrainConfig
-from platform.training.parallel import ParallelConfig
-from platform.training.checkpoint import CheckpointManager
-from platform.serving.engine import Engine, EngineConfig, GenRequest
+from frontier_platform.tokenizer.bpe import TokenizerConfig, Tokenizer, train as train_bpe
+from frontier_platform.data.acquire import RawDoc
+from frontier_platform.data.shard import tokenize_and_shard
+from frontier_platform.data.mix import DomainSpec, MixtureSampler
+from frontier_platform.data.loader import StreamingLoader
+from frontier_platform.model.config import ModelConfig
+from frontier_platform.model.transformer import Transformer
+from frontier_platform.training.optim import OptimConfig, build_optimizer
+from frontier_platform.training.trainer import Trainer, TrainConfig
+from frontier_platform.training.parallel import ParallelConfig
+from frontier_platform.training.checkpoint import CheckpointManager
+from frontier_platform.serving.engine import Engine, EngineConfig, GenRequest
 
 
 SHAKES_URL = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"

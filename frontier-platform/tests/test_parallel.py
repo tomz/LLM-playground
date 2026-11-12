@@ -15,9 +15,9 @@ import sys
 import pytest
 import torch
 
-from platform.model.config import ModelConfig
-from platform.model.transformer import Transformer
-from platform.training.parallel import (
+from frontier_platform.model.config import ModelConfig
+from frontier_platform.model.transformer import Transformer
+from frontier_platform.training.parallel import (
     ParallelConfig,
     ParallelEngine,
     ParallelPlan,
@@ -214,7 +214,7 @@ def test_distributed_ddp_smoke_two_ranks():
     This proves the FSDP/DDP wrap path is wired correctly when a real
     ProcessGroup exists. Gated because it spawns processes and takes ~5s."""
     import torch.multiprocessing as mp
-    from platform.training.parallel import _distributed_smoke_main
+    from frontier_platform.training.parallel import _distributed_smoke_main
 
     os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
     os.environ.setdefault("MASTER_PORT", "29500")

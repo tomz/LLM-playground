@@ -10,12 +10,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-# The local ``platform`` package shadows the stdlib module. Evict any cached
-# stdlib-platform import so our package wins, then let our package's
-# __getattr__ proxy take care of any stdlib calls the rest of the stack makes.
-for _m in [k for k in list(sys.modules) if k == "platform" or k.startswith("platform.")]:
-    del sys.modules[_m]
-
 import asyncio
 import json
 import math
@@ -42,16 +36,16 @@ def main() -> int:
 
     # ---- 1. synthetic corpus ---------------------------------------------
     banner("[1] write synthetic corpus")
-    from platform.data.synthetic import write_corpus
+    from frontier_platform.data.synthetic import write_corpus
 
     corpus_dir = write_corpus(work / "corpus", n_files=20, words_per_file=200, seed=0)
     print(f"corpus: {corpus_dir}")
 
     # ---- 2. tokenize + shard ---------------------------------------------
     banner("[2] tokenize + shard")
-    from platform.data.acquire import LocalFilesSource
-    from platform.data.shard import tokenize_and_shard
-    from platform.tokenizer.bytes import BytesTokenizer
+    from frontier_platform.data.acquire import LocalFilesSource
+    from frontier_platform.data.shard import tokenize_and_shard
+    from frontier_platform.tokenizer.bytes import BytesTokenizer
 
     tok = BytesTokenizer()
     shard_dir = work / "shards"
@@ -63,11 +57,11 @@ def main() -> int:
 
     # ---- 3. pretrain a tiny Transformer ----------------------------------
     banner("[3] pretrain tiny Transformer")
-    from platform.model.config import ModelConfig
-    from platform.model.transformer import Transformer
-    from platform.training.optim import OptimConfig, build_optimizer
-    from platform.training.trainer import Trainer, TrainConfig
-    from platform.training.parallel import ParallelConfig
+    from frontier_platform.model.config import ModelConfig
+    from frontier_platform.model.transformer import Transformer
+    from frontier_platform.training.optim import OptimConfig, build_optimizer
+    from frontier_platform.training.trainer import Trainer, TrainConfig
+    from frontier_platform.training.parallel import ParallelConfig
 
     mcfg = ModelConfig(
         vocab_size=512, n_layer=4, n_head=4, n_kv_head=2,
@@ -125,7 +119,7 @@ def main() -> int:
 
     # ---- 4. SFT ----------------------------------------------------------
     banner("[4] SFT")
-    from platform.alignment.sft import SFTConfig, run_sft
+    from frontier_platform.alignment.sft import SFTConfig, run_sft
 
     sft_jsonl = work / "sft.jsonl"
     with open(sft_jsonl, "w") as f:
@@ -145,7 +139,7 @@ def main() -> int:
 
     # ---- 5. Preference data + reward model -------------------------------
     banner("[5] train reward model")
-    from platform.alignment.reward_model import RMConfig, train_reward_model
+    from frontier_platform.alignment.reward_model import RMConfig, train_reward_model
 
     pref_jsonl = work / "pref.jsonl"
     with open(pref_jsonl, "w") as f:
@@ -163,7 +157,7 @@ def main() -> int:
 
     # ---- 6. DPO ----------------------------------------------------------
     banner("[6] DPO")
-    from platform.alignment.dpo import DPOConfig, run_dpo
+    from frontier_platform.alignment.dpo import DPOConfig, run_dpo
 
     dpo_out = run_dpo(DPOConfig(
         policy_ckpt=sft_out, pref_set=str(pref_jsonl),
@@ -175,7 +169,7 @@ def main() -> int:
 
     # ---- 7. PPO ----------------------------------------------------------
     banner("[7] PPO rollout + step")
-    from platform.alignment.ppo import PPOConfig, run_ppo
+    from frontier_platform.alignment.ppo import PPOConfig, run_ppo
 
     ppo_out = run_ppo(PPOConfig(
         policy_ckpt=sft_out, rm_ckpt=rm_out,
@@ -204,8 +198,8 @@ def main() -> int:
 
     # ---- 9. generate via TorchEngine -------------------------------------
     banner("[9] generate 30 tokens via TorchEngine")
-    from platform.serving.engine import EngineConfig, GenRequest
-    from platform.serving.torch_engine import TorchEngine
+    from frontier_platform.serving.engine import EngineConfig, GenRequest
+    from frontier_platform.serving.torch_engine import TorchEngine
 
     ppo_model = Transformer(ppo_state["model_cfg"])
     ppo_model.load_state_dict(ppo_state["model"])

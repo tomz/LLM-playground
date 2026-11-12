@@ -127,7 +127,7 @@ that didn't change are summarized in one line; items that did are detailed.
 |---|---|---|
 | SFT / RM / DPO / PPO / GRPO / reasoning SFT cold-start | Real, single-process | Unchanged |
 | Verifiers | math (sympy) + Python unit-tests | Unchanged (Lean/SQL/browser still open) |
-| **Sandbox** | Subprocess + POSIX rlimits, "not a complete jail" | **`platform/rl/jail.py` with `BubblewrapJailer` / `NsjailJailer` / `FirejailJailer` / `NoJailer` + auto-detect (prefers bwrap). `sandbox.py` grew a `jailer=` kwarg. Real security assertions in the test suite: child cannot open TCP sockets, cannot mutate host files. 24 tests, 2 skipped.** |
+| **Sandbox** | Subprocess + POSIX rlimits, "not a complete jail" | **`frontier_platform/rl/jail.py` with `BubblewrapJailer` / `NsjailJailer` / `FirejailJailer` / `NoJailer` + auto-detect (prefers bwrap). `sandbox.py` grew a `jailer=` kwarg. Real security assertions in the test suite: child cannot open TCP sockets, cannot mutate host files. 24 tests, 2 skipped.** |
 | **Async rollout** | In-process `TorchEngine` only | **Same `AsyncRolloutEngine` interface; now drives real vLLM when `EngineConfig.backend="vllm"`. The GRPO learner is unchanged because the wire format (per-token logprobs in the chunk stream) is identical.** |
 | Reward shaping / agentic env | Real | Unchanged |
 
@@ -137,7 +137,7 @@ that didn't change are summarized in one line; items that did are detailed.
 |---|---|---|
 | **Acquire** | `CommonCrawl/GitHub/Arxiv/Wikipedia` all raised `NotImplementedError` | **Real connector classes (warcio over S3, GHArchive, arXiv OAI-PMH, Wikipedia dumps) with lazy third-party imports + `ImportError` fallback + local-fixture path so CI runs without network. 16 new tests.** |
 | Extract / Filter / Dedup / Decontamination | Real | Unchanged |
-| **Synthetic** | 16-line word-bag generator | **`platform/data/synthetic/` package: `Teacher` protocol with Echo/Template/Callable/Engine implementations; 6 generation policies including R1-style `ReasoningTracePolicy`; `SyntheticFactory` with rejection sampling against `rl/verifiers.py`, MinHash dedup, contamination filtering via `eval/contamination.py`, JSONL lineage with `SampleRecord`. `write_corpus` back-compat shim preserves existing call sites. 28 tests.** |
+| **Synthetic** | 16-line word-bag generator | **`frontier_platform/data/synthetic/` package: `Teacher` protocol with Echo/Template/Callable/Engine implementations; 6 generation policies including R1-style `ReasoningTracePolicy`; `SyntheticFactory` with rejection sampling against `rl/verifiers.py`, MinHash dedup, contamination filtering via `eval/contamination.py`, JSONL lineage with `SampleRecord`. `write_corpus` back-compat shim preserves existing call sites. 28 tests.** |
 | Loader / shard / mix | Real | Unchanged |
 
 ### 1.5 Eval — 2026 benchmarks are real adapters now
@@ -145,7 +145,7 @@ that didn't change are summarized in one line; items that did are detailed.
 | Subsystem | v2 state | v3 state |
 |---|---|---|
 | **Eval harness** | Falls back to perplexity on 5 tasks if lm-eval missing | **`build_lm_eval_model()` wraps any TorchEngine-style `.generate()` for `lm_eval.simple_evaluate`. `Evaluator.run` merges adapter metrics with lm-eval-harness output. 2026 frontier suite has real adapters (see below).** |
-| **2026 benchmarks** | Closed-form sigmoid predictors in the simulator | **`platform/eval/benchmarks_2026.py`: real `BenchmarkAdapter(name, load, score)` for SWE-bench-Verified, ARC-AGI-2, HLE, MMMU, LiveCodeBench. Deterministic CI scorers (normalised patch-equality, JSON-grid exact-match, MC-letter + free-response-contains, sandboxed unit tests) so adapters are unit-testable without upstream data. 10 new tests.** |
+| **2026 benchmarks** | Closed-form sigmoid predictors in the simulator | **`frontier_platform/eval/benchmarks_2026.py`: real `BenchmarkAdapter(name, load, score)` for SWE-bench-Verified, ARC-AGI-2, HLE, MMMU, LiveCodeBench. Deterministic CI scorers (normalised patch-equality, JSON-grid exact-match, MC-letter + free-response-contains, sandboxed unit tests) so adapters are unit-testable without upstream data. 10 new tests.** |
 | Arena ELO / contamination | Real | Unchanged |
 
 ### 1.6 Safety — RSP gate now has content, not just shape
@@ -154,14 +154,14 @@ that didn't change are summarized in one line; items that did are detailed.
 |---|---|---|
 | Pre-deployment gate | `preflight(card, thresholds)` reads JSON report | Unchanged |
 | **Classifiers** | `bad-word-token-count / total * 10` keyword heuristic | **`Classifier` protocol + `KeywordClassifier` (CI fallback) + `LlamaGuardClassifier` (HF lazy-load with graceful keyword fallback) + `callable` backend for test injection + `ClassifierEnsemble`. `InputClassifier`/`OutputClassifier` are thin shims over a configurable backing classifier; existing exact-value tests still pass. 26 tests.** |
-| **Red-team harness** | 5 hardcoded prompts + refusal regex | **`platform/safety/redteam/` package: 30+ probes across all 6 gate categories (cbrn/cyber/persuasion/autonomy/bias/jailbreak), `Judge` protocol with `RegexRefusalJudge` / `ClassifierJudge` / `EnsembleJudge` / `CallableJudge`. `build_report()` / `write_report()` produce JSON that flows straight into `gates.preflight`. Back-compat `run_suite`, `run_all`, `SUITES` unchanged. 28 tests.** |
+| **Red-team harness** | 5 hardcoded prompts + refusal regex | **`frontier_platform/safety/redteam/` package: 30+ probes across all 6 gate categories (cbrn/cyber/persuasion/autonomy/bias/jailbreak), `Judge` protocol with `RegexRefusalJudge` / `ClassifierJudge` / `EnsembleJudge` / `CallableJudge`. `build_report()` / `write_report()` produce JSON that flows straight into `gates.preflight`. Back-compat `run_suite`, `run_all`, `SUITES` unchanged. 28 tests.** |
 
 ### 1.7 Serving — vLLM is real
 
 | Subsystem | v2 state | v3 state |
 |---|---|---|
 | **Engine API** | vLLM branch raised `NotImplementedError` | **`backend="vllm"` instantiates `VLLMEngine`. Raises clean `ImportError` with install hint if vllm isn't installed.** |
-| **vLLM backend** | (didn't exist) | **`platform/serving/vllm_engine.py` (249 lines) matching the TorchEngine chunk schema exactly. Includes `update_weights(state_dict)` for the out-of-process RL actor path. Tested against a fake `vllm` module so the whole adapter is exercised without GPUs. 11 tests.** |
+| **vLLM backend** | (didn't exist) | **`frontier_platform/serving/vllm_engine.py` (249 lines) matching the TorchEngine chunk schema exactly. Includes `update_weights(state_dict)` for the out-of-process RL actor path. Tested against a fake `vllm` module so the whole adapter is exercised without GPUs. 11 tests.** |
 | TorchEngine / router | Real, single-process | Unchanged |
 
 ### 1.8 Simulator — unchanged
@@ -226,8 +226,8 @@ sampling, dedup, decontamination, lineage, R1-style reasoning-trace policy
 ### 2.4 Native multimodality vs. adapter multimodality — 🟥 untouched
 
 Roadmap explicitly punted this. **Largest single remaining capability gap.**
-The repo still has a LLaVA-style adapter (`platform/model/vision.py`); no
-audio, no video, no document/chart/OCR encoders, no `platform/data/multimodal.py`,
+The repo still has a LLaVA-style adapter (`frontier_platform/model/vision.py`); no
+audio, no video, no document/chart/OCR encoders, no `frontier_platform/data/multimodal.py`,
 no native multimodal serving path. v2's framing — *"this is a whole second
 platform's worth of work"* — still holds.
 
@@ -330,7 +330,7 @@ re-orders as:
 2. Native multimodal training architecture (beyond LLaVA adapter): early
    fusion, interleaved image-text positions, audio/video tokenization,
    document/chart/OCR encoders.
-3. `platform/data/multimodal.py`: interleaved image-text data pipeline,
+3. `frontier_platform/data/multimodal.py`: interleaved image-text data pipeline,
    perceptual-hashing dedup, multimodal contamination index.
 4. Multimodal serving: variable-resolution tiling, image preprocessing
    in-engine, multimodal KV economics.

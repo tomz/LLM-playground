@@ -1,0 +1,13 @@
+# Tested direct-dependency profile; Python 3.11/3.14 CPU reference CI.
+# Not a transitive lockfile. Live serving/containers remain separate integrations.
+torch==2.12.0
+numpy==2.4.6
+PyYAML==6.0.3
+requests==2.34.2
+tokenizers==0.22.2
+safetensors==0.8.0
+pytest==9.0.3
+pytest-timeout==2.4.0
+packaging==26.2
+setuptools==81.0.0
+wheel==0.47.0

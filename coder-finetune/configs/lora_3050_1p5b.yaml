@@ -13,6 +13,9 @@ seed: 1337
 
 model:
   name: Qwen/Qwen2.5-Coder-1.5B
+  revision: df3ce67c0e24480f20468b6ef2894622d69eb73b
+  tokenizer_revision: df3ce67c0e24480f20468b6ef2894622d69eb73b
+  local_files_only: true
   dtype: bfloat16
   attn_impl: sdpa
   trust_remote_code: false
@@ -28,14 +31,18 @@ lora:
                    'gate_proj', 'up_proj', 'down_proj']
 
 dataset:
+  validation_fraction: 0.1
+  group_by: null  # Auto group metadata plus exact-prompt connectivity; never row-random leakage.
   source: hf
   hf_name: ise-uiuc/Magicoder-OSS-Instruct-75K
+  revision: 5f839b1f368a76b161028bb9edff055db34022b2
   lang_filter: python      # 38,284 of 75,197 examples
   max_examples: 2000       # ~25 minutes wall-clock at 250 steps; bump to 10k
                            # for ~2 hours and a more solid result
   format: chatml
 
 train:
+  loss_scope: all_tokens  # Explicit legacy objective; assistant_only needs generation markers.
   max_seq_len: 1024
   batch_size: 1
   grad_accum: 8            # effective batch = 8

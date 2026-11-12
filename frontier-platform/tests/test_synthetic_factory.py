@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from platform.data.dedup import MinHashDeduper
-from platform.data.decontaminate import Decontaminator
-from platform.data.synthetic import (
+from frontier_platform.data.dedup import MinHashDeduper
+from frontier_platform.data.decontaminate import Decontaminator
+from frontier_platform.data.synthetic import (
     CallableTeacher,
     EchoTeacher,
     FactoryStats,
@@ -356,7 +356,7 @@ def test_factory_with_engine_teacher_smoke():
             yield {"done": True, "usage": {"prompt_tokens": len(req.prompt_ids),
                                             "completion_tokens": 3}}
 
-    from platform.data.synthetic import EngineTeacher
+    from frontier_platform.data.synthetic import EngineTeacher
     teacher = EngineTeacher(engine=_FakeEngine(), tokenizer=_FakeTokenizer(), name="fake",
                             request_kwargs={"max_new_tokens": 3, "temperature": 0.0})
     response = teacher.generate("hi")

@@ -3,8 +3,8 @@
 # This is the post-2024 post-training step the other recipes don't have: instead
 # of SFT on demonstrations, we sample G completions per prompt, RUN each against
 # hidden unit tests, standardize the rewards within the group, and take a clipped
-# policy step (GRPO — DeepSeek-R1 / DeepSeekMath). The reward is deterministic
-# (a verifier), so it can't be reward-hacked the way a learned RM can.
+# policy step (GRPO — DeepSeek-R1 / DeepSeekMath). Verifier rewards can still
+# be gamed: independently validate both isolation and reward/test integrity.
 #
 # Hardware target: RTX 3050 8 GB. GRPO is generation-heavy (G samples/prompt), so
 # keep G and completion length modest on 8 GB. Expected VRAM: ~5-6 GB peak.
@@ -19,6 +19,9 @@ seed: 1337
 
 model:
   name: Qwen/Qwen2.5-Coder-0.5B
+  revision: 8123ea2e9354afb7ffcc6c8641d1b2f5ecf18301
+  tokenizer_revision: 8123ea2e9354afb7ffcc6c8641d1b2f5ecf18301
+  local_files_only: true
   dtype: bfloat16
   attn_impl: sdpa
   trust_remote_code: false
@@ -52,13 +55,20 @@ train:
   save_every: 50
   gradient_checkpointing: true   # generation-heavy; trade compute for VRAM
 
+# Required operator prerequisite: no image is pulled and no host fallback exists.
+execution:
+  backend: docker
+  image: null  # Supply a trusted LOCAL immutable sha256 image ID before running.
+  python_path: /usr/local/bin/python3
+  docker_socket: /var/run/docker.sock
+
 grpo:
   num_generations: 8        # G — completions sampled per prompt. MUST divide
                             # the effective batch (batch_size × grad_accum ×
                             # world_size). Here 2 × 4 × 1 = 8 → G=8 fits.
                             # The old G=6 value was silently broken and is now
                             # caught up-front by cf_rl/grpo_train.py.
-  max_prompt_length: 384
+  # Legacy max_prompt_length removed: this profile does not implicitly truncate prompts.
   max_completion_length: 384
   temperature: 1.0
   beta: 0.04                # KL-to-reference coefficient

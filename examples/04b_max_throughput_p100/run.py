@@ -23,17 +23,17 @@ HERE = Path(__file__).resolve().parent
 OUT = HERE / "out"
 EX01 = HERE.parent / "01_pretrain_shakespeare" / "out"
 
-from platform.tokenizer.bpe import TokenizerConfig, Tokenizer, train as train_bpe
-from platform.data.acquire import RawDoc
-from platform.data.shard import tokenize_and_shard
-from platform.data.mix import DomainSpec, MixtureSampler
-from platform.data.loader import StreamingLoader
-from platform.model.config import ModelConfig
-from platform.model.transformer import Transformer
-from platform.training.optim import OptimConfig, build_optimizer
-from platform.training.trainer import Trainer, TrainConfig
-from platform.training.parallel import ParallelConfig
-from platform.serving.engine import Engine, EngineConfig, GenRequest
+from frontier_platform.tokenizer.bpe import TokenizerConfig, Tokenizer, train as train_bpe
+from frontier_platform.data.acquire import RawDoc
+from frontier_platform.data.shard import tokenize_and_shard
+from frontier_platform.data.mix import DomainSpec, MixtureSampler
+from frontier_platform.data.loader import StreamingLoader
+from frontier_platform.model.config import ModelConfig
+from frontier_platform.model.transformer import Transformer
+from frontier_platform.training.optim import OptimConfig, build_optimizer
+from frontier_platform.training.trainer import Trainer, TrainConfig
+from frontier_platform.training.parallel import ParallelConfig
+from frontier_platform.serving.engine import Engine, EngineConfig, GenRequest
 
 SHAKES_URL = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
 THEORETICAL_TFLOPS_FP16 = 18.7  # Tesla P100 fp16 dense (NVIDIA spec: 18.7 TFLOPS fp16)
@@ -195,7 +195,7 @@ def main() -> None:
 
     # Monkey-patch ParallelEngine to do fp16 autocast + GradScaler (Pascal-friendly).
     # Weights stay fp32 (AdamW state too); only matmuls + activations run in fp16.
-    from platform.training import parallel as _parallel
+    from frontier_platform.training import parallel as _parallel
     scaler = torch.cuda.amp.GradScaler()
     def _fb_amp(self, batch):
         input_ids, targets = batch

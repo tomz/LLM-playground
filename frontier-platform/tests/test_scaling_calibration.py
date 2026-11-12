@@ -9,7 +9,7 @@ from __future__ import annotations
 import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from platform.sim.scaling import (
+from frontier_platform.sim.scaling import (
     chinchilla_loss, predict_mmlu, predict_humaneval, predict_gsm8k,
 )
 

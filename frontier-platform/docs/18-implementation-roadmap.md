@@ -9,27 +9,27 @@ sequenced for follow-on work.
 
 | # | Item | File(s) | Need GPU? | Status |
 |---|---|---|---|---|
-| ★1 | Real synthetic data factory | `platform/data/synthetic.py` → `platform/data/synthetic/` | No | **done** (28 tests) |
-| ★2 | Real red-team harness | `platform/safety/redteam.py` → `platform/safety/redteam/` | No | **done** (28 tests) |
-| ★6 | Batched MoE forward | `platform/model/transformer.py` (`MoEFFN.forward`) | No (single device test); GPU validates speedup | **done** (11 tests) |
-| ★7 | vLLM serving backend | `platform/serving/engine.py` + new `vllm_engine.py` | No (logic test); GPU for integration | **done** (11 tests) |
-| ★5 | Jailed sandbox wrap (nsjail/firejail/bwrap) | `platform/rl/jail.py` + `sandbox.py` | No | **done** (24 tests, 2 skipped) |
-| ★3 | Real safety classifier interface | `platform/safety/classifiers.py` | No | **done** (26 tests) |
-| 4 | Real source connectors (warcio/GHArchive/arxiv/wiki) | `platform/data/acquire.py` | No | **done** (16 tests) |
-| 8 | FSDP2 + DTensor TP wrap | `platform/training/parallel.py` | Yes (real validation) | **done** (14 tests, 1 gated) |
-| 9 | SWE-bench-Verified harness | `platform/eval/swebench.py` | No (logic); harness needs sandboxed code exec | **done** (subsumed by item 10's SWE-bench-Verified adapter) |
-| 10 | Real `lm-eval-harness` wiring + 2026 benchmark adapters | `platform/eval/harness.py` + adapters | No (logic) | **done** (10 new eval tests, 5 adapters) |
+| ★1 | Real synthetic data factory | `frontier_platform/data/synthetic.py` → `frontier_platform/data/synthetic/` | No | **done** (28 tests) |
+| ★2 | Real red-team harness | `frontier_platform/safety/redteam.py` → `frontier_platform/safety/redteam/` | No | **done** (28 tests) |
+| ★6 | Batched MoE forward | `frontier_platform/model/transformer.py` (`MoEFFN.forward`) | No (single device test); GPU validates speedup | **done** (11 tests) |
+| ★7 | vLLM serving backend | `frontier_platform/serving/engine.py` + new `vllm_engine.py` | No (logic test); GPU for integration | **done** (11 tests) |
+| ★5 | Jailed sandbox wrap (nsjail/firejail/bwrap) | `frontier_platform/rl/jail.py` + `sandbox.py` | No | **done** (24 tests, 2 skipped) |
+| ★3 | Real safety classifier interface | `frontier_platform/safety/classifiers.py` | No | **done** (26 tests) |
+| 4 | Real source connectors (warcio/GHArchive/arxiv/wiki) | `frontier_platform/data/acquire.py` | No | **done** (16 tests) |
+| 8 | FSDP2 + DTensor TP wrap | `frontier_platform/training/parallel.py` | Yes (real validation) | **done** (14 tests, 1 gated) |
+| 9 | SWE-bench-Verified harness | `frontier_platform/eval/swebench.py` | No (logic); harness needs sandboxed code exec | **done** (subsumed by item 10's SWE-bench-Verified adapter) |
+| 10 | Real `lm-eval-harness` wiring + 2026 benchmark adapters | `frontier_platform/eval/harness.py` + adapters | No (logic) | **done** (10 new eval tests, 5 adapters) |
 
 ---
 
 ## ★1. Real synthetic data factory
 
-**Replaces:** `platform/data/synthetic.py` (16-line random-word-bag generator).
+**Replaces:** `frontier_platform/data/synthetic.py` (16-line random-word-bag generator).
 
 **New shape:**
 
 ```
-platform/data/synthetic/
+frontier_platform/data/synthetic/
   __init__.py          # re-exports + back-compat write_corpus shim
   teacher.py           # Teacher protocol + EchoTeacher, TemplateTeacher,
                        # CallableTeacher, EngineTeacher (wraps serving.Engine)
@@ -74,7 +74,7 @@ class SyntheticFactory:
     def write_jsonl(self, n: int, path: str | Path) -> Path: ...
 ```
 
-**Back-compat:** `from platform.data.synthetic import write_corpus` still works
+**Back-compat:** `from frontier_platform.data.synthetic import write_corpus` still works
 (`tests/conftest.py` and `scripts/smoke_pipeline.py` both use it).
 
 **Acceptance tests:**
@@ -90,12 +90,12 @@ class SyntheticFactory:
 
 ## ★2. Real red-team harness
 
-**Replaces:** `platform/safety/redteam.py` (5 hardcoded prompts + refusal regex).
+**Replaces:** `frontier_platform/safety/redteam.py` (5 hardcoded prompts + refusal regex).
 
 **New shape:**
 
 ```
-platform/safety/redteam/
+frontier_platform/safety/redteam/
   __init__.py          # re-exports run_suite, run_all (back-compat), SUITES,
                        # plus the new API
   probes.py            # Probe dataclass; 60+ structurally-representative
@@ -162,7 +162,7 @@ def write_report(path, results: dict) -> Path: ...
 
 ## ★6. Batched MoE forward
 
-**Replaces:** `platform/model/transformer.py:300-318` (`for e in range(...)`).
+**Replaces:** `frontier_platform/model/transformer.py:300-318` (`for e in range(...)`).
 
 **New:** sort-by-expert dispatch — flatten (N, k) routing to (N·k,) slots,
 sort by expert id, give each expert a contiguous slice via `index_select`,
@@ -184,10 +184,10 @@ real expert-parallel kernels do, just with the sort spanning ranks).
 
 ## ★7. vLLM serving backend
 
-**Replaces:** `platform/serving/engine.py:43-48` (vLLM branch raises
+**Replaces:** `frontier_platform/serving/engine.py:43-48` (vLLM branch raises
 `NotImplementedError`).
 
-**New file:** `platform/serving/vllm_engine.py` with `VLLMEngine` matching
+**New file:** `frontier_platform/serving/vllm_engine.py` with `VLLMEngine` matching
 `TorchEngine.generate` chunk schema (`{token_id, logprob, text, done}`).
 
 **Wire:** `Engine.__init__` instantiates `VLLMEngine(cfg)` when
@@ -242,8 +242,8 @@ Per-item delivery (★ items unchanged from previous log):
   package (`teacher.py`, `policies.py`, `factory.py`, `lineage.py`). Pluggable
   `Teacher` (Echo, Template, Callable, Engine), six policies including
   R1-style `ReasoningTracePolicy`, rejection sampling against
-  `platform.rl.verifiers`, MinHash dedup, contamination filtering via
-  `platform.eval.contamination`, JSONL lineage with `SampleRecord`. Back-compat
+  `frontier_platform.rl.verifiers`, MinHash dedup, contamination filtering via
+  `frontier_platform.eval.contamination`, JSONL lineage with `SampleRecord`. Back-compat
   `write_corpus` shim preserves all existing call sites.
 - **★2 red-team harness** — replaced the 5-prompt + regex toy with a package
   (`probes.py`, `suites.py`, `judges.py`, `report.py`). 26+ probes across all
@@ -257,13 +257,13 @@ Per-item delivery (★ items unchanged from previous log):
   per-slab GEMM + `index_add_` — the same shape an EP all-to-all needs. Parity
   test (`allclose` between backends across random inputs/seeds) and soft perf
   test included.
-- **★7 vLLM backend** — new `platform/serving/vllm_engine.py` matching the
+- **★7 vLLM backend** — new `frontier_platform/serving/vllm_engine.py` matching the
   TorchEngine chunk schema exactly. Engine dispatch in `engine.py` now routes
   `backend="vllm"` to it (and `ImportError` if vLLM isn't installed, not the
   old `NotImplementedError`). Includes `update_weights(state_dict)` hook for
   the out-of-process RL actor path. Tested against a fake `vllm` module so the
   whole adapter is exercised without needing GPUs.
-- **★5 jailed sandbox** — new `platform/rl/jail.py` with `Jailer` protocol +
+- **★5 jailed sandbox** — new `frontier_platform/rl/jail.py` with `Jailer` protocol +
   `BubblewrapJailer` / `NsjailJailer` / `FirejailJailer` / `NoJailer`,
   auto-detection that prefers bwrap (least-privilege, no SUID needed), and
   `run_in_jailed_sandbox` as a drop-in for `run_in_sandbox`. The sandbox grew
@@ -280,14 +280,14 @@ Per-item delivery (★ items unchanged from previous log):
   thin shims over a configurable backing classifier; existing exact-value
   tests still pass unchanged.
 
-- **#4 source connectors** — `platform/data/acquire.py` now ships connector
+- **#4 source connectors** — `frontier_platform/data/acquire.py` now ships connector
   classes for Common Crawl WARCs (warcio-backed), GitHub Archive, arXiv
   metadata, and Wikipedia dumps with a uniform `Connector.stream()` interface.
   Each connector lazy-imports its third-party dep so CI runs without network
   / heavy installs, and gracefully degrades to a fixture-driven path that
   the tests exercise.
 
-- **#8 parallelism planner** — `platform/training/parallel.py` grew a real
+- **#8 parallelism planner** — `frontier_platform/training/parallel.py` grew a real
   TP/PP/CP planner. `build_tp_plan` walks the model graph and tags every
   shardable Linear with `colwise` / `rowwise` (covering GQA Q/K/V/O, MLA
   up/down projections, MoE gate/experts/shared FFNs, and the LM head).
@@ -300,7 +300,7 @@ Per-item delivery (★ items unchanged from previous log):
   smoke proves the wrap path runs on a real `ProcessGroup` when one exists.
 
 - **#9 + #10 SWE-bench + lm-eval-harness + 2026 adapters** —
-  `platform/eval/benchmarks_2026.py` ships uniform `BenchmarkAdapter`
+  `frontier_platform/eval/benchmarks_2026.py` ships uniform `BenchmarkAdapter`
   implementations for SWE-bench-Verified, ARC-AGI-2, HLE, MMMU, and
   LiveCodeBench. Each adapter has `(name, load, score)` and a deterministic
   CI scorer (normalised patch-equality for SWE-bench, JSON-grid exact-match

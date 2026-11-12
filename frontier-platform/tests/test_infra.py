@@ -1,8 +1,8 @@
 import json
 import time
-from platform.infra.cluster import Cluster, Node
-from platform.infra.scheduler import LocalScheduler, JobSpec
-from platform.infra.observability import Metrics
+from frontier_platform.infra.cluster import Cluster, Node
+from frontier_platform.infra.scheduler import LocalScheduler, JobSpec
+from frontier_platform.infra.observability import Metrics
 import pytest
 
 

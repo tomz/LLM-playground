@@ -48,6 +48,21 @@ class SpikeMonitor:
         self.min_abs_jump = min_abs_jump
         self._buf: deque[float] = deque(maxlen=window)
 
+    def state_dict(self) -> dict:
+        """Serialize the observation window at a completed training step."""
+        return {"window": self.window, "sigma": self.sigma,
+                "min_abs_jump": self.min_abs_jump, "history": list(self._buf)}
+
+    def load_state_dict(self, state: dict) -> None:
+        """Restore history only when the detector configuration is unchanged."""
+        for key in ("window", "sigma", "min_abs_jump"):
+            if state[key] != getattr(self, key):
+                raise ValueError(f"SpikeMonitor {key} changed across resume")
+        history = state["history"]
+        if len(history) > self.window:
+            raise ValueError("SpikeMonitor history exceeds its window")
+        self._buf = deque(history, maxlen=self.window)
+
     def observe(self, loss: float) -> bool:
         if len(self._buf) < self.window:
             self._buf.append(loss)
@@ -92,6 +107,21 @@ class RewindController:
         self.n_rewinds = 0
         self.cooldown_left = 0
         self.scale = 1.0
+
+    def state_dict(self) -> dict:
+        """Serialize the run-wide rewind count and current LR cooldown."""
+        return {key: getattr(self, key) for key in (
+            "lr_floor", "max_rewinds", "cooldown_steps", "n_rewinds",
+            "cooldown_left", "scale",
+        )}
+
+    def load_state_dict(self, state: dict) -> None:
+        """Restore control state on restart, not when rewinding within a run."""
+        for key in ("lr_floor", "max_rewinds", "cooldown_steps"):
+            if state[key] != getattr(self, key):
+                raise ValueError(f"RewindController {key} changed across resume")
+        for key in ("n_rewinds", "cooldown_left", "scale"):
+            setattr(self, key, state[key])
 
     def on_spike(self, current_step: int) -> int:
         """Trigger a rewind. Returns the iteration to resume from (or

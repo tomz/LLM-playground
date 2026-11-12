@@ -1,40 +1,23 @@
-"""Loss-spike detector and rewind controller.
-
-Spike detection has two thresholds that BOTH must be exceeded before we
-declare a spike:
-  * relative: `loss - mean > sigma * std` (the classic z-score test)
-  * absolute: `loss - mean > min_abs_jump` (guards against runaway rewind
-    loops once the loss curve has plateaued and the running std is tiny)
-
-The rewinder also caps total rewinds at `max_rewinds` so a chronically
-spiky model doesn't get LR-multiplied into oblivion. Once that cap fires
-the rest of the run continues at the cosine LR with no further rewinds.
-
-Real bug history that motivated these guards
---------------------------------------------
-On the first 416M FineWeb-Edu run, train loss plateaued at ~4.88 with
-per-step jitter of ~0.3 (small effective batch -> noisy gradient). With
-the old SpikeMonitor (sigma=5.0, no absolute floor) a single 0.3-σ jump
-fired as a spike (std ~0.04 once converged -> 0.3 ~ 7σ), triggered the
-rewinder, halved LR scale to 0.5x, trained back to the same plateau,
-fired again, halved to 0.25x ... after 11 rewinds eff_lr was ~1e-10
-and the cosine schedule was meaningless. The run wasted ~6 hours
-training in a loop on the same 100 steps. min_abs_jump + max_rewinds
-together make that failure mode impossible.
-"""
+"""Checkpointable loss-spike history and bounded, collective trainer rewinds."""
 from __future__ import annotations
+
 from collections import deque
+import math
 
 
 class SpikeMonitor:
+    """Require both a relative and absolute loss jump before rewinding."""
+
     def __init__(self, window: int = 200, sigma: float = 5.0,
                  min_abs_jump: float = 2.0):
-        self.window = window
-        self.sigma = sigma
-        self.min_abs_jump = min_abs_jump
+        if window < 1 or sigma <= 0 or min_abs_jump < 0:
+            raise ValueError("invalid spike monitor thresholds")
+        self.window, self.sigma, self.min_abs_jump = window, sigma, min_abs_jump
         self._buf: deque[float] = deque(maxlen=window)
 
     def observe(self, loss: float) -> bool:
+        if not math.isfinite(loss):
+            raise ValueError("nonfinite loss must be handled collectively before spike observation")
         if len(self._buf) < self.window:
             self._buf.append(loss)
             return False
@@ -42,33 +25,49 @@ class SpikeMonitor:
         var = sum((x - mean) ** 2 for x in self._buf) / len(self._buf)
         std = max(var ** 0.5, 0.05 * abs(mean) + 1e-6)
         jump = loss - mean
-        spike = (jump > self.sigma * std) and (jump > self.min_abs_jump)
+        spike = jump > self.sigma * std and jump > self.min_abs_jump
         self._buf.append(loss)
         return spike
 
+    def state_dict(self) -> dict:
+        return {"window": self.window, "sigma": self.sigma,
+                "min_abs_jump": self.min_abs_jump, "history": list(self._buf)}
+
+    def load_state_dict(self, state: dict) -> None:
+        if any(state[key] != getattr(self, key) for key in ("window", "sigma", "min_abs_jump")):
+            raise ValueError("spike monitor configuration changed on resume")
+        history = state["history"]
+        if len(history) > self.window or not all(math.isfinite(x) for x in history):
+            raise ValueError("invalid spike monitor history")
+        self._buf = deque(history, maxlen=self.window)
+
 
 class RewindController:
-    """On spike: reload last checkpoint, halve LR for K steps.
+    """Reload at a completed-update boundary and reduce LR for 1000 updates.
 
-    `max_rewinds` caps total rewinds across the whole run -- once exceeded
-    we stop rewinding (and stop reducing the LR multiplier) so a spike-
-    happy model can still finish training at the cosine schedule's LR.
+    All ranks must call ``on_spike`` together. Rewind counts survive both job
+    restart AND rollback; reloading old controller state must not reset the cap.
+    Returning the unchanged completed-update count means no rewind took place.
     """
+
     def __init__(self, ckpt_mgr, lr_floor: float = 1e-3, max_rewinds: int = 5):
+        if not 0 < lr_floor <= 1 or max_rewinds < 0:
+            raise ValueError("invalid rewind limits")
         self.ckpt = ckpt_mgr
-        self.lr_floor = lr_floor
-        self.max_rewinds = max_rewinds
+        self.lr_floor, self.max_rewinds = lr_floor, max_rewinds
         self.n_rewinds = 0
         self.cooldown_left = 0
         self.scale = 1.0
 
-    def on_spike(self, model, optim, loader, current_step: int) -> int:
+    def on_spike(self, model, optim, loader, current_step: int,
+                 runtime_state: dict | None = None) -> int:
         if self.n_rewinds >= self.max_rewinds:
             return current_step
-        last = self.ckpt.latest()
+        last = self.ckpt.discover_latest()
         if last is None:
             return current_step
-        next_step = self.ckpt.load(model, optim, loader, step=last)
+        next_step = self.ckpt.load(model, optim, loader, step=last,
+                                   runtime_state=runtime_state)
         self.scale = max(self.scale * 0.5, self.lr_floor)
         self.cooldown_left = 1000
         self.n_rewinds += 1
@@ -79,3 +78,19 @@ class RewindController:
             self.cooldown_left -= 1
             return self.scale
         return 1.0
+
+    def state_dict(self) -> dict:
+        return {"lr_floor": self.lr_floor, "max_rewinds": self.max_rewinds,
+                "n_rewinds": self.n_rewinds, "cooldown_left": self.cooldown_left,
+                "scale": self.scale}
+
+    def load_state_dict(self, state: dict) -> None:
+        if state["lr_floor"] != self.lr_floor or state["max_rewinds"] != self.max_rewinds:
+            raise ValueError("rewind configuration changed on resume")
+        if (type(state["n_rewinds"]) is not int or not 0 <= state["n_rewinds"] <= self.max_rewinds
+                or type(state["cooldown_left"]) is not int or not 0 <= state["cooldown_left"] <= 1000
+                or not math.isfinite(state["scale"]) or not self.lr_floor <= state["scale"] <= 1):
+            raise ValueError("invalid rewind controller state")
+        self.n_rewinds = state["n_rewinds"]
+        self.cooldown_left = state["cooldown_left"]
+        self.scale = state["scale"]

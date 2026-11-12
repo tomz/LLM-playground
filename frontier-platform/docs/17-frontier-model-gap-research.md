@@ -61,7 +61,7 @@ Modern frontier systems appear to depend heavily on:
 
 **What is missing:**
 
-- `platform/data/synthetic/` style subsystem:
+- `frontier_platform/data/synthetic/` style subsystem:
   - teacher orchestration,
   - generation policies,
   - rejection sampling,
@@ -95,7 +95,7 @@ A giant cluster can train on data. It cannot invent the right data distribution,
 
 ### 2. RLVR exists, but not yet at frontier production scale
 
-The repo's `docs/15-reasoning-rl-rlvr.md` and `platform/rl/` direction are correct: GRPO, verifier rewards, code/math verifiers, cold-start SFT, reward shaping, async rollout.
+The repo's `docs/15-reasoning-rl-rlvr.md` and `frontier_platform/rl/` direction are correct: GRPO, verifier rewards, code/math verifiers, cold-start SFT, reward shaping, async rollout.
 
 That matches the public DeepSeek-R1 / GRPO direction. DeepSeek-R1's public abstract explicitly frames reasoning as emerging from reinforcement learning on verifiable tasks, including self-reflection, verification, and dynamic strategy adaptation. DeepSeekMath introduced GRPO as a PPO variant that improves reasoning while reducing PPO memory overhead.
 

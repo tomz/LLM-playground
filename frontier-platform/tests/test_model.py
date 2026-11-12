@@ -2,8 +2,8 @@ from __future__ import annotations
 import math
 import torch
 
-from platform.model.config import ModelConfig
-from platform.model.transformer import Transformer, MoEFFN, MLAttention, GQAttention
+from frontier_platform.model.config import ModelConfig
+from frontier_platform.model.transformer import Transformer, MoEFFN, MLAttention, GQAttention
 
 
 def test_param_count_matches_actual_module(tiny_model_cfg, tiny_model):

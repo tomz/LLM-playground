@@ -1,8 +1,8 @@
 """Real-GPU integration tests for the simulator. Auto-skip without CUDA."""
 import pytest
 
-from platform.sim.gpu_probe import have_cuda, probe_all, register_in_gpu_specs
-from platform.sim.real_train import measure_real_throughput
+from frontier_platform.sim.gpu_probe import have_cuda, probe_all, register_in_gpu_specs
+from frontier_platform.sim.real_train import measure_real_throughput
 
 
 pytestmark = pytest.mark.gpu
@@ -23,7 +23,7 @@ def test_probe_returns_at_least_one_device():
 
 
 def test_register_in_gpu_specs_populates_cluster_table():
-    from platform.sim.cluster import GPU_SPECS
+    from frontier_platform.sim.cluster import GPU_SPECS
     probes = probe_all(matmul_size=512, matmul_iters=5)
     keys = register_in_gpu_specs(probes)
     assert keys
@@ -50,10 +50,10 @@ def test_real_train_produces_throughput():
 def test_calibration_changes_simulated_wallclock():
     """Same ProgramSpec, with vs without measured throughput, should give
     different wall-clock days."""
-    from platform.sim.orchestrator import ProgramSpec, run_program
-    from platform.sim.cluster import Cluster
-    from platform.sim.alignment_sim import AlignmentSpec
-    from platform.sim.serving_sim import ServingTier
+    from frontier_platform.sim.orchestrator import ProgramSpec, run_program
+    from frontier_platform.sim.cluster import Cluster
+    from frontier_platform.sim.alignment_sim import AlignmentSpec
+    from frontier_platform.sim.serving_sim import ServingTier
 
     base = dict(
         name="cal", n_params=1e9, total_tokens=1e10,

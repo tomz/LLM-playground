@@ -1,14 +1,14 @@
 import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from platform.sim.scaling import chinchilla_loss, predict_mmlu, predict_arena_elo
-from platform.sim.cluster import Cluster
-from platform.sim.economy import CostBook
-from platform.sim.clock import Clock
-from platform.sim.events import EventBus
-from platform.sim.pretrain_sim import PretrainSpec, simulate_pretrain
-from platform.sim.alignment_sim import AlignmentSpec, simulate_alignment
-from platform.sim.eval_sim import simulate_safety
+from frontier_platform.sim.scaling import chinchilla_loss, predict_mmlu, predict_arena_elo
+from frontier_platform.sim.cluster import Cluster
+from frontier_platform.sim.economy import CostBook
+from frontier_platform.sim.clock import Clock
+from frontier_platform.sim.events import EventBus
+from frontier_platform.sim.pretrain_sim import PretrainSpec, simulate_pretrain
+from frontier_platform.sim.alignment_sim import AlignmentSpec, simulate_alignment
+from frontier_platform.sim.eval_sim import simulate_safety
 
 
 def test_chinchilla_monotone_in_compute():
@@ -74,8 +74,8 @@ def test_safety_blocks_high_capability_on_high_thresholds():
 
 def test_orchestrator_e2e():
     """Smoke-run the full program at toy scale; assert outputs sane."""
-    from platform.sim.orchestrator import ProgramSpec, run_program
-    from platform.sim.serving_sim import ServingTier
+    from frontier_platform.sim.orchestrator import ProgramSpec, run_program
+    from frontier_platform.sim.serving_sim import ServingTier
     spec = ProgramSpec(
         name="toy", n_params=1e9, total_tokens=1e10,
         seq_len=4096, global_batch_tokens=1_000_000,

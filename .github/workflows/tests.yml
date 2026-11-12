@@ -6,49 +6,130 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         project: [nanogpt-edu, midgpt, distgpt, frontier-platform, coder-finetune]
+        python: ['3.11', '3.14']
+    env:
+      CUDA_VISIBLE_DEVICES: ''
+      OMP_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+      PYTHONHASHSEED: '0'
+      HF_HUB_OFFLINE: '1'
+      TRANSFORMERS_OFFLINE: '1'
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ matrix.project }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
-          python-version: '3.11'
+          python-version: ${{ matrix.python }}
           cache: pip
+          cache-dependency-path: |
+            ${{ matrix.project }}/requirements*.txt
+            ${{ matrix.project }}/constraints-ci.txt
+            ${{ matrix.project }}/pyproject.toml
 
-      - name: Install torch (CPU) + project deps
+      - name: Install the declared CPU test profile (fail closed)
         run: |
-          set -e
-          cd ${{ matrix.project }}
-          python -m pip install -U pip
-          # Install CPU-only torch first to keep the GH Actions image small.
-          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch numpy
-          # Project-specific deps (best-effort; some HF-stack pins are heavy).
-          if [ -f requirements.txt ]; then
-            python -m pip install -r requirements.txt || echo "WARN: some deps missing; tests may skip"
-          fi
-          if [ -f pyproject.toml ]; then
-            python -m pip install -e . || true
-          fi
-          # Common test/runtime deps.
-          python -m pip install pytest pytest-timeout pyyaml tiktoken datasets matplotlib
+          set -euo pipefail
+          python -m pip install -c constraints-ci.txt setuptools wheel
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu 'torch==2.12.0'
+          python -m pip install --no-build-isolation -r requirements-test.txt
+          python -m pip check
+          python -m pip freeze --all > test-environment.txt
+          python - <<'PY'
+          import importlib.metadata as metadata
+          import json
+          import platform
+          import sys
+          from pathlib import Path
+          from packaging.requirements import Requirement
 
-      - name: Run tests
+          for line in Path('constraints-ci.txt').read_text().splitlines():
+              if not line.strip() or line.lstrip().startswith('#'):
+                  continue
+              requirement = Requirement(line)
+              installed = metadata.version(requirement.name)
+              assert requirement.specifier.contains(installed), (line, installed)
+          Path('test-runtime.json').write_text(json.dumps({
+              'python': sys.version,
+              'platform': platform.platform(),
+              'torch': metadata.version('torch'),
+              'cuda_visible_devices': '',
+              'kind': 'CPU/offline test profile; not a GPU benchmark',
+          }, indent=2) + '\n')
+          PY
+
+      - name: Require actual optional-stack imports used by integration tests
         run: |
-          cd ${{ matrix.project }}
-          python -m pytest -q --maxfail=3 --timeout=180 || \
-            { echo "tests in ${{ matrix.project }} failed"; exit 1; }
+          set -euo pipefail
+          case '${{ matrix.project }}' in
+            coder-finetune) python -c 'import torch, transformers, peft, trl, datasets, accelerate' ;;
+            midgpt|distgpt) python -c 'import torch, transformers, safetensors' ;;
+            frontier-platform) python -c 'import platform, frontier_platform, torch, tokenizers' ;;
+            nanogpt-edu) python -c 'import torch, numpy, matplotlib' ;;
+          esac
+
+      - name: Run project tests and retain skip reasons
+        run: |
+          set -euo pipefail
+          python -m pytest -q -ra --maxfail=3 --timeout=180 --junitxml=test-results.xml tests
+
+      - name: Build and import the installed wheel outside the checkout
+        if: matrix.project == 'distgpt' || matrix.project == 'frontier-platform'
+        run: |
+          set -euo pipefail
+          scratch="$(mktemp -d)"
+          trap 'rm -rf "$scratch"' EXIT
+          python -m pip wheel --no-index --no-build-isolation --no-deps --wheel-dir "$scratch/wheels" .
+          python -m venv --system-site-packages "$scratch/env"
+          "$scratch/env/bin/python" -m pip install --no-index --no-deps --ignore-installed "$scratch"/wheels/*.whl
+          cd "$scratch"
+          case '${{ matrix.project }}' in
+            distgpt) module='distgpt' ;;
+            frontier-platform) module='frontier_platform' ;;
+          esac
+          "$scratch/env/bin/python" -I - "$module" <<'PY'
+          import importlib
+          import platform  # stdlib-first must not break the project import
+          import sys
+          from pathlib import Path
+          package = importlib.import_module(sys.argv[1])
+          location = Path(package.__file__).resolve()
+          assert location.is_relative_to(Path(sys.prefix).resolve()), location
+          assert callable(platform.python_version)
+          print(f'Installed wheel import: {location}')
+          PY
+
+      - name: Archive resolved environment and test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tests-${{ matrix.project }}-py${{ matrix.python }}
+          if-no-files-found: warn
+          path: |
+            ${{ matrix.project }}/test-environment.txt
+            ${{ matrix.project }}/test-runtime.json
+            ${{ matrix.project }}/test-results.xml
 
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
-      - run: pip install ruff
+      - run: python -m pip install 'ruff==0.15.17'
       - run: ruff check .

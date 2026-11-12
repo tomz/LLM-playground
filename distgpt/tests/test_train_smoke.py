@@ -17,10 +17,15 @@ def test_train_one_step_single_process(tmp_path: pathlib.Path):
             str(data_dir / f"shard_{i:06d}.bin")
         )
 
+    val_dir = tmp_path / "validation"
+    val_dir.mkdir()
+    rng.integers(0, 256, size=8_000, dtype=np.uint16).tofile(
+        str(val_dir / "heldout.bin")
+    )
     cfg = {
         "run_id": "smoke",
         "out_dir": str(tmp_path / "out"),
-        "data": {"dir": str(data_dir), "seq_len": 16},
+        "data": {"dir": str(data_dir), "val_dir": str(val_dir), "seq_len": 16},
         "seed": 0,
         "dtype": "float32",
         "log": {"jsonl": True, "wandb_project": None},

@@ -54,67 +54,150 @@ def _to_messages(prompt: str, response: str, system: str = SYSTEM_PROMPT) -> dic
 
 
 def load_builtin(repeat: int = 50):
-    """Repeat the small built-in set so smoke-runs see real loss curves."""
+    """Repeat fixtures with stable task IDs so copies cannot leak across splits."""
     from datasets import Dataset
     rows = []
     for _ in range(repeat):
-        for p, r in BUILTIN_PAIRS:
-            rows.append(_to_messages(p, r))
-    return Dataset.from_list(rows)
+        for index, (p, r) in enumerate(BUILTIN_PAIRS):
+            rows.append({**_to_messages(p, r), "source": "builtin",
+                         "task_id": f"builtin/{index}", "license": "MIT"})
+    return _normalize(Dataset.from_list(rows), "builtin")
 
 
 def load_hf(name: str, max_examples: int | None = None, lang_filter: str | None = None,
-            shuffle: bool = False, seed: int = 1337):
+            shuffle: bool = False, seed: int = 1337, revision: str | None = None):
+    """Load a pinned source, retaining metadata through normalization."""
     from datasets import load_dataset
-    ds = load_dataset(name, split="train")
-    if lang_filter and "lang" in ds.column_names:
+    from cf_provenance import require_revision
+    revision = require_revision(revision, label="SFT dataset")
+    ds = load_dataset(name, split="train", revision=revision)
+    if lang_filter:
+        if "lang" not in ds.column_names:
+            raise ValueError("lang_filter requested but the dataset has no lang column")
         ds = ds.filter(lambda ex: ex["lang"] == lang_filter)
-    # Shuffle BEFORE the max_examples truncation so a capped subset is a
-    # representative sample of the whole set rather than its first N rows (many
-    # HF datasets are grouped by source/language, so the head is unrepresentative).
     if shuffle:
         ds = ds.shuffle(seed=seed)
     if max_examples:
         ds = ds.select(range(min(max_examples, len(ds))))
-    return _normalize(ds, name)
+    return _normalize(ds, name, revision)
 
 
 def load_jsonl(path: str, max_examples: int | None = None):
+    """Identify a local source by its bytes, not its mutable filename alone."""
     from datasets import load_dataset
+    from cf_provenance import file_sha256
     ds = load_dataset("json", data_files=path, split="train")
     if max_examples:
         ds = ds.select(range(min(max_examples, len(ds))))
-    return _normalize(ds, path)
+    return _normalize(ds, path, file_sha256(path))
 
 
-def _normalize(ds, source_name: str):
-    """Coerce common dataset schemas to {messages: [...]}"""
+def _normalize(ds, source_name: str, revision: str | None = None):
+    """Add messages and provenance without discarding license/source/group fields."""
     cols = set(ds.column_names)
-    if "messages" in cols:
-        return ds
-    if {"problem", "solution"}.issubset(cols):     # Magicoder-OSS-Instruct
-        return ds.map(lambda ex: _to_messages(ex["problem"], ex["solution"]),
-                      remove_columns=ds.column_names)
-    if {"instruction", "output"}.issubset(cols):   # alpaca-style
-        def fn(ex):
+    if not ("messages" in cols or {"problem", "solution"} <= cols
+            or {"instruction", "output"} <= cols or {"prompt", "response"} <= cols):
+        raise ValueError(f"don't know how to normalize columns {cols} from {source_name}")
+
+    def normalize(ex: dict) -> dict:
+        if "messages" in ex:
+            result = {"messages": ex["messages"]}
+        elif "problem" in ex:
+            result = _to_messages(ex["problem"], ex["solution"])
+        elif "instruction" in ex:
             user = ex["instruction"]
             if ex.get("input"):
-                user = f"{user}\n\n{ex['input']}"
-            return _to_messages(user, ex["output"])
-        return ds.map(fn, remove_columns=ds.column_names)
-    if {"prompt", "response"}.issubset(cols):
-        return ds.map(lambda ex: _to_messages(ex["prompt"], ex["response"]),
-                      remove_columns=ds.column_names)
-    raise ValueError(f"don't know how to normalize columns {cols} from {source_name}")
+                user += f"\n\n{ex['input']}"
+            result = _to_messages(user, ex["output"])
+        else:
+            result = _to_messages(ex["prompt"], ex["response"])
+        result.update(_cf_source=source_name, _cf_revision=revision)
+        return result
+    return ds.map(normalize)
+
+
+def split_dataset(ds, *, validation_fraction: float, seed: int,
+                  group_by: str | None = None) -> tuple:
+    """Stable source-stratified group holdout; identical prompts stay together.
+
+    Explicit group_by (for example repository) is global across sources. Without
+    it use group_id/repository/repo/task_id, then the non-assistant conversation.
+    Exact prompt duplicates join groups transitively. This is not a semantic or
+    benchmark contamination detector. Singleton source strata stay in training.
+    """
+    import math
+    from collections import defaultdict
+    from cf_provenance import digest
+
+    if isinstance(validation_fraction, bool) or not math.isfinite(validation_fraction) or not 0 < validation_fraction < 1:
+        raise ValueError("validation_fraction must be in (0, 1)")
+    rows = list(ds)
+    parents: dict[str, str] = {}
+    prompts: dict[str, str] = {}
+    entries = []
+
+    def root(key: str) -> str:
+        while parents[key] != key:
+            parents[key] = parents[parents[key]]
+            key = parents[key]
+        return key
+
+    for row in rows:
+        messages = row.get("messages")
+        if not isinstance(messages, list) or not messages:
+            raise ValueError("each SFT row needs nonempty messages")
+        prompt_hash = digest([m for m in messages if m.get("role") != "assistant"])
+        field = group_by or next((k for k in ("group_id", "repository", "repo", "task_id") if row.get(k)), None)
+        if field and not row.get(field):
+            raise ValueError(f"missing split group field: {field}")
+        group = digest([field, row[field]]) if field else prompt_hash
+        parents.setdefault(group, group)
+        if prompt_hash in prompts:
+            a, b = root(group), root(prompts[prompt_hash])
+            parents[max(a, b)] = min(a, b)
+        prompts[prompt_hash] = group
+        entries.append({"row_sha256": digest(row), "prompt_sha256": prompt_hash,
+                        "group": group, "source": row.get("source") or row.get("_cf_source") or "unspecified",
+                        "metadata": {k: v for k, v in row.items() if k != "messages"}})
+    groups: dict[str, list[int]] = defaultdict(list)
+    for index, entry in enumerate(entries):
+        entry["group"] = root(entry["group"])
+        groups[entry["group"]].append(index)
+    strata: dict[str, list[str]] = defaultdict(list)
+    for group, indices in groups.items():
+        strata[min(str(entries[i]["source"]) for i in indices)].append(group)
+    held_out = set()
+    for source, keys in sorted(strata.items()):
+        keys.sort(key=lambda key: digest([seed, source, key]))
+        if len(keys) > 1:
+            count = max(1, min(len(keys) - 1, round(len(keys) * validation_fraction)))
+            held_out.update(keys[:count])
+    if not held_out:
+        raise ValueError("validation needs at least two independent groups within a source")
+    membership: dict[str, list[int]] = {"train": [], "validation": []}
+    for index, entry in enumerate(entries):
+        entry["split"] = "validation" if entry["group"] in held_out else "train"
+        membership[entry["split"]].append(index)
+    manifest = {"schema": "coder-finetune.sft-split/v1", "seed": seed,
+                "validation_fraction": validation_fraction, "group_by": group_by,
+                "policy": "source-stratified group holdout; exact prompt groups joined; singleton strata train-only",
+                "rows": entries, "counts": {k: len(v) for k, v in membership.items()},
+                "membership_sha256": digest(sorted((e["row_sha256"], e["group"], e["split"]) for e in entries))}
+    return ds.select(membership["train"]), ds.select(membership["validation"]), manifest
 
 
 def load(cfg: dict):
+    """Load and cap examples before the independent validation split."""
     src = cfg["source"]
     if src == "builtin":
-        return load_builtin()
+        ds = load_builtin(cfg.get("repeat", 50))
+        if cfg.get("max_examples"):
+            ds = ds.select(range(min(cfg["max_examples"], len(ds))))
+        return ds
     if src == "hf":
         return load_hf(cfg["hf_name"], cfg.get("max_examples"), cfg.get("lang_filter"),
-                       shuffle=cfg.get("shuffle", False), seed=cfg.get("shuffle_seed", 1337))
+                       shuffle=cfg.get("shuffle", False), seed=cfg.get("shuffle_seed", 1337),
+                       revision=cfg.get("revision"))
     if src == "jsonl":
         return load_jsonl(cfg["jsonl_path"], cfg.get("max_examples"))
     raise ValueError(f"unknown dataset source: {src}")

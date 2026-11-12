@@ -1,0 +1,4 @@
+# Optional CUDA/QLoRA profile, not validated by the offline CPU suite.
+# Select a bitsandbytes build compatible with your GPU, CUDA and PyTorch.
+-r requirements.txt
+bitsandbytes>=0.44

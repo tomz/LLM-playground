@@ -72,11 +72,11 @@ beyond math/code, and reasoning-data curation are active research + data
 problems. Unlimited GPUs help you *run* RLVR; they don't tell you *what to
 reward*.
 
-**To close:** add a `platform/rl/` subsystem (async rollout engine + reward
+**To close:** add a `frontier_platform/rl/` subsystem (async rollout engine + reward
 workers + GRPO/PPO-with-verifier learner); add reasoning traces to the data and
 tokenizer contract; make "thinking mode" a first-class model + serving feature.
 
-> **Update:** a *toy-functional* `platform/rl/` now exists and has been deepened
+> **Update:** a *toy-functional* `frontier_platform/rl/` now exists and has been deepened
 > beyond the basic loop (see `docs/15-reasoning-rl-rlvr.md`): verifiers + group
 > rollout + **GRPO learner** + **reasoning-SFT cold-start** (`coldstart.py`,
 > R1-style) + **composite reward shaping** (`reward.py` — format/length rewards
@@ -124,7 +124,7 @@ shared-expert routing and aux-loss-free balancing; rewrite the scaling/cost
 model around active parameters.
 
 > **Update:** the *simulator* models MoE economics — `moe_active_params()`
-> in `platform/sim/scaling.py` plus `--moe-experts/--moe-top-k` flags route the
+> in `frontier_platform/sim/scaling.py` plus `--moe-experts/--moe-top-k` flags route the
 > cost/throughput model through active (not total) parameters, so a 1T-total /
 > ~357B-active run prices like its active size. **The model code now also
 > implements the frontier recipe**: `MoEFFN` supports fine-grained experts
@@ -155,7 +155,7 @@ the frontier-platform docs haven't caught up to our own research digest.)
 attention default for any long-context tier.
 
 > **Update:** **MLA now exists in the model code** — `MLAttention` in
-> `platform/model/transformer.py` (set `attn_kind="mla"`): a shared low-rank KV
+> `frontier_platform/model/transformer.py` (set `attn_kind="mla"`): a shared low-rank KV
 > latent (`mla_kv_latent_dim`) is the only cached quantity, with a decoupled RoPE
 > key carrying position, giving 3-10x KV-cache compression
 > (`ModelConfig.kv_bytes_per_token()` quantifies it). The *serving simulator*
@@ -165,7 +165,7 @@ attention default for any long-context tier.
 > engine, and sparse attention (DeepSeek-V3.2) for the 1M-context tier.
 >
 > **Update 2:** **incremental KV-cache decode is now implemented** for both GQA
-> and MLA — `Transformer.forward_with_cache` + `platform/model/kv_cache.py`
+> and MLA — `Transformer.forward_with_cache` + `frontier_platform/model/kv_cache.py`
 > (`KVCache`). The serving engine (`TorchEngine`) prefills the prompt then decodes
 > one token per step over the cache (O(T)/token), and a correctness test asserts
 > the cached path matches the full re-encode logits bitwise-close for GQA, MLA,
@@ -209,7 +209,7 @@ projector, interleaved multimodal data pipeline, multimodal tokenizer contract,
 multimodal eval suite. (Audio/video are a further tier.)
 
 > **Update:** a *toy-functional* LLaVA-style adapter now exists in
-> `platform/model/vision.py` (`VisionEncoder` + `Projector` +
+> `frontier_platform/model/vision.py` (`VisionEncoder` + `Projector` +
 > `VisionLanguageModel`, runs on CPU; see `docs/16-multimodality.md`). It proves
 > the image-token-prepend forward/loss path, but the encoder is randomly
 > initialized and the data/tokenizer/eval/serving multimodal paths are still
@@ -238,11 +238,11 @@ completion over long horizons, not just static QA.
 add SWE-bench-style and computer-use evals to `08-evaluation.md`.
 
 > **Update:** a *toy-functional* agentic harness now exists —
-> `platform/rl/agentic.py` (`ToolEnv` + `Tool`/`ToolSpec` + `rollout_episode`):
+> `frontier_platform/rl/agentic.py` (`ToolEnv` + `Tool`/`ToolSpec` + `rollout_episode`):
 > a multi-turn agent↔env loop where the agent emits `<|tool_call|>` JSON, the env
 > runs the tool and returns `<|tool_result|>`, and a **terminal, sparse**
 > verifiable reward scores task completion — the agentic-RL regime, not
-> single-turn. The *simulator* prices it: `platform/sim/agentic_rl_sim.py` charges
+> single-turn. The *simulator* prices it: `frontier_platform/sim/agentic_rl_sim.py` charges
 > long-horizon rollout GPU + tool-execution CPU fleet + trajectory labels and
 > returns an `agentic_quality` lift, and the eval suite now scores **SWE-bench
 > Verified** (driven mostly by `agentic_quality`). Still open: real sandboxed
@@ -296,7 +296,7 @@ price in. The cost tables would shrink materially if FP8 economics were modeled.
 re-baseline the simulator's cost/throughput with FP8 and MoE active-param FLOPs.
 
 > **Update:** the simulator now prices low precision — `precision_speedup()` in
-> `platform/sim/scaling.py` (bf16 1.0 / fp8 1.55 / nvfp4 2.2) plus a
+> `frontier_platform/sim/scaling.py` (bf16 1.0 / fp8 1.55 / nvfp4 2.2) plus a
 > `--precision` flag fold the throughput gain into pretraining wall-clock and
 > $. The *training code* doesn't yet implement FP8 numerics; the economics are
 > modeled.
@@ -354,7 +354,7 @@ contamination-prone.
 > **Update:** the *simulator's* eval now reports the 2026 frontier suite —
 > `predict_swebench` (agentic-post-training-driven), `predict_arc_agi2` and
 > `predict_hle` (reasoning-driven), and `predict_mmmu` (at chance until
-> multimodal) in `platform/sim/scaling.py`, surfaced through `simulate_eval`.
+> multimodal) in `frontier_platform/sim/scaling.py`, surfaced through `simulate_eval`.
 > Unlike the 2024 scores these are **lifted by post-training** (`reasoning_quality`
 > / `agentic_quality`) and by modality, so they move when you add RLVR, agentic
 > RL, or a vision tower — exactly the levers the static 2024 suite couldn't see.
@@ -386,7 +386,7 @@ eval scores from **pretraining scaling laws only**. They therefore:
 **To close:** add MoE active-param + FP8 to the throughput model; add an RLVR /
 post-training compute stage; let reasoning compute affect predicted eval scores.
 
-> **Update — done.** All three are now implemented in `platform/sim/`:
+> **Update — done.** All three are now implemented in `frontier_platform/sim/`:
 > - **MoE active-param FLOPs** via `moe_active_params()` + `--moe-experts`.
 > - **FP8/NVFP4 throughput** via `precision_speedup()` + `--precision`.
 > - **A real RLVR/GRPO compute stage** — `reasoning_rl_sim.py` prices rollout +

@@ -1,5 +1,11 @@
 # `research/` — a tiny autonomous-research harness for nanogpt-edu
 
+**Maintainer contract revision:** see [the November repair](REPAIR_CONTRACT.md)
+for exact token budgets, whole-document splits, separate final-holdout use, and
+schema-3 unknown-cost accounting. Candidate-search agents still may not edit the
+harness. Historical runs below describe their original code/data contract, not
+new measurements under this revision.
+
 A self-contained "automated ML researcher" loop: an agent (LLM or the built-in
 mutator) repeatedly edits **one file**, the harness trains it under a fixed
 budget and measures it, and a keep/revert loop accumulates only the changes that
@@ -116,3 +122,68 @@ plot compatibility; the JSONL sidecar is the audit/cost source of truth and
 includes failed branches in `total_cost()`. `context_ab.py` also provides the
 minimal equal-budget rolling-truncation versus compaction comparison; its CPU
 test demonstrates the expected old-fact loss under rolling truncation.
+
+### Schema 2: identity, lineage and accepted-result cost
+
+The Oct/Nov harvest extends `AttemptRecord` without changing the existing
+constructor arguments, ledger format, or four-key `total_cost()` API. New writes
+default to schema 2; `read_attempts()` still reads explicit v1 records and treats
+a missing schema version as v1. New fields default to unknown (`None`), except
+`retry_index`, which defaults to zero. Unsupported or malformed versions fail
+rather than silently coercing them.
+
+| Fields | Meaning |
+|---|---|
+| `domain`, `model_id`, `policy_id`, `grader_id`, `effort` | Caller-supplied task domain, immutable/revision-qualified identities and effort label; never inferred from a display name |
+| `attempt_id`, `parent_attempt_id`, `retry_index` | Campaign-unique ID, prior attempt/branch link, zero-based retry ordinal; retries require both IDs |
+| `tokens`, `wall_s`, `verifier_cost_s` | Existing training-token and timing measurements, unchanged; do not record them twice under new names |
+| `input_tokens`, `output_tokens`, `grader_tokens` | Model input/output and separate grader inference tokens; not training tokens |
+| `cached_input_tokens`, `reasoning_tokens` | Subsets of input/output respectively; never add them a second time |
+| `model_cost_usd`, `grader_cost_usd`, `other_cost_usd` | Disjoint caller-measured billing components; other includes separately billed training/compute |
+
+Token counts and retry ordinals are nonnegative integers. Budgets must be
+positive and finite (token budgets also integral); timing/billing fields reject
+negative, infinite and NaN values. `None` means unknown, **not free**; use `0`
+only for measured zero. Billing currency is explicitly USD; no provider tariff,
+GPU cost estimate, or price conversion is guessed. Verifier seconds may already
+be included in wall time, so the two are reported separately, never summed.
+Legacy quality values/metadata retain their previous representation.
+
+`cost_summary(records)` counts **every supplied attempt**—including crashes,
+discards and retries—then divides each measured total by the number of records
+where `status == "keep" and gate_ok`. This is campaign-level amortized cost,
+not a claim that one particular branch caused a particular accepted result.
+Pass the complete campaign, not only its winners. For a per-domain view, group
+all records by `domain` before calling it; do not drop expensive failed branches.
+Acceptance here is the recorded gate verdict, not independent proof of correctness.
+
+The returned `totals` and `per_accepted_result` mappings retain separate training,
+inference and grading costs. `measured_attempts` exposes coverage of each new
+optional field. A total is null if any supplied attempt lacks that measurement;
+all per-accepted ratios are null when no result was accepted. Cache/reasoning
+subsets are excluded from `inference_tokens`; `cost_usd` sums the three disjoint
+USD fields only when all are known. Duplicate explicit attempt IDs are rejected.
+Parent links are audit labels, not recursively charged costs; record each
+attempt's incremental consumption once. External/missing parents are allowed,
+so the caller must ensure campaign completeness. Legacy rows without IDs cannot
+be deduplicated automatically.
+
+From `nanogpt-edu/`:
+
+```bash
+.venv/bin/python - <<'PY'
+import json
+from research.provenance import cost_summary, read_attempts
+
+# Existing loop output; run the research loop first if this file does not exist.
+records = list(read_attempts('research/attempts.jsonl'))
+print(json.dumps(cost_summary(records), indent=2, allow_nan=False))
+PY
+```
+
+The unchanged loop still supplies its original training measurements; callers
+must explicitly provide new identity/inference/billing fields when available.
+This schema extension does not instrument external models, implement a grader,
+or fabricate historical costs. The independent
+[hybrid CPU ablation](../README.md#octnov-harvest-isolated-hybrid-ablation) exercises
+causal sequence mixers without modifying the protected harness or its keep gate.

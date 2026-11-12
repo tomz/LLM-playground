@@ -35,6 +35,9 @@ seed: 1337
 
 model:
   name: Qwen/Qwen2.5-Coder-1.5B
+  revision: df3ce67c0e24480f20468b6ef2894622d69eb73b
+  tokenizer_revision: df3ce67c0e24480f20468b6ef2894622d69eb73b
+  local_files_only: true
   dtype: bfloat16
   attn_impl: sdpa
   trust_remote_code: false
@@ -64,8 +67,11 @@ lora:
   use_rslora: true
 
 dataset:
+  validation_fraction: 0.1
+  group_by: null  # Auto group metadata plus exact-prompt connectivity; never row-random leakage.
   source: hf
   hf_name: ise-uiuc/Magicoder-OSS-Instruct-75K
+  revision: 5f839b1f368a76b161028bb9edff055db34022b2
   lang_filter: python
   # The whole point of high rank is a dataset large enough to need it. 20k rows
   # is where r=16 starts leaving FullFT quality on the table; r=256 keeps up.
@@ -73,6 +79,7 @@ dataset:
   format: chatml
 
 train:
+  loss_scope: all_tokens  # Explicit legacy objective; assistant_only needs generation markers.
   max_seq_len: 1024
   batch_size: 1            # effective batch = 1 × 16 = 16  (< 32 ceiling, per
   grad_accum: 16           # finding #4 — LoRA is less batch-tolerant than FullFT)
@@ -85,16 +92,16 @@ train:
   grad_clip: 1.0
   log_every: 10
   save_every: 200
-  packing: true            # ~2.5× tokens/step at no extra memory — the right
+  packing: false  # SDPA baseline; boundary-aware flash-attention packing needs separate validation.
                            # call once the adapter has the capacity to use them.
   gradient_checkpointing: true   # r=256 optimizer state is bigger; trade the
                                  # ~30% recompute for the headroom on 16 GB.
-  use_liger_kernel: true   # fused CE over Qwen's ~150K vocab — frees the memory
+  use_liger_kernel: false  # Optional fused backend requires its own parity and hardware validation.
                            # the bigger adapter wants.
   neftune_noise_alpha: 5
 
 eval:
-  enable: true
+  enable: false  # Code evaluation is separate and requires an explicit isolated executor.
   n_problems: 50
   n_samples_per_problem: 1
 

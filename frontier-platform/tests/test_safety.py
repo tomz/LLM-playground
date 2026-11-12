@@ -1,7 +1,7 @@
 import json
-from platform.safety.classifiers import InputClassifier, OutputClassifier
-from platform.safety.gates import preflight, ModelCard, default_thresholds
-from platform.safety.redteam import run_suite
+from frontier_platform.safety.classifiers import InputClassifier, OutputClassifier
+from frontier_platform.safety.gates import preflight, ModelCard, default_thresholds
+from frontier_platform.safety.redteam import run_suite
 
 
 def test_input_classifier_flags_keyword():

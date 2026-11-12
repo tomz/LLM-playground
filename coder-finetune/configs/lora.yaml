@@ -3,6 +3,9 @@ seed: 1337
 
 model:
   name: Qwen/Qwen2.5-Coder-1.5B
+  revision: df3ce67c0e24480f20468b6ef2894622d69eb73b
+  tokenizer_revision: df3ce67c0e24480f20468b6ef2894622d69eb73b
+  local_files_only: true
   dtype: bfloat16
   attn_impl: sdpa
   trust_remote_code: false
@@ -17,12 +20,16 @@ lora:
   bias: none
 
 dataset:
+  validation_fraction: 0.1
+  group_by: null  # Auto group metadata plus exact-prompt connectivity; never row-random leakage.
   source: hf
   hf_name: ise-uiuc/Magicoder-OSS-Instruct-75K
+  revision: 5f839b1f368a76b161028bb9edff055db34022b2
   max_examples: 20000
   format: chatml
 
 train:
+  loss_scope: all_tokens  # Explicit legacy objective; assistant_only needs generation markers.
   max_seq_len: 2048
   batch_size: 1
   grad_accum: 16
@@ -33,9 +40,9 @@ train:
   grad_clip: 1.0
   log_every: 10
   save_every: 200
-  packing: true
+  packing: false  # SDPA baseline; boundary-aware flash-attention packing needs separate validation.
 
 eval:
-  enable: true
+  enable: false  # Code evaluation is separate and requires an explicit isolated executor.
   n_problems: 50
   n_samples_per_problem: 1

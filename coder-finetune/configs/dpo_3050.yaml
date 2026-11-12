@@ -15,6 +15,9 @@ seed: 1337
 
 model:
   name: Qwen/Qwen2.5-Coder-0.5B
+  revision: 8123ea2e9354afb7ffcc6c8641d1b2f5ecf18301
+  tokenizer_revision: 8123ea2e9354afb7ffcc6c8641d1b2f5ecf18301
+  local_files_only: true
   dtype: bfloat16
   attn_impl: sdpa
   trust_remote_code: false
@@ -56,4 +59,4 @@ pref:
   objective: dpo           # 'dpo' (default, available everywhere) | 'orpo' (needs trl<0.12)
   beta: 0.1                # KL-to-reference strength (DPO) / odds-ratio weight (ORPO)
   loss_type: sigmoid       # DPO loss family: sigmoid (original) | ipo | hinge | ...
-  max_prompt_length: 512
+  # Legacy max_prompt_length removed: this profile does not implicitly truncate prompts.

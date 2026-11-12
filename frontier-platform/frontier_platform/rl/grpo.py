@@ -1,0 +1,516 @@
+"""GRPO — Group-Relative Policy Optimization (DeepSeekMath / DeepSeek-R1).
+
+The key idea vs. PPO (see `frontier_platform.alignment.ppo`): drop the value network.
+For each prompt, sample a group of G responses, score each with a *verifier*
+(see `frontier_platform.rl.verifiers`), and use the group's mean/std to form a baseline:
+
+    advantage_i = (r_i - mean(group)) / (std(group) + eps)
+
+The per-token objective is the PPO-style **clipped** surrogate with a
+group-relative advantage broadcast to every generated token, minus a
+per-token KL penalty to the reference policy:
+
+    ratio_t   = exp(logp_theta(t) - logp_behavior(t))
+    surr_t    = min(ratio_t * A, clip(ratio_t, 1-eps_lo, 1+eps_hi) * A)
+    kl_t      = exp(logp_ref - logp_theta) - (logp_ref - logp_theta) - 1   # k3, >=0
+    loss      = -mean_t(surr_t) + beta * mean_t(kl_t)
+
+This is the production GRPO objective: per-token importance ratios against the
+**behavior** policy that generated the rollout (so it is correct under async
+actor–learner skew, where the sampling policy lags the learner), Schulman's k3
+unbiased KL estimator (always >= 0, low variance), and decoupled lower/upper
+clip ranges (DAPO-style ``clip_higher``). Observed behavior probabilities are
+mandatory. This CPU reference supports matching positive-temperature softmax
+with top_p=1, not greedy/nucleus training or an assumed ratio of one for missing
+probabilities. See docs/20-sota-repair-contracts.md.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+import torch
+
+from ..alignment._common import clone_for_reference
+from ..model.config import ModelConfig
+from ..model.transformer import Transformer
+from ..serving.sampling import sampling_log_probs, validate_sampling
+from ..tokenizer.bytes import BytesTokenizer
+from .rollout import GroupRollout, sample_group
+from .verifiers import Verifier
+
+
+@dataclass
+class GRPOConfig:
+    policy_ckpt: str = ""
+    ref_ckpt: str = ""                 # defaults to a frozen copy of the policy
+    out_dir: str = "out/grpo"
+    group_size: int = 4               # G rollouts per prompt
+    steps: int = 10
+    lr: float = 1e-5
+    beta: float = 0.04                # KL-to-reference coefficient
+    clip_eps_low: float = 0.2         # PPO lower clip (1 - eps_low)
+    clip_eps_high: float = 0.2        # PPO upper clip (1 + eps_high); DAPO raises this
+    clip_ratio_c: float = 0.0         # outer "dual-clip" bound (0 disables); see grpo_step
+    # --- importance-sampling granularity: GRPO (token) vs GSPO (sequence) ---
+    importance_sampling_level: str = "token"  # "token" = GRPO's per-token ratio
+                                      # (default, unchanged). "sequence" = GSPO
+                                      # (Zheng et al., Qwen): one *length-normalized*
+                                      # importance ratio per sequence, broadcast to
+                                      # its tokens. GSPO is the de-facto MoE-RL recipe
+                                      # (behind Qwen3) — the sequence-level ratio is
+                                      # far less noisy than the token-level one when
+                                      # routing makes per-token ratios jump, which is
+                                      # exactly where token-level GRPO destabilises.
+                                      # NOTE: sequence ratios live on a *different
+                                      # numeric scale*, so they need a ~2-orders-of-
+                                      # magnitude TIGHTER clip than GRPO (e.g.
+                                      # clip_eps ~3e-3 vs 0.2). Set the clips
+                                      # accordingly when switching to "sequence".
+    ppo_epochs: int = 1               # inner optimization passes per rollout batch
+    max_new_tokens: int = 16
+    seq_len: int = 256
+    temperature: float = 1.0
+    grad_clip: float = 1.0
+    # --- entropy control (averts entropy collapse during RLVR) ---
+    entropy_coef: float = 0.0         # static entropy-bonus coefficient (used when
+                                      # target_entropy is None); 0.0 = no bonus
+    target_entropy: float | None = None  # H*; when set, a PI controller adapts the
+                                      # entropy coef each step to hold entropy ~ H*
+    entropy_kp: float = 0.05          # PI proportional gain
+    entropy_ki: float = 0.005         # PI integral gain
+    entropy_coef_max: float = 0.5     # upper bound on the (adapted) entropy coef
+    model_cfg: ModelConfig | None = None
+    top_p: float = 1.0                # only full-support softmax is trainable here
+
+    def __post_init__(self) -> None:
+        _validate_grpo_sampling(self)
+
+
+def _validate_grpo_sampling(cfg: GRPOConfig) -> None:
+    """Reject transforms whose importance/support contract is not implemented."""
+    validate_sampling(cfg.temperature, cfg.top_p)
+    if cfg.temperature == 0 or cfg.top_p != 1.0:
+        raise ValueError("GRPO requires temperature > 0 and top_p=1; greedy/nucleus training is unsupported")
+
+
+def _validate_behavior(roll: GroupRollout, cfg: GRPOConfig) -> torch.Tensor:
+    """Validate probability evidence before model forward or optimizer work."""
+    _validate_grpo_sampling(cfg)
+    if roll.ids.ndim != 2 or roll.resp_mask.shape != roll.ids.shape:
+        raise ValueError("rollout IDs and response mask must have matching [N, T] shapes")
+    mask = roll.resp_mask
+    if not ((mask == 0) | (mask == 1)).all() or not mask.any():
+        raise ValueError("rollout requires a binary mask with at least one response token")
+    if mask[:, 0].any():
+        raise ValueError("response tokens require a nonempty prompt")
+    if roll.behavior_logp is None or roll.behavior_logp.shape != roll.ids.shape:
+        raise ValueError("observed behavior log-probabilities must match rollout IDs")
+    observed = roll.behavior_logp[mask.bool()]
+    if not torch.isfinite(observed).all() or (observed > 0).any():
+        raise ValueError("behavior log-probabilities must be finite and <= 0")
+    provenance = roll.provenance
+    if provenance is None:
+        if cfg.temperature != 1.0:
+            raise ValueError("legacy behavior records require unit temperature or explicit provenance")
+    else:
+        if provenance.logprob_kind != "behavior":
+            raise ValueError("raw/unknown log-probabilities are not behavior probabilities")
+        if provenance.temperature != cfg.temperature or provenance.top_p != cfg.top_p:
+            raise ValueError("learner temperature/top_p do not match rollout sampling provenance")
+        actual = tuple(tuple(row[sel.bool()].tolist()) for row, sel in zip(roll.ids, mask))
+        if actual != provenance.response_ids:
+            raise ValueError("learner response IDs differ from rollout provenance")
+    # Prompt/padding values are not probability observations; exclude them
+    # before ratio calculations rather than multiply a possible NaN by zero.
+    return torch.where(mask.bool(), roll.behavior_logp, 0.)[:, 1:].detach()
+
+
+def _policy_token_stats(
+    model, x: torch.Tensor, y: torch.Tensor, temperature: float, *, entropy: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    """Evaluate the sampling distribution with gradients but without dropout.
+
+    Restore each module's mode afterwards, including mixed train/eval models.
+    """
+    modes = [(module, module.training) for module in model.modules()]
+    try:
+        model.eval()
+        logits, _ = model(x)
+        logps = sampling_log_probs(logits, temperature=temperature, top_p=1.0)
+        selected = logps.gather(-1, y.unsqueeze(-1)).squeeze(-1)
+        ent = None
+        if entropy:
+            finite_logps = logps.masked_fill(torch.isneginf(logps), 0.)
+            ent = -(logps.exp() * finite_logps).sum(-1)
+        return selected, ent
+    finally:
+        for module, training in modes:
+            module.training = training
+
+
+@dataclass
+class EntropyController:
+    """PI controller that adapts the GRPO entropy-bonus coefficient to hold the
+    policy's mean token entropy near a target ``H*``.
+
+    Entropy collapse — the policy sharpening into a near-deterministic mode and
+    losing the exploration RLVR needs — is a classic GRPO failure. A fixed
+    entropy bonus is hard to tune: too small and entropy still collapses, too
+    large and it destabilises the policy. Instead we *measure* mean token entropy
+    each step and drive a coefficient with a proportional-integral controller so
+    entropy tracks ``H*``:
+
+        error      = H* - measured_entropy        # >0 when entropy too LOW
+        integral  += error                        # (anti-windup bounded)
+        coef       = clip(kp*error + ki*integral, 0, coef_max)
+
+    The coefficient multiplies an entropy *bonus* subtracted from the loss, so a
+    higher coef pushes entropy up. Anti-windup bounds the integral so a long
+    saturation can't cause overshoot.
+    """
+
+    target_entropy: float
+    coef: float = 0.0
+    kp: float = 0.05
+    ki: float = 0.005
+    coef_min: float = 0.0
+    coef_max: float = 0.5
+    integral: float = 0.0
+
+    def update(self, measured_entropy: float) -> float:
+        error = self.target_entropy - measured_entropy
+        self.integral += error
+        if self.ki > 0:  # anti-windup: bound the integral's contribution
+            cap = self.coef_max / self.ki
+            self.integral = max(-cap, min(cap, self.integral))
+        raw = self.kp * error + self.ki * self.integral
+        self.coef = float(min(self.coef_max, max(self.coef_min, raw)))
+        return self.coef
+
+
+def make_entropy_controller(cfg: GRPOConfig) -> EntropyController | None:
+    """Build an :class:`EntropyController` from ``cfg`` iff adaptive entropy
+    control is requested (``cfg.target_entropy is not None``)."""
+    if cfg.target_entropy is None:
+        return None
+    return EntropyController(
+        target_entropy=cfg.target_entropy,
+        coef=cfg.entropy_coef,
+        kp=cfg.entropy_kp,
+        ki=cfg.entropy_ki,
+        coef_max=cfg.entropy_coef_max,
+    )
+
+
+def group_advantages(rewards: torch.Tensor, group_index: torch.Tensor, *, eps: float = 1e-6) -> torch.Tensor:
+    """Group-relative, standardized advantages.
+
+    ``rewards`` and ``group_index`` are ``[N]``. Within each group (prompt), the
+    advantage is ``(r - group_mean) / (group_std + eps)``. Returns ``[N]``.
+    """
+    adv = torch.zeros_like(rewards)
+    for gi in group_index.unique():
+        sel = group_index == gi
+        g = rewards[sel]
+        adv[sel] = (g - g.mean()) / (g.std(unbiased=False) + eps)
+    return adv
+
+
+def _shift(ids: torch.Tensor, mask: torch.Tensor):
+    return ids[:, :-1], ids[:, 1:], mask[:, 1:]
+
+
+def _sequence_importance_ratio(
+    logp: torch.Tensor, base: torch.Tensor, mask: torch.Tensor
+) -> torch.Tensor:
+    """GSPO sequence-level importance ratio (Zheng et al., Qwen — "Group Sequence
+    Policy Optimization").
+
+    GRPO forms the ratio ``exp(logp_t - base_t)`` **per token**; GSPO forms a
+    single ratio **per sequence**, using the *length-normalized* sum of per-token
+    log-prob differences:
+
+        s_i = exp( (1/|y_i|) * sum_t mask * (logp_t - base_t) )
+
+    and broadcasts ``s_i`` back over the sequence's tokens. The length
+    normalization keeps the ratio on a stable, sequence-length-invariant scale;
+    the result is a far lower-variance importance weight than the token-level
+    ratio when per-token ratios are noisy (e.g. MoE routing makes them jump),
+    which is the exact regime where token-level GRPO becomes unstable. Returns a
+    ``[N, T-1]`` tensor (the per-sequence ratio broadcast over tokens) so it drops
+    into the existing surrogate unchanged.
+    """
+    tok_per_seq = mask.sum(dim=1).clamp_min(1.0)                 # [N]
+    seq_logratio = ((logp - base) * mask).sum(dim=1) / tok_per_seq  # [N]
+    return torch.exp(seq_logratio).unsqueeze(1)                  # [N, 1] -> broadcast
+
+
+def _dual_clip_surrogate(surrogate: torch.Tensor, adv_tok: torch.Tensor,
+                         clip_ratio_c: float) -> torch.Tensor:
+    """DAPO / dual-clip-PPO outer clip.
+
+    On **negative-advantage** tokens the inner ``min(ratio*A, clip(ratio)*A)``
+    can still go arbitrarily negative when the importance ratio explodes
+    (``ratio*A -> -inf`` as ``ratio -> inf`` for ``A < 0``), which makes
+    ``-surrogate`` (the loss) blow up. Lower-bounding the surrogate by
+    ``clip_ratio_c * A`` (a fixed negative floor, since ``A < 0``) caps it.
+    Positive-advantage tokens are untouched. ``clip_ratio_c <= 0`` disables it.
+    """
+    if not clip_ratio_c or clip_ratio_c <= 0:
+        return surrogate
+    floor = clip_ratio_c * adv_tok                 # negative where A < 0
+    neg = (adv_tok < 0).expand_as(surrogate)
+    return torch.where(neg, torch.maximum(surrogate, floor), surrogate)
+
+
+def grpo_step(
+    policy,
+    ref,
+    roll: GroupRollout,
+    rewards: torch.Tensor,
+    cfg: GRPOConfig,
+    *,
+    optimizer=None,
+    entropy_controller: "EntropyController | None" = None,
+) -> dict:
+    """One GRPO update over a group rollout (real per-token clipped objective).
+
+    Computes group-relative advantages, then for ``cfg.ppo_epochs`` inner passes
+    applies the PPO-clipped surrogate with a per-token importance ratio against
+    the rollout's behavior log-probs and a k3 KL penalty to ``ref``. Returns a
+    metrics dict. When ``optimizer`` is None, runs a single forward to populate
+    metrics without updating (advantages still computed).
+
+    Two stability mechanisms layer on the base objective:
+
+    * **Outer "dual" clip** (``cfg.clip_ratio_c > 0``, DAPO/dual-clip-PPO): on
+      tokens with *negative* advantage the standard lower clip can still let an
+      exploding ratio produce a large positive surrogate; bounding the surrogate
+      below by ``clip_ratio_c * A`` caps that. Disabled at 0.
+
+    * **Adaptive entropy bonus** (``entropy_controller`` set): an entropy term
+      ``-coef * mean_entropy`` is added to the loss, with ``coef`` driven by a PI
+      controller toward ``cfg.target_entropy`` to avert entropy collapse. With no
+      controller, a static ``cfg.entropy_coef`` bonus is used (0 = off)."""
+    old_logp = _validate_behavior(roll, cfg)
+    if cfg.importance_sampling_level not in {"token", "sequence"}:
+        raise ValueError(f"unknown importance_sampling_level={cfg.importance_sampling_level!r}")
+    if rewards.shape != roll.group_index.shape or rewards.shape != (roll.ids.size(0),):
+        raise ValueError("one reward and group index are required per rollout row")
+    if not torch.isfinite(rewards).all():
+        raise ValueError("rewards must be finite")
+    adv_seq = group_advantages(rewards, roll.group_index)        # [N]
+    x, y, m = _shift(roll.ids, roll.resp_mask)                   # [N, T-1]
+
+    # Per-token advantage = broadcast group advantage over generated tokens.
+    adv_tok = adv_seq.unsqueeze(1).detach()                      # [N, 1]
+    tok_count = m.sum().clamp_min(1.0)
+
+    use_entropy = entropy_controller is not None or cfg.entropy_coef != 0.0
+    n_epochs = max(1, cfg.ppo_epochs) if optimizer is not None else 1
+    last_metrics: dict = {}
+    for _ in range(n_epochs):
+        logp, ent_tok = _policy_token_stats(
+            policy, x, y, cfg.temperature, entropy=use_entropy,
+        )
+        with torch.no_grad():
+            ref_logp, _ = _policy_token_stats(ref, x, y, cfg.temperature)
+
+        base = old_logp
+        if cfg.importance_sampling_level == "sequence":
+            # GSPO: one length-normalized importance ratio per sequence, broadcast
+            # over its tokens (vs GRPO's independent per-token ratio).
+            ratio = _sequence_importance_ratio(logp, base, m)   # [N, 1]
+        elif cfg.importance_sampling_level == "token":
+            ratio = torch.exp(logp - base)                      # [N, T-1]
+        else:
+            raise ValueError(
+                f"unknown importance_sampling_level={cfg.importance_sampling_level!r}; "
+                "want 'token' (GRPO) or 'sequence' (GSPO)"
+            )
+        unclipped = ratio * adv_tok
+        clipped = torch.clamp(ratio, 1.0 - cfg.clip_eps_low, 1.0 + cfg.clip_eps_high) * adv_tok
+        surrogate = torch.minimum(unclipped, clipped)           # [N, T-1]
+        # Outer dual-clip: lower-bound the surrogate by clip_ratio_c * A on
+        # negative-advantage tokens (where a blown-up ratio would otherwise make
+        # min(...) large-magnitude negative and explode the loss).
+        surrogate = _dual_clip_surrogate(surrogate, adv_tok, cfg.clip_ratio_c)
+
+        # Schulman k3 unbiased KL estimator: exp(d) - d - 1, d = ref_logp - logp.
+        d = ref_logp - logp
+        kl_tok = torch.exp(d) - d - 1.0                         # >= 0
+
+        pg_loss = -(surrogate * m).sum() / tok_count
+        kl_loss = cfg.beta * (kl_tok * m).sum() / tok_count
+        loss = pg_loss + kl_loss
+
+        # Entropy bonus (subtracted from loss -> pushes entropy up). The coef is
+        # adapted by the PI controller toward target_entropy when present.
+        mean_entropy = 0.0
+        ent_coef = 0.0
+        if use_entropy:
+            mean_entropy = float(((ent_tok * m).sum() / tok_count).detach())
+            if entropy_controller is not None:
+                ent_coef = entropy_controller.update(mean_entropy)
+            else:
+                ent_coef = cfg.entropy_coef
+            if ent_coef != 0.0:
+                ent_bonus = (ent_tok * m).sum() / tok_count
+                loss = loss - ent_coef * ent_bonus
+
+        with torch.no_grad():
+            clip_frac = (((ratio < 1.0 - cfg.clip_eps_low) | (ratio > 1.0 + cfg.clip_eps_high)).float() * m).sum() / tok_count
+        last_metrics = {
+            "loss": float(loss.detach()),
+            "pg_loss": float(pg_loss.detach()),
+            "kl": float((kl_tok * m).sum().detach() / tok_count),
+            "clip_frac": float(clip_frac.detach()),
+            "ratio_mean": float(((ratio * m).sum() / tok_count).detach()),
+            "reward_mean": float(rewards.mean().detach()),
+            "reward_std": float(rewards.std(unbiased=False).detach()),
+            "adv_abs_mean": float(adv_seq.abs().mean().detach()),
+            "entropy": mean_entropy,
+            "entropy_coef": ent_coef,
+        }
+        if optimizer is not None:
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(policy.parameters(), cfg.grad_clip)
+            optimizer.step()
+    return last_metrics
+
+
+def _load_policy(cfg: GRPOConfig) -> tuple[Transformer, BytesTokenizer]:
+    tok = BytesTokenizer()
+    if cfg.policy_ckpt and Path(cfg.policy_ckpt).exists():
+        state = torch.load(cfg.policy_ckpt, map_location="cpu", weights_only=False)
+        mcfg = state.get("model_cfg") or cfg.model_cfg
+        if mcfg is None:
+            raise ValueError("policy_ckpt has no model_cfg; pass cfg.model_cfg")
+        m = Transformer(mcfg)
+        if "model" in state:
+            m.load_state_dict(state["model"])
+        return m, tok
+    if cfg.model_cfg is None:
+        raise ValueError("either policy_ckpt must exist or cfg.model_cfg must be set")
+    return Transformer(cfg.model_cfg), tok
+
+
+def run_grpo(
+    cfg: GRPOConfig,
+    prompts: list[str],
+    verifier: Verifier,
+) -> str:
+    """Run the GRPO loop against a single ``verifier`` over ``prompts``.
+
+    For brevity this uses one verifier for all prompts; a real run carries a
+    per-prompt verifier spec (the answer key / hidden tests live with the prompt).
+
+    ``verifier`` may be a bare correctness verifier or a
+    :class:`frontier_platform.rl.reward.CompositeReward` (format/length/anti-hacking
+    shaping); if it exposes ``.breakdown(prompt, response)`` the per-component
+    means are logged into each step's metrics for monitoring.
+    """
+    policy, tok = _load_policy(cfg)
+    if cfg.ref_ckpt and Path(cfg.ref_ckpt).exists():
+        ref_state = torch.load(cfg.ref_ckpt, map_location="cpu", weights_only=False)
+        ref = Transformer(ref_state["model_cfg"])
+        ref.load_state_dict(ref_state["model"])
+        for p in ref.parameters():
+            p.requires_grad_(False)
+        ref.eval()
+    else:
+        ref = clone_for_reference(policy)
+
+    prompt_ids = [tok.encode(p) for p in prompts]
+    opt = torch.optim.AdamW(policy.parameters(), lr=cfg.lr, weight_decay=0.0)
+    ent_ctl = make_entropy_controller(cfg)
+    history: list[dict] = []
+    has_breakdown = hasattr(verifier, "breakdown")
+
+    for step in range(cfg.steps):
+        roll = sample_group(
+            policy, prompt_ids,
+            group_size=cfg.group_size,
+            max_new_tokens=cfg.max_new_tokens,
+            seq_len=cfg.seq_len,
+            tokenizer=tok,
+            temperature=cfg.temperature,
+            seed=step,
+        )
+        pairs = [(prompts[int(gi)], txt) for gi, txt in zip(roll.group_index, roll.response_text)]
+        rewards = torch.tensor([verifier(p, r) for p, r in pairs], dtype=torch.float32)
+        metrics = grpo_step(policy, ref, roll, rewards, cfg, optimizer=opt,
+                            entropy_controller=ent_ctl)
+        if has_breakdown:
+            # Average each shaped-reward component across the rollout group.
+            comps: dict[str, float] = {}
+            bd = [verifier.breakdown(p, r) for p, r in pairs]
+            for key in bd[0]:
+                comps[f"reward_{key}"] = sum(b[key] for b in bd) / len(bd)
+            metrics.update(comps)
+        history.append(metrics)
+
+    out_dir = Path(cfg.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "grpo.pt"
+    torch.save(
+        {"model": policy.state_dict(), "model_cfg": policy.cfg, "history": history},
+        out_path,
+    )
+    return str(out_path)
+
+
+def run_grpo_async(
+    cfg: GRPOConfig,
+    prompts: list[str],
+    verifier: Verifier,
+) -> str:
+    """GRPO using the **async actor–learner** rollout engine (real serving Engine
+    with KV-cache decode) instead of the synchronous sampler.
+
+    Identical learner math to :func:`run_grpo`; only generation is swapped for
+    :class:`frontier_platform.rl.async_rollout.AsyncRolloutEngine`, which generates the
+    group concurrently and (in production) decouples actors from the learner with
+    weight sync. The learner calls ``actor.sync_weights()`` after each update.
+    """
+    from .async_rollout import AsyncRolloutConfig, AsyncRolloutEngine
+
+    policy, tok = _load_policy(cfg)
+    ref = clone_for_reference(policy)
+    actor = AsyncRolloutEngine(
+        policy, tok,
+        AsyncRolloutConfig(
+            group_size=cfg.group_size, max_new_tokens=cfg.max_new_tokens,
+            temperature=cfg.temperature, seq_len=cfg.seq_len,
+        ),
+    )
+    prompt_ids = [tok.encode(p) for p in prompts]
+    opt = torch.optim.AdamW(policy.parameters(), lr=cfg.lr, weight_decay=0.0)
+    ent_ctl = make_entropy_controller(cfg)
+    history: list[dict] = []
+    has_breakdown = hasattr(verifier, "breakdown")
+
+    for _ in range(cfg.steps):
+        roll = actor.generate_group(prompt_ids)
+        pairs = [(prompts[int(gi)], txt) for gi, txt in zip(roll.group_index, roll.response_text)]
+        rewards = torch.tensor([verifier(p, r) for p, r in pairs], dtype=torch.float32)
+        metrics = grpo_step(policy, ref, roll, rewards, cfg, optimizer=opt,
+                            entropy_controller=ent_ctl)
+        metrics["weight_version"] = actor.weight_version
+        if has_breakdown:
+            bd = [verifier.breakdown(p, r) for p, r in pairs]
+            for key in bd[0]:
+                metrics[f"reward_{key}"] = sum(b[key] for b in bd) / len(bd)
+        history.append(metrics)
+        actor.sync_weights()   # learner -> actor weight sync after the update
+
+    out_dir = Path(cfg.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "grpo_async.pt"
+    torch.save(
+        {"model": policy.state_dict(), "model_cfg": policy.cfg, "history": history},
+        out_path,
+    )
+    return str(out_path)

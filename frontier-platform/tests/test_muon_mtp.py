@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import torch
 
-from platform.model.config import ModelConfig
-from platform.model.transformer import Transformer
-from platform.training.muon import Muon, newton_schulz5, split_muon_params
-from platform.training.optim import OptimConfig, build_optimizer
+from frontier_platform.model.config import ModelConfig
+from frontier_platform.model.transformer import Transformer
+from frontier_platform.training.muon import Muon, newton_schulz5, split_muon_params
+from frontier_platform.training.optim import OptimConfig, build_optimizer
 
 
 def _tiny_cfg(**kw) -> ModelConfig:

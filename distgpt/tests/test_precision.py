@@ -179,27 +179,21 @@ def test_trainer_runs_with_fp8_off(tmp_path: Path):
         },
         "train": {
             "micro_batch": 2, "grad_accum": 1,
-            "log_every": 1, "eval_every": 99, "ckpt_every": 99,
+            "log_every": 1, "eval_every": 0, "ckpt_every": 99,
             "fp8": "off",
         },
     }
     train(cfg)
 
 
-def test_trainer_fp8_on_cpu_falls_back_with_warning(tmp_path: Path):
-    """Setting `train.fp8: hybrid` on a CPU run must NOT crash — the
-    resolver warns and falls back to no-FP8. This is the user-friendly
-    behaviour we want; a misconfigured cluster launch shouldn't lose the
-    run."""
+def test_trainer_rejects_fp8_for_ordinary_linear_layers(tmp_path: Path):
+    """An FP8 request must not silently run ordinary Linear layers in FP32."""
     from distgpt.training.trainer import train
 
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    np.zeros(4000, dtype=np.uint16).tofile(str(data_dir / "shard_0.bin"))
     cfg = {
-        "run_id": "fp8_fallback",
+        "run_id": "fp8_rejected",
         "out_dir": str(tmp_path / "out"),
-        "data": {"dir": str(data_dir), "seq_len": 16},
+        "data": {"dir": str(tmp_path / "missing_data"), "seq_len": 16},
         "seed": 0,
         "dtype": "float32",
         "log": {"jsonl": False, "wandb_project": None},
@@ -214,10 +208,10 @@ def test_trainer_fp8_on_cpu_falls_back_with_warning(tmp_path: Path):
         },
         "train": {
             "micro_batch": 1, "grad_accum": 1,
-            "log_every": 1, "eval_every": 99, "ckpt_every": 99,
-            "fp8": "hybrid",  # asks for FP8 on CPU → must warn + disable
+            "log_every": 1, "eval_every": 0, "ckpt_every": 99,
+            "fp8": "hybrid",
         },
     }
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")  # we already test the warning above
-        train(cfg)  # must not raise
+    with pytest.raises(ValueError, match="ordinary Linear layers"):
+        train(cfg)
+    assert not Path(cfg["out_dir"]).exists()

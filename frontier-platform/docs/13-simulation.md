@@ -2,7 +2,7 @@
 
 A discrete-event simulator that models the **entire** frontier-model training program — data ingestion, tokenizer training, pretraining, alignment, eval, safety, and serving — as a self-consistent virtual system. No GPUs required; no PyTorch imported. Hundreds of virtual GPU-days execute in <1s of wall-clock.
 
-This document is the complete reference for the `platform.sim` package and the `scripts/simulate.py` CLI.
+This document is the complete reference for the `frontier_platform.sim` package and the `scripts/simulate.py` CLI.
 
 ---
 
@@ -30,7 +30,7 @@ It does **not** train a real model. It produces realistic *aggregate* numbers fr
                                    │
                                    ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│                  platform/sim/orchestrator.py                         │
+│                  frontier_platform/sim/orchestrator.py                         │
 │    run_program(ProgramSpec) → drives every subsystem in order         │
 └──────────────────────────────────────────────────────────────────────┘
                                    │
@@ -536,7 +536,7 @@ To experiment, raise the thresholds (e.g. set `cbrn_threshold=0.5`) and see what
 
 To add a new phase (say, **continued pretraining for long context**):
 
-1. Create `platform/sim/longctx_sim.py` with:
+1. Create `frontier_platform/sim/longctx_sim.py` with:
    ```python
    def simulate_longctx(spec, cluster, clock, cost, bus, seed) -> dict:
        ...
@@ -570,8 +570,8 @@ To model new hardware:
 - **No parallelism in the simulator itself.** Phases are strictly serial. In reality data prep and tokenizer training overlap with cluster bring-up. Adding overlap would change wall-clock by <10% and isn't worth the modeling complexity.
 - **No memory model.** We assume the user has chosen a parallelism plan that fits; we don't simulate OOM.
 - **Eval predictors are regressions, not derivations.** They will mis-predict outliers (a model with a great math curriculum will beat the GSM8K curve; a poorly-tuned model will miss the MMLU curve). They are useful for *relative* comparisons.
-- **Reasoning RL is now modeled (optional).** The 2024–2025 RL-on-verifier-reward paradigm (o1, R1) runs as the `reasoning_rl_sim` phase when you pass `--reasoning-rl`; it prices rollout/update GPU compute + verifier CPU + cold-start labels and lifts the reasoning/ELO scores. A toy GRPO loop backs it in `platform/rl/` (see `docs/15-reasoning-rl-rlvr.md`). The *capability* lift is a calibrated regression, not a derivation — see eval-predictor caveat above.
-- **Multimodality is still out of scope of the simulator.** A toy VLM adapter exists in `platform/model/vision.py` (see `docs/16-multimodality.md`), but vision/audio encoder pretraining, pixel/audio tokenization, and joint-training costs are not priced by the sim yet.
+- **Reasoning RL is now modeled (optional).** The 2024–2025 RL-on-verifier-reward paradigm (o1, R1) runs as the `reasoning_rl_sim` phase when you pass `--reasoning-rl`; it prices rollout/update GPU compute + verifier CPU + cold-start labels and lifts the reasoning/ELO scores. A toy GRPO loop backs it in `frontier_platform/rl/` (see `docs/15-reasoning-rl-rlvr.md`). The *capability* lift is a calibrated regression, not a derivation — see eval-predictor caveat above.
+- **Multimodality is still out of scope of the simulator.** A toy VLM adapter exists in `frontier_platform/model/vision.py` (see `docs/16-multimodality.md`), but vision/audio encoder pretraining, pixel/audio tokenization, and joint-training costs are not priced by the sim yet.
 
 These are good follow-ups if you want to extend the system.
 
@@ -580,7 +580,7 @@ These are good follow-ups if you want to extend the system.
 ## 9. File index
 
 ```
-platform/sim/
+frontier_platform/sim/
 ├── __init__.py
 ├── clock.py              ~25 LOC   virtual time
 ├── scaling.py            ~70 LOC   Chinchilla + eval predictors
@@ -596,7 +596,7 @@ platform/sim/
 ├── serving_sim.py        ~50 LOC   tiered inference
 └── orchestrator.py       ~90 LOC   end-to-end glue (MoE/precision/reasoning-RL)
 
-platform/model/
+frontier_platform/model/
 └── vision.py            ~110 LOC   toy LLaVA-style VLM adapter (multimodality stub)
 
 scripts/

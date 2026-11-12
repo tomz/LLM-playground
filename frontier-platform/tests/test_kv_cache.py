@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import torch
 
-from platform.model.config import ModelConfig
-from platform.model.kv_cache import KVCache
-from platform.model.transformer import Transformer
+from frontier_platform.model.config import ModelConfig
+from frontier_platform.model.kv_cache import KVCache
+from frontier_platform.model.transformer import Transformer
 
 
 def _check_cache_matches_full(cfg: ModelConfig, atol: float = 1e-4):
@@ -95,7 +95,7 @@ def test_serving_engine_cached_greedy_matches_reference():
     tokens as a manual full-re-encode greedy loop (CPU, device override)."""
     import asyncio
 
-    from platform.serving.engine import Engine, EngineConfig, GenRequest
+    from frontier_platform.serving.engine import Engine, EngineConfig, GenRequest
 
     cfg = ModelConfig(vocab_size=128, n_layer=3, n_head=4, n_kv_head=2,
                       d_model=64, d_ffn=128, max_seq_len=64, attn_kind="mla",

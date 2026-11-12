@@ -121,6 +121,10 @@ def apply_tp(model: nn.Module, tp_mesh,
             ColwiseParallel(input_layouts=Shard(1),
                             output_layouts=Replicate()),
         )
+        # Its weight is replicated, but local sequence slices contribute
+        # different gradients. SequenceParallel marks those gradients Partial
+        # so they can be reduced before the optimizer update.
+        parallelize_module(model.final_norm, tp_mesh, SequenceParallel())
     else:
         # Non-SP: original layouts. Output gathered so cross_entropy sees
         # full [B, T, V] (the silent-wrong-loss footgun from the docstring).

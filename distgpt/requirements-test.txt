@@ -1,0 +1,11 @@
+# Project-local package + real export dependencies; no best-effort installs.
+-c constraints-ci.txt
+-e .[test]
+transformers
+safetensors
+tokenizers
+pytest
+pytest-timeout
+packaging
+setuptools
+wheel

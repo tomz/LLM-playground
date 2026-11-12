@@ -1,5 +1,10 @@
 # midgpt — Mid-scale single-node GPT-2 trainer
 
+**November repair:** checkpoint capture/resume is now collective and rank-local,
+with completed-update parity tests. See [the restart contract](docs/repair-contracts-2026-11.md)
+and [pinned test profile](../docs/testing-and-reproducibility.md) before resuming
+older DDP artifacts or comparing results across environments.
+
 GPT-2 scale (124M–1.5B). Real BPE tokenizer (`tiktoken`), WikiText-103 or OpenWebText, mixed precision, gradient checkpointing, gradient accumulation, cosine LR, DDP across 1–8 GPUs on a single node.
 
 ## What's different from `nanogpt-edu`
@@ -30,7 +35,7 @@ GPT-2 scale (124M–1.5B). Real BPE tokenizer (`tiktoken`), WikiText-103 or Open
 ## Quickstart
 
 ```bash
-pip install -r requirements.txt
+pip install -c constraints-ci.txt -r requirements.txt
 
 # 1. Tokenize a dataset (writes shards to data/<name>/)
 python prepare.py --dataset wikitext103             # ~500 MB tokens, ~10 min
@@ -270,9 +275,108 @@ Peak VRAM stayed ~1.48 GiB because weights dominate at batch 1. Script and raw
 results: [`tools/bench_context_compaction.py`](tools/bench_context_compaction.py)
 and [`examples/context_compaction_2gpu.md`](examples/context_compaction_2gpu.md).
 This measures systems cost; task-level agent quality remains a separate eval.
-`research_search.py` adds the complementary deterministic candidate-search
-benchmark: every failed branch contributes generation tokens and verifier time,
-so a winning candidate cannot hide total search cost.
+`research_search.py` adds the complementary candidate-search experiment below:
+every failed branch contributes to the recorded search cost, so a winning
+candidate cannot hide failed attempts.
+
+## Bounded local generation + verification (Oct/Nov harvest)
+
+**Run a local GPT, check its output as data, and retain every attempt.** This is
+an executable, CPU-only numeric-task experiment—not a production agent/provider
+integration or evidence of improved reasoning. It keeps the original
+`benchmark_search(prompt, generator, verifier, attempts)` callback API.
+
+From `midgpt/`, using the existing environment:
+
+```bash
+# Deterministic offline smoke: real inference, random tiny weights, no training.
+.venv/bin/python research_search.py --tiny-smoke --seed 0 \
+  --candidates 2 --max-new-tokens 4 --total-tokens 6 \
+  --output out/research-search/tiny.json
+
+# User-supplied train.py checkpoint and local GPT-2 vocabulary; no downloads.
+.venv/bin/python research_search.py --checkpoint /path/to/ckpt.pt \
+  --gpt2-vocab /path/to/gpt2/vocab.json --left 19 --right 23 \
+  --candidates 3 --max-new-tokens 32 --total-tokens 96 \
+  --temperature 0.8 --seed 17 --output out/research-search/local.json
+
+# Focused acceptance tests, including malformed output and injected failures.
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 .venv/bin/python -m pytest -q \
+  tests/test_research_search.py tests/test_research_experiment.py
+```
+
+The tiny smoke uses a seeded, untrained one-layer byte-tokenized GPT. For the
+command above, the tested result is two invalid candidates and six generated
+tokens; no task is accepted, so accepted-task cost is `null`. Repeating it in
+the same environment reproduces token IDs and experiment identity, **not wall
+clock timings**. It exercises inference, bounds, rejection, and JSON reporting;
+it does not demonstrate addition competence. The tests separately exercise
+known valid JSON and ensure that multiple valid candidates count as only one
+accepted task.
+
+Checkpoint loading follows `sample.py`'s `cfg`/`model` structure and strips the
+`_orig_mod.` prefix. Unlike that sampler, this adapter uses
+`torch.load(..., weights_only=True)` with **no unsafe pickle fallback**. Only
+use trusted local checkpoints: restricted loading is not a memory/CPU sandbox.
+GPT-2 checkpoints require a local `vocab.json` with the original 50,257 IDs;
+the adapter reconstructs tiktoken's GPT-2 byte alphabet, regex, and merge ranks
+without calling the remote-capable encoding registry. GPT-2 ranks equal token
+IDs, so a separate merges file is unnecessary. The caller must supply the
+vocabulary used in training; its hash is recorded, not independently certified.
+`byte-v1` checkpoints are also supported for offline fixtures, but the byte
+encoding is **not** a substitute for GPT-2. Other tokenizers are rejected.
+
+### Verification and accounting contract
+
+The host supplies an integer-addition task and accepts only a JSON object such
+as `{"sum":42}` with the exact sum. Extra/duplicate keys, floats, booleans,
+markdown, trailing text, malformed JSON, and wrong answers fail. The checker
+only parses JSON and compares integers; it never evaluates model-generated
+Python, shell, or tools. Operands are bounded to ±1,000,000 and checker input
+to 16,384 characters.
+
+| Record | Meaning |
+|---|---|
+| `attempts` | Every started candidate, including generation/checker errors, raw output, retry index, emitted token IDs, and timings |
+| `generation_tokens` | Exact observed emitted IDs for the model adapter; legacy callbacks retain the original character-based estimate |
+| `budget_tokens` | Observed tokens on success; the whole allowance on generation failure, conservatively charging unknown/unfinished work |
+| `prompt_tokens`, `forward_input_tokens` | Prompt length and attempted model input work, including repeated/sliding-window forwards; not FLOPs |
+| `metadata` | Task/domain, prompt hash, model/checkpoint identity, model/adapter/harness source hashes, checker version, tokenizer identity, seed, sampling settings, and effort limits |
+| `accepted_tasks` | Zero or one per report, regardless of how many candidates pass |
+| `tokens_per_accepted_task`, `seconds_per_accepted_task` | All branches' cost divided by accepted tasks; `null` with no success; seconds include measured setup and search, not interpreter/import or artifact-writing time |
+| `token_accounting_complete` | False for opaque callback exceptions or legacy estimates; observed tokens must not be interpreted as total actual consumption in these cases |
+
+Search continues after success to account for the configured experiment, not
+just the cheapest winning prefix. Retry `i` uses seed `seed + i` on the same
+prompt, with no verifier feedback or hidden reasoning budget. Greedy retries
+(`--temperature 0`, the default) are identical, not independent samples.
+Nonzero temperature samples stochastically. Generation stops at the first
+closing brace or EOS, or at the token allowance; termination does not imply
+validity. EOS counts as a generated token but is omitted from candidate text.
+
+### Bounds and limitations
+
+- Hard limits: 128 candidates, 512 new tokens per candidate, 8,192 total new
+  token-budget units, and 2,048 prompt tokens (also limited by model context).
+  The final attempt receives only the remaining allowance. Exceptions consume
+  candidate slots and reserve their entire token allowance; there are no
+  hidden retries. Prompts that do not fit are recorded as errors, not silently
+  truncated. Later generation uses the model's existing sliding window.
+- The CLI uses one CPU thread, no KV cache, and one-token `GPT.generate` calls
+  to preserve partial output on errors. This favors transparent accounting,
+  **not inference throughput**. Budgets bound calls and token work, not wall
+  time, checkpoint size, allocation, or a stuck native operation.
+- Python callback adapters/checkers are trusted extension code, not sandboxed
+  plugins. The legacy callback API cannot bound work performed inside a callback
+  and retains estimated token counts. Use `run_search` with `LocalModelAdapter`
+  for the bounded model path; custom checkers must declare their own version.
+- A JSON artifact records completed searches even with no accepted task (exit
+  status 0). Setup/output failures return status 2 and log an error; they do not
+  produce a successful search report. Process interruption is not resumable.
+- This is one public arithmetic task per run, not a held-out benchmark. No
+  speed/quality improvement, contamination resistance, or general agent
+  capability is claimed. Tiny random weights and fixed test fixtures are
+  plumbing evidence only; real checkpoint task quality remains unmeasured.
 
 ## What's still omitted (see `distgpt/`)
 

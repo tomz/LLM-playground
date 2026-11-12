@@ -1,13 +1,13 @@
 """Tests for the simulator's frontier extensions: MoE active params, FP8
-economics, and the reasoning-RL (RLVR) phase. See platform/sim/."""
+economics, and the reasoning-RL (RLVR) phase. See frontier_platform/sim/."""
 from __future__ import annotations
 
-from platform.sim.clock import Clock
-from platform.sim.cluster import GPU_SPECS, Cluster
-from platform.sim.economy import CostBook
-from platform.sim.events import EventBus
-from platform.sim.reasoning_rl_sim import ReasoningRLSpec, simulate_reasoning_rl
-from platform.sim.scaling import (
+from frontier_platform.sim.clock import Clock
+from frontier_platform.sim.cluster import GPU_SPECS, Cluster
+from frontier_platform.sim.economy import CostBook
+from frontier_platform.sim.events import EventBus
+from frontier_platform.sim.reasoning_rl_sim import ReasoningRLSpec, simulate_reasoning_rl
+from frontier_platform.sim.scaling import (
     moe_active_params,
     precision_speedup,
     reasoning_rl_quality,
@@ -101,9 +101,9 @@ def test_reasoning_rl_phase_advances_clock_costs_and_lifts():
 # ---------- end-to-end: MoE + FP8 + reasoning-RL ----------
 
 def test_orchestrator_moe_fp8_rl_e2e_beats_dense_baseline():
-    from platform.sim.alignment_sim import AlignmentSpec
-    from platform.sim.orchestrator import ProgramSpec, run_program
-    from platform.sim.serving_sim import ServingTier
+    from frontier_platform.sim.alignment_sim import AlignmentSpec
+    from frontier_platform.sim.orchestrator import ProgramSpec, run_program
+    from frontier_platform.sim.serving_sim import ServingTier
 
     common = dict(
         n_params=1e12, total_tokens=2e13, seq_len=8192, global_batch_tokens=32_000_000,
@@ -139,7 +139,7 @@ def test_orchestrator_moe_fp8_rl_e2e_beats_dense_baseline():
 # ---------- MLA serving KV compression ----------
 
 def test_mla_serving_needs_fewer_gpus_than_gqa():
-    from platform.sim.serving_sim import ServingTier, simulate_serving
+    from frontier_platform.sim.serving_sim import ServingTier, simulate_serving
     bus = EventBus(out_path=None)
     qps = {"gqa": 50.0, "mla": 50.0}
     tiers = [
@@ -158,7 +158,7 @@ def test_mla_serving_needs_fewer_gpus_than_gqa():
 # ---------- speculative-decoding serving economics ----------
 
 def test_spec_decode_mult_matches_geometric_acceptance():
-    from platform.sim.serving_sim import ServingTier, _spec_decode_mult
+    from frontier_platform.sim.serving_sim import ServingTier, _spec_decode_mult
     # none / zero draft length -> no uplift.
     assert _spec_decode_mult(ServingTier("n", 1e9, "fp8")) == 1.0
     assert _spec_decode_mult(
@@ -186,7 +186,7 @@ def test_spec_decode_mult_matches_geometric_acceptance():
 
 
 def test_spec_decode_serving_lowers_gpus_and_cost():
-    from platform.sim.serving_sim import ServingTier, simulate_serving
+    from frontier_platform.sim.serving_sim import ServingTier, simulate_serving
     bus = EventBus(out_path=None)
     qps = {"plain": 50.0, "spec": 50.0}
     tiers = [
@@ -204,7 +204,7 @@ def test_spec_decode_serving_lowers_gpus_and_cost():
 
 
 def test_mla_and_spec_decode_compose():
-    from platform.sim.serving_sim import ServingTier, simulate_serving
+    from frontier_platform.sim.serving_sim import ServingTier, simulate_serving
     bus = EventBus(out_path=None)
     qps = {"mla_only": 50.0, "mla_spec": 50.0}
     tiers = [
@@ -221,7 +221,7 @@ def test_mla_and_spec_decode_compose():
 # ---------- agentic RL phase ----------
 
 def test_agentic_rl_quality_builds_on_reasoning():
-    from platform.sim.agentic_rl_sim import agentic_rl_quality
+    from frontier_platform.sim.agentic_rl_sim import agentic_rl_quality
     assert agentic_rl_quality(0.7, 1.2, 0, 0) == 1.0
     lo = agentic_rl_quality(0.7, 1.0, 1.0e5, 1000)
     hi = agentic_rl_quality(0.7, 1.3, 1.0e6, 8000)
@@ -233,7 +233,7 @@ def test_agentic_rl_quality_builds_on_reasoning():
 
 
 def test_agentic_rl_phase_charges_tools_and_lifts():
-    from platform.sim.agentic_rl_sim import AgenticRLSpec, simulate_agentic_rl
+    from frontier_platform.sim.agentic_rl_sim import AgenticRLSpec, simulate_agentic_rl
     clock = Clock(); cost = CostBook(); bus = EventBus(out_path=None)
     cluster = Cluster("t", n_nodes=512)
     out = simulate_agentic_rl(
@@ -247,7 +247,7 @@ def test_agentic_rl_phase_charges_tools_and_lifts():
 
 
 def test_agentic_rl_disabled_is_noop():
-    from platform.sim.agentic_rl_sim import AgenticRLSpec, simulate_agentic_rl
+    from frontier_platform.sim.agentic_rl_sim import AgenticRLSpec, simulate_agentic_rl
     clock = Clock(); cost = CostBook(); bus = EventBus(out_path=None)
     out = simulate_agentic_rl(
         AgenticRLSpec(enabled=False), 7e9, 0.6, 1.0,
@@ -259,7 +259,7 @@ def test_agentic_rl_disabled_is_noop():
 # ---------- 2026 eval suite ----------
 
 def test_2026_benchmarks_present_and_post_training_sensitive():
-    from platform.sim.scaling import predict_swebench, predict_arc_agi2, predict_mmmu
+    from frontier_platform.sim.scaling import predict_swebench, predict_arc_agi2, predict_mmmu
     # SWE-bench is dominated by agentic post-training.
     base = predict_swebench(3.5e11, 1.5e13, reasoning_quality=1.0, agentic_quality=1.0)
     agentic = predict_swebench(3.5e11, 1.5e13, reasoning_quality=1.3, agentic_quality=1.3)
@@ -274,7 +274,7 @@ def test_2026_benchmarks_present_and_post_training_sensitive():
 
 def test_eval_emits_2026_keys():
     clock = Clock(); cost = CostBook(); bus = EventBus(out_path=None)
-    from platform.sim.eval_sim import simulate_eval
+    from frontier_platform.sim.eval_sim import simulate_eval
     out = simulate_eval(3.5e11, 1.5e13, 1.0, 1.0, Cluster("e", n_nodes=8),
                         clock, cost, bus, reasoning_quality=1.2, agentic_quality=1.2,
                         multimodal=True, mm_data_frac=0.15)
@@ -285,9 +285,9 @@ def test_eval_emits_2026_keys():
 # ---------- multimodal training pricing ----------
 
 def test_multimodal_inflates_training_cost_and_enables_mmmu():
-    from platform.sim.alignment_sim import AlignmentSpec
-    from platform.sim.orchestrator import ProgramSpec, run_program
-    from platform.sim.serving_sim import ServingTier
+    from frontier_platform.sim.alignment_sim import AlignmentSpec
+    from frontier_platform.sim.orchestrator import ProgramSpec, run_program
+    from frontier_platform.sim.serving_sim import ServingTier
     common = dict(
         n_params=1e11, total_tokens=5e12, seq_len=8192, global_batch_tokens=16_000_000,
         alignment=AlignmentSpec(sft_examples=5_000, pref_pairs=5_000, rlhf="dpo"),

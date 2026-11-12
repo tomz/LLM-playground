@@ -19,10 +19,10 @@ unchanged.
 
 | Concern | Module | Production replacement boundary |
 |---|---|---|
-| Research lineage and release gate | `platform.infra.research_artifacts` | Durable object store/catalog and organization review workflow |
-| Programmatic tools | `platform.serving.programmatic_tools` | Sandboxed code runner plus asynchronous tool engine |
-| Multi-agent budget/reconciliation | `platform.serving.multi_agent` | Concurrent scheduler, cancellation, distributed tracing |
-| Self-play red teams | `platform.safety.selfplay_redteam` | Attack model farm and immutable external held-out corpus |
+| Research lineage and release gate | `frontier_platform.infra.research_artifacts` | Durable object store/catalog and organization review workflow |
+| Programmatic tools | `frontier_platform.serving.programmatic_tools` | Sandboxed code runner plus asynchronous tool engine |
+| Multi-agent budget/reconciliation | `frontier_platform.serving.multi_agent` | Concurrent scheduler, cancellation, distributed tracing |
+| Self-play red teams | `frontier_platform.safety.selfplay_redteam` | Attack model farm and immutable external held-out corpus |
 
 Related implementations are project-local by design:
 

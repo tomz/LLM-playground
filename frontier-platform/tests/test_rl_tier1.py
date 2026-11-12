@@ -15,9 +15,9 @@ from pathlib import Path
 import pytest
 import torch
 
-from platform.model.config import ModelConfig
-from platform.model.transformer import Transformer
-from platform.tokenizer.bytes import BytesTokenizer
+from frontier_platform.model.config import ModelConfig
+from frontier_platform.model.transformer import Transformer
+from frontier_platform.tokenizer.bytes import BytesTokenizer
 
 
 def _tiny_cfg() -> ModelConfig:
@@ -37,7 +37,7 @@ def _save_base_ckpt(path: Path, cfg: ModelConfig) -> None:
 # 1. IFEval-style constraint verifiers
 # =====================================================================
 
-from platform.rl.verifiers import (  # noqa: E402
+from frontier_platform.rl.verifiers import (  # noqa: E402
     CONSTRAINT_CHECKERS,
     ConstraintFollowingVerifier,
     check_constraint,
@@ -173,8 +173,8 @@ def test_constraint_verifier_tuple_spec_and_factory():
 # 2. Adaptive entropy control
 # =====================================================================
 
-from platform.alignment._common import compute_token_logps_and_entropy  # noqa: E402
-from platform.rl.grpo import (  # noqa: E402
+from frontier_platform.alignment._common import compute_token_logps_and_entropy  # noqa: E402
+from frontier_platform.rl.grpo import (  # noqa: E402
     EntropyController,
     GRPOConfig,
     _dual_clip_surrogate,
@@ -182,9 +182,9 @@ from platform.rl.grpo import (  # noqa: E402
     make_entropy_controller,
     run_grpo,
 )
-from platform.rl.rollout import sample_group  # noqa: E402
-from platform.rl.verifiers import reward_contains  # noqa: E402
-from platform.alignment._common import clone_for_reference  # noqa: E402
+from frontier_platform.rl.rollout import sample_group  # noqa: E402
+from frontier_platform.rl.verifiers import reward_contains  # noqa: E402
+from frontier_platform.alignment._common import clone_for_reference  # noqa: E402
 
 
 def test_entropy_controller_raises_coef_when_entropy_below_target():
@@ -222,7 +222,7 @@ def test_make_entropy_controller_none_when_no_target():
 
 
 def test_compute_token_logps_and_entropy_matches_plain_logp():
-    from platform.alignment._common import compute_token_logps
+    from frontier_platform.alignment._common import compute_token_logps
     cfg = _tiny_cfg()
     torch.manual_seed(0)
     m = Transformer(cfg)

@@ -1,21 +1,16 @@
-# Hard-pinned upper bounds because the HF stack moves fast and breaking
-# changes are common between minors. Adjust as needed for your env.
-torch>=2.4
-transformers>=4.45,<5.0
-peft>=0.13,<0.20
-trl>=0.11,<0.20
-datasets>=3.0,<4.0
-accelerate>=1.0,<2.0
-bitsandbytes>=0.44       # only needed for QLoRA
-pyyaml
-tqdm
-# Optional throughput / quality add-ons (config-gated, off by default):
-#   liger-kernel  — fused Triton kernels; set train.use_liger_kernel: true
-#   unsloth       — 2x faster LoRA/QLoRA fast-path; set model.use_unsloth: true
-# Install only if you enable them; they pull heavier Triton/CUDA deps.
-# liger-kernel>=0.4
-# unsloth>=2024.8
-# eval
-evaluate
-# Optional: vllm for fast inference (requires 12GB+ VRAM for 7B, fine for 0.5B/1.5B)
-# vllm>=0.6
+# Tested HF minor families. Install with -c constraints-ci.txt for the exact
+# profile enforced by cf_provenance.check_tested_stack (not a transitive lock).
+# CPU base: no bitsandbytes, FlashAttention, Liger, Unsloth, or vLLM required.
+torch>=2.12,<2.13
+transformers>=5.8,<5.9
+peft>=0.19.1,<0.20
+trl>=1.3,<1.4
+datasets>=4.8.5,<4.9
+accelerate>=1.13,<1.14
+pyyaml>=6.0.3,<7
+tqdm>=4.68.2,<5
+evaluate>=0.4.6,<0.5
+safetensors>=0.8,<0.9
+# QLoRA's optional GPU dependency is in requirements-qlora.txt.
+# Other acceleration backends require their own hardware validation; Unsloth
+# is explicitly rejected by the repaired trainer, not an alternative loader.

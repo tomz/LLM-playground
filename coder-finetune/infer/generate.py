@@ -40,29 +40,39 @@ def _eos_ids(tok) -> list[int]:
     return sorted(ids)
 
 
-def _load(model_path: str, device: str, dtype):
+def _load(model_path: str, device: str, dtype, *, revision: str | None = None,
+          tokenizer_revision: str | None = None, local_files_only: bool = True):
+    """Load pinned safe weights without implicit downloads or unpinned bases.
+
+    Local adapters need a saved base revision (or an explicit revision override
+    for legacy adapters). Local model/tokenizer bytes are hashed in provenance.
+    """
     from transformers import AutoModelForCausalLM, AutoTokenizer
+    from cf_provenance import hf_load_kwargs, reference_identity, tokenizer_identity
+    reference = reference_identity(model_path, revision)
+    tok_ref = reference_identity(model_path, tokenizer_revision or revision, kind="tokenizer")
     p = Path(model_path)
-    is_adapter = (p / "adapter_config.json").exists()
-    # transformers' load kwarg name changed: pre-4.46 only accepts ``torch_dtype``;
-    # 4.46+/5.x accept both (``dtype`` is the new spelling, ``torch_dtype`` still
-    # works as an alias). Our requirements.txt allows `>=4.45,<5.0`, so the older
-    # spelling is the safe one for the full pin range — merge_lora.py + train.py
-    # already use it. (The previous ``dtype=`` form would TypeError on 4.45.)
-    if is_adapter:
-        cfg = json.loads((p / "adapter_config.json").read_text())
-        base_name = cfg.get("base_model_name_or_path")
-        if not base_name:
-            raise ValueError(f"adapter at {p} has no base_model_name_or_path")
+    base_ref = None
+    if (p / "adapter_config.json").exists():
+        cfg = json.loads((p / "adapter_config.json").read_text(encoding="utf-8"))
+        base_ref = reference_identity(cfg.get("base_model_name_or_path"), revision or cfg.get("revision"), kind="base-model")
+    tok = AutoTokenizer.from_pretrained(model_path, **hf_load_kwargs(tok_ref, local_files_only=local_files_only))
+    load_ref = base_ref or reference
+    model = AutoModelForCausalLM.from_pretrained(
+        load_ref["name"], dtype=dtype, use_safetensors=True,
+        **hf_load_kwargs(load_ref, local_files_only=local_files_only))
+    if base_ref:
         from peft import PeftModel
-        tok = AutoTokenizer.from_pretrained(model_path)
-        base = AutoModelForCausalLM.from_pretrained(base_name, torch_dtype=dtype)
-        model = PeftModel.from_pretrained(base, model_path)
-    else:
-        tok = AutoTokenizer.from_pretrained(model_path)
-        model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=dtype)
+        if not (p / "adapter_model.safetensors").is_file():
+            raise ValueError("local adapters must provide adapter_model.safetensors")
+        model = PeftModel.from_pretrained(model, model_path, local_files_only=True)
+    if tok.eos_token_id is None:
+        raise ValueError("the tokenizer needs an explicit EOS token")
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
+    model._cf_provenance = {"reference": reference, "base_model": base_ref,
+                            "tokenizer": tokenizer_identity(tok, tok_ref),
+                            "dtype": str(dtype), "device": device, "local_files_only": local_files_only}
     return tok, model.to(device).eval()
 
 

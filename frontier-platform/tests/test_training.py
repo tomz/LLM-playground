@@ -2,10 +2,10 @@ from __future__ import annotations
 import pytest
 import torch
 
-from platform.model.transformer import Transformer, RMSNorm
-from platform.training.optim import OptimConfig, build_optimizer
-from platform.training.trainer import Trainer, TrainConfig
-from platform.training.parallel import ParallelConfig
+from frontier_platform.model.transformer import Transformer, RMSNorm
+from frontier_platform.training.optim import OptimConfig, build_optimizer
+from frontier_platform.training.trainer import Trainer, TrainConfig
+from frontier_platform.training.parallel import ParallelConfig
 
 
 class _SyntheticLoader:
@@ -31,7 +31,7 @@ class _SyntheticLoader:
 
 
 def _make(seq=32, vocab=256):
-    from platform.model.config import ModelConfig
+    from frontier_platform.model.config import ModelConfig
     cfg = ModelConfig(
         vocab_size=vocab, n_layer=2, n_head=4, n_kv_head=2,
         d_model=64, d_ffn=128, max_seq_len=seq,

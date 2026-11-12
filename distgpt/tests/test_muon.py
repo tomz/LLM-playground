@@ -206,7 +206,7 @@ def test_trainer_runs_with_muon_optimizer(tmp_path: Path):
         },
         "train": {
             "micro_batch": 2, "grad_accum": 1,
-            "log_every": 1, "eval_every": 99, "ckpt_every": 99,
+            "log_every": 1, "eval_every": 0, "ckpt_every": 99,
         },
     }
     train(cfg)
@@ -245,7 +245,7 @@ def test_trainer_rejects_unknown_optimizer_kind(tmp_path: Path):
             "warmup_steps": 1, "total_steps": 1,
         },
         "train": {"micro_batch": 1, "grad_accum": 1,
-                   "log_every": 1, "eval_every": 99, "ckpt_every": 99},
+                   "log_every": 1, "eval_every": 0, "ckpt_every": 99},
     }
     with pytest.raises(ValueError, match="shampoo"):
         train(cfg)

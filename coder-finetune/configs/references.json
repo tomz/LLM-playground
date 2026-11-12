@@ -1,0 +1,22 @@
+{
+  "schema": "coder-finetune.recipe-references/v1",
+  "evidence": "Public Hugging Face model/dataset metadata queried during the November repair; no model weights or dataset rows downloaded or executed.",
+  "models": {
+    "Qwen/Qwen2.5-Coder-0.5B": "8123ea2e9354afb7ffcc6c8641d1b2f5ecf18301",
+    "Qwen/Qwen2.5-Coder-1.5B": "df3ce67c0e24480f20468b6ef2894622d69eb73b",
+    "Qwen/Qwen2.5-Coder-3B": "09d9bc5d376b0cfa0100a0694ea7de7232525803",
+    "Qwen/Qwen2.5-Coder-7B": "0396a76181e127dfc13e5c5ec48a8cee09938b02"
+  },
+  "datasets": {
+    "ise-uiuc/Magicoder-OSS-Instruct-75K": "5f839b1f368a76b161028bb9edff055db34022b2"
+  },
+  "metadata_endpoints": {
+    "models": "https://huggingface.co/api/models/{repository}",
+    "datasets": "https://huggingface.co/api/datasets/{repository}"
+  },
+  "limits": [
+    "Revision identity is not license approval, code trust, model quality, or backend compatibility evidence.",
+    "Recipes default to locally cached weights. Provision approved snapshots explicitly before training.",
+    "Historical speed/quality measurements refer to their original configuration and environment; the repaired SDPA baseline disables packing and optional fused kernels."
+  ]
+}

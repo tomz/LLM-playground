@@ -14,14 +14,14 @@ from pathlib import Path
 
 import torch
 
-from platform.tokenizer.bpe import Tokenizer
-from platform.model.transformer import Transformer
-from platform.alignment._common import (
+from frontier_platform.tokenizer.bpe import Tokenizer
+from frontier_platform.model.transformer import Transformer
+from frontier_platform.alignment._common import (
     tokenize_and_pack, compute_logps, clone_for_reference,
 )
-from platform.alignment.dpo import dpo_loss
-from platform.alignment.reward_model import RewardModel, bt_loss
-from platform.serving.engine import Engine, EngineConfig, GenRequest
+from frontier_platform.alignment.dpo import dpo_loss
+from frontier_platform.alignment.reward_model import RewardModel, bt_loss
+from frontier_platform.serving.engine import Engine, EngineConfig, GenRequest
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "out"

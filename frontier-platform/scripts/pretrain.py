@@ -9,7 +9,7 @@ def main():
     ap.add_argument("--resume", default="latest")
     args = ap.parse_args()
     print(f"[pretrain] would load {args.config}, resume={args.resume}")
-    print("[pretrain] this is a blueprint; wire to platform.training.trainer.Trainer")
+    print("[pretrain] this is a blueprint; wire to frontier_platform.training.trainer.Trainer")
     return 0
 
 

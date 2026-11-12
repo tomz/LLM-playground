@@ -9,11 +9,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from platform.data.mix import DomainSpec, MixtureSampler
-from platform.data.loader import StreamingLoader
-from platform.model.config import ModelConfig
-from platform.model.transformer import Transformer
-from platform.training.optim import OptimConfig, build_optimizer
+from frontier_platform.data.mix import DomainSpec, MixtureSampler
+from frontier_platform.data.loader import StreamingLoader
+from frontier_platform.model.config import ModelConfig
+from frontier_platform.model.transformer import Transformer
+from frontier_platform.training.optim import OptimConfig, build_optimizer
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "out"

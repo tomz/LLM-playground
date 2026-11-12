@@ -6,22 +6,22 @@ from pathlib import Path
 import pytest  # noqa: F401
 import torch
 
-from platform.alignment._common import (
+from frontier_platform.alignment._common import (
     compute_logps,
     tokenize_and_pack,
 )
-from platform.alignment.dpo import DPOConfig, dpo_loss, run_dpo
-from platform.alignment.ppo import PPOConfig, ValueHead, ppo_step, rollout
-from platform.alignment.reward_model import (
+from frontier_platform.alignment.dpo import DPOConfig, dpo_loss, run_dpo
+from frontier_platform.alignment.ppo import PPOConfig, ValueHead, ppo_step, rollout
+from frontier_platform.alignment.reward_model import (
     RMConfig,
     bt_loss,
     load_reward_model,
     train_reward_model,
 )
-from platform.alignment.sft import SFTConfig, run_sft
-from platform.model.config import ModelConfig
-from platform.model.transformer import Transformer
-from platform.tokenizer.bytes import BytesTokenizer
+from frontier_platform.alignment.sft import SFTConfig, run_sft
+from frontier_platform.model.config import ModelConfig
+from frontier_platform.model.transformer import Transformer
+from frontier_platform.tokenizer.bytes import BytesTokenizer
 
 
 def _tiny_cfg() -> ModelConfig:

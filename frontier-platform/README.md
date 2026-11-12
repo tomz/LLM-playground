@@ -1,8 +1,17 @@
 # Frontier Model Training Platform
 
-A design-doc + skeleton-code blueprint for an end-to-end system capable of training, aligning, evaluating, and serving GPT-class frontier models (1B–500B+ parameters).
+An executable reference and design blueprint for the systems around training,
+alignment, evaluation, and serving at 1B–500B+ architectural scale. CPU modules
+perform real small-model updates and contract tests; production interfaces and
+large-scale integrations remain deliberately incomplete.
 
-This repository is **architecture-only**. It defines interfaces, module boundaries, infrastructure assumptions, and reference implementations stubbed at the function-signature level. It does *not* perform real training — that requires a multi-thousand-GPU cluster, $10M–$500M of compute, and a dedicated team.
+The Python package is **`frontier_platform`**, separate from stdlib `platform`.
+See the [capability/evidence matrix](docs/21-capability-evidence.md),
+[serving/RL repair contracts](docs/20-sota-repair-contracts.md), and
+[project-local test profile](../docs/testing-and-reproducibility.md). Working code,
+a mocked adapter, a simulator assumption, and a validated production backend are
+not equivalent evidence. No frontier-model quality or cluster-scale performance
+claim follows from the CPU references.
 
 ## Why this exists
 
@@ -34,7 +43,7 @@ frontier-platform/
 │   ├── 14-gap-analysis-vs-frontier.md  # ← where this blueprint trails GPT-5.x/Opus 4.x/Gemini 3.x
 │   ├── 15-reasoning-rl-rlvr.md          # ← RLVR/GRPO design stub (gap #1) + sim phase
 │   └── 16-multimodality.md              # ← multimodal design stub (gap #2) + toy VLM
-├── platform/             # Skeleton Python packages
+├── frontier_platform/             # Skeleton Python packages
 │   ├── data/             # ingestion, dedup, filter, mix, shard
 │   ├── tokenizer/        # BPE training + serving
 │   ├── model/            # transformer, attention variants, MoE, vision (toy VLM)
@@ -56,7 +65,7 @@ frontier-platform/
 1. `docs/00-overview.md` — system diagram and team/cost realities
 2. `docs/12-cost-and-scaling-laws.md` — what you are signing up for
 3. `docs/01-data-pipeline.md` through `docs/11-infrastructure.md` in order
-4. `platform/*/README.md` for each subsystem
+4. `frontier_platform/*/README.md` for each subsystem
 5. `docs/14-gap-analysis-vs-frontier.md` — honest gaps vs 2025–2026 flagships
    (GPT-5.x / Opus 4.x / Gemini 3.x), then `15-reasoning-rl-rlvr.md` and
    `16-multimodality.md` for the two capability-defining gaps
@@ -88,9 +97,9 @@ frontier-platform/
 - ✅ Tier 2 — **training**: AdamW (WD-by-dim), cosine+warmup LR, single-process ParallelEngine, DCP-style checkpointing, SpikeMonitor + RewindController, `Trainer.fit`.
 - ✅ Tier 2 — **serving**: in-process `TorchEngine` with streaming generate, router.
 - ✅ Tier 3 — **alignment**: SFT (assistant-token loss mask), BT reward model, DPO (sigmoid / IPO / KTO variants), PPO with GAE + KL-to-reference penalty + clipped objective + value head.
-- ✅ Tier 3 — **RLVR / reasoning** (`platform/rl/`, toy-functional): verifiable reward functions (math exact-answer, string/regex, length penalty; sandboxed code-test verifier stubbed), group rollout, **GRPO** (value-network-free, group-relative advantages + KL-to-reference), and a deterministic **self-play / evolutionary loop** (`selfplay.py`: evaluate → keep top-k → mutate → repeat, an AlphaEvolve/SPIN-shaped closed loop over policy callables). Also **GSPO** (sequence-level importance ratio, `GRPOConfig.importance_sampling_level="sequence"`) and **RLPR** (verifier-free probability reward, `ProbabilityRewardVerifier`) — both default-off, additive to the GRPO objective. A GPU benchmark (`tools/bench_grpo_gspo.py`) measures them: GSPO's sequence ratio is **~4× lower-variance** than GRPO's token ratio (and wins on an MoE policy), RLPR's reward sharpens the policy verifier-free — see [`examples/grpo_gspo_rlpr.md`](examples/grpo_gspo_rlpr.md). See `docs/15-reasoning-rl-rlvr.md`.
-- ✅ Tier 3 — **multimodality** (`platform/model/vision.py`, toy-functional): LLaVA-style `VisionEncoder` + `Projector` + `VisionLanguageModel` that patchifies an image, runs a small ViT, and prepends projected image tokens to the LM (loss on text positions only). Runs on CPU; encoder is randomly initialized. See `docs/16-multimodality.md`.
-- ✅ **Program simulator** (`platform/sim/`, `scripts/simulate.py`): end-to-end discrete-event model of the whole program now prices **sparse MoE** (active-param FLOPs), **FP8/NVFP4** throughput, and an **RLVR/GRPO reasoning phase** whose compute *and* capability lift feed the eval predictors — plus `GB200`/`B300` GPU rows and `1t`/`2t` presets for hardware we don't own. See `docs/13-simulation.md`.
+- ✅ Tier 3 — **RLVR / reasoning** (`frontier_platform/rl/`, toy-functional): verifiable reward functions (math exact-answer, string/regex, length penalty; sandboxed code-test verifier stubbed), group rollout, **GRPO** (value-network-free, group-relative advantages + KL-to-reference), and a deterministic **self-play / evolutionary loop** (`selfplay.py`: evaluate → keep top-k → mutate → repeat, an AlphaEvolve/SPIN-shaped closed loop over policy callables). Also **GSPO** (sequence-level importance ratio, `GRPOConfig.importance_sampling_level="sequence"`) and **RLPR** (verifier-free probability reward, `ProbabilityRewardVerifier`) — both default-off, additive to the GRPO objective. A GPU benchmark (`tools/bench_grpo_gspo.py`) measures them: GSPO's sequence ratio is **~4× lower-variance** than GRPO's token ratio (and wins on an MoE policy), RLPR's reward sharpens the policy verifier-free — see [`examples/grpo_gspo_rlpr.md`](examples/grpo_gspo_rlpr.md). See `docs/15-reasoning-rl-rlvr.md`.
+- ✅ Tier 3 — **multimodality** (`frontier_platform/model/vision.py`, toy-functional): LLaVA-style `VisionEncoder` + `Projector` + `VisionLanguageModel` that patchifies an image, runs a small ViT, and prepends projected image tokens to the LM (loss on text positions only). Runs on CPU; encoder is randomly initialized. See `docs/16-multimodality.md`.
+- ✅ **Program simulator** (`frontier_platform/sim/`, `scripts/simulate.py`): end-to-end discrete-event model of the whole program now prices **sparse MoE** (active-param FLOPs), **FP8/NVFP4** throughput, and an **RLVR/GRPO reasoning phase** whose compute *and* capability lift feed the eval predictors — plus `GB200`/`B300` GPU rows and `1t`/`2t` presets for hardware we don't own. See `docs/13-simulation.md`.
 - ✅ End-to-end **smoke pipeline** (`bash scripts/smoke_pipeline.sh`, < 10s CPU): corpus → shards → pretrain → SFT → RM → DPO → PPO → eval → generate.
 
 Still `NotImplementedError` (intentionally — out of scope for a single-machine blueprint):
@@ -98,8 +107,27 @@ Still `NotImplementedError` (intentionally — out of scope for a single-machine
 - CommonCrawl / GitHub / Arxiv / Wikipedia source connectors (need real network + scrubbing).
 - FSDP2 / TP / PP backends (use `distgpt` for those).
 - vLLM / TRT-LLM / SGLang serving backends (lazy-import stubs).
-- Async RLVR rollout (vLLM/SGLang actor–learner) + sandboxed code execution — the toy GRPO loop in `platform/rl/` is synchronous and CPU-only; production hooks are stubbed. See `docs/15-reasoning-rl-rlvr.md`.
-- Multimodality (audio/video; pretrained vision weights; multimodal data/eval) — only a toy randomly-initialized vision adapter exists (`platform/model/vision.py`); see `docs/16-multimodality.md`.
+- Async RLVR rollout (vLLM/SGLang actor–learner) + sandboxed code execution — the toy GRPO loop in `frontier_platform/rl/` is synchronous and CPU-only; production hooks are stubbed. See `docs/15-reasoning-rl-rlvr.md`.
+- Multimodality (audio/video; pretrained vision weights; multimodal data/eval) — only a toy randomly-initialized vision adapter exists (`frontier_platform/model/vision.py`); see `docs/16-multimodality.md`.
+
+## October–November harvest: measured routing
+
+`frontier_platform.serving.task_cost` and `task_routing` add exact decimal tariff
+accounting, per-attempt provenance, bounded model/effort escalation, and
+fail-closed deployment-contract checks. Failed attempts count; unknown usage
+blocks further work until reconciled. Refusals, substitutions, incomplete
+streams, and authorization failures stop routing rather than silently escalating.
+
+```bash
+# From frontier-platform/, using the existing project environment:
+.venv/bin/python -m pytest -q tests/test_task_routing.py
+.venv/bin/python tools/bench_task_routing.py --out-dir out/task-routing
+```
+
+The demonstration uses synthetic callbacks and tariffs, **not real model
+performance or savings**. Provider timeouts, usage enforcement, authenticated
+model identity, and durable concurrent budget reservations remain adapter/service
+responsibilities. See [the design and acceptance contract](docs/19-october-november-2026-harvest.md).
 
 ## Running tests
 
@@ -111,7 +139,7 @@ bash scripts/smoke_pipeline.sh            # full pipeline, ~6 s on CPU
 
 ## Simulator results (`scripts/simulate.py`)
 
-The discrete-event simulator in `platform/sim/` runs the full program
+The discrete-event simulator in `frontier_platform/sim/` runs the full program
 end-to-end in pure Python (no torch, no GPUs): Chinchilla-style scaling
 laws for loss, MFU → throughput → wall time, Poisson GPU failures,
 rolling $ accounting, eval-score prediction, safety thresholds, and
@@ -172,13 +200,13 @@ the only thing that changes is wall-clock and $ burned:
 
 The July–August 2026 harvest adds four dependency-free reference protocols:
 
-- `platform/serving/programmatic_tools.py` executes model-written tool plans
+- `frontier_platform/serving/programmatic_tools.py` executes model-written tool plans
   under hard call/output budgets with per-call provenance and filtering.
-- `platform/serving/multi_agent.py` fans out deterministic worker branches under
+- `frontier_platform/serving/multi_agent.py` fans out deterministic worker branches under
   one token ceiling and reconciles by score or majority.
-- `platform/safety/selfplay_redteam.py` builds deduplicated self-play curricula
+- `frontier_platform/safety/selfplay_redteam.py` builds deduplicated self-play curricula
   while keeping a fingerprint-checked held-out attack set as the release gate.
-- `platform/infra/research_artifacts.py` records failed attempts, model/prompt
+- `frontier_platform/infra/research_artifacts.py` records failed attempts, model/prompt
   identity, human edits, complete generation/verifier/reviewer/preparation cost,
   certificates, and independent novelty/significance review.
 
@@ -203,4 +231,4 @@ Existing `NotImplementedError` production interfaces remain unchanged.
    the 1B run sees ~zero. (Panel 3 of each per-run plot.)
 4. **Loss spikes happen.** Each panel shows the few sampled "ugly
    spikes" the simulator injects — the simulated `SpikeMonitor` in
-   `platform/training/stability.py` would catch and rewind these.
+   `frontier_platform/training/stability.py` would catch and rewind these.

@@ -1,0 +1,14 @@
+[
+  {
+    "task_id": "local/add",
+    "prompt": "def add(a, b):\n    \"\"\"Return the sum of two numbers.\"\"\"\n",
+    "entry_point": "add",
+    "test": "def check(candidate):\n    assert candidate(2, 3) == 5\n    assert candidate(-1, 1) == 0\n"
+  },
+  {
+    "task_id": "local/square",
+    "prompt": "def square(x):\n    \"\"\"Return x multiplied by itself.\"\"\"\n",
+    "entry_point": "square",
+    "test": "def check(candidate):\n    assert candidate(3) == 9\n    assert candidate(-2) == 4\n"
+  }
+]

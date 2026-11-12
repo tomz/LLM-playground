@@ -18,7 +18,7 @@ import pytest
 # 6. Reasoning-trace archetype rubric
 # =====================================================================
 
-from platform.eval.reasoning_rubric import (  # noqa: E402
+from frontier_platform.eval.reasoning_rubric import (  # noqa: E402
     DEFAULT_SIGNALS,
     ReasoningRubric,
     ReasoningSignal,
@@ -123,7 +123,7 @@ def test_custom_signal_set():
 # 7. Long-context eval adapters
 # =====================================================================
 
-from platform.eval.long_context import (  # noqa: E402
+from frontier_platform.eval.long_context import (  # noqa: E402
     CodeNLLAdapter,
     LongContextQAAdapter,
     RetrievalNLLAdapter,
@@ -209,7 +209,7 @@ def test_get_long_context_adapter_unknown_raises():
 def test_evaluator_run_long_context_routes_to_qa(tmp_path):
     """The QA adapter is reachable through Evaluator.run_long_context with a
     generate-only decoding (no model needed)."""
-    from platform.eval.harness import Evaluator, EvalRequest
+    from frontier_platform.eval.harness import Evaluator, EvalRequest
 
     recs = [make_needle_record("d0", filler_words=10, needle="The code is ZED.",
                                query="code?", answer="ZED", depth_frac=0.4)]
@@ -228,7 +228,7 @@ def test_evaluator_run_long_context_routes_to_qa(tmp_path):
 
 
 def test_evaluator_run_long_context_no_model_returns_zeros():
-    from platform.eval.harness import Evaluator, EvalRequest
+    from frontier_platform.eval.harness import Evaluator, EvalRequest
 
     ev = Evaluator()
     req = EvalRequest(ckpt="x", tasks=["code_nll"])
@@ -240,10 +240,10 @@ def test_code_nll_and_retrieval_nll_with_real_engine(tmp_path):
     """Code-NLL and Retrieval-NLL need a teacher-forced logprob stream; exercise
     them against a tiny in-process TorchEngine (CPU)."""
     import torch
-    from platform.model.config import ModelConfig
-    from platform.model.transformer import Transformer
-    from platform.serving.engine import EngineConfig
-    from platform.serving.torch_engine import TorchEngine
+    from frontier_platform.model.config import ModelConfig
+    from frontier_platform.model.transformer import Transformer
+    from frontier_platform.serving.engine import EngineConfig
+    from frontier_platform.serving.torch_engine import TorchEngine
 
     torch.manual_seed(0)
     cfg = ModelConfig(vocab_size=512, n_layer=2, n_head=4, n_kv_head=2,
@@ -280,7 +280,7 @@ def test_code_nll_and_retrieval_nll_with_real_engine(tmp_path):
 # 8. Pareto-percentile safety threshold
 # =====================================================================
 
-from platform.safety.gates import (  # noqa: E402
+from frontier_platform.safety.gates import (  # noqa: E402
     ParetoGateConfig,
     ReleaseMetrics,
     pareto_frontier,

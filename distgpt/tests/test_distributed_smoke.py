@@ -291,7 +291,7 @@ def _trainer_dp2_worker(rank: int, world: int, port: int) -> None:
             "rope_base": 10000.0, "tie_embeddings": True,
         },
         "parallel": {
-            "dp": world, "tp": 1, "pp": 1, "zero": "fsdp",
+            "dp": world, "tp": 1, "pp": 1, "zero": "none",
             "activation_ckpt": "none",
         },
         "optim": {
@@ -301,7 +301,7 @@ def _trainer_dp2_worker(rank: int, world: int, port: int) -> None:
         },
         "train": {
             "micro_batch": 1, "grad_accum": 1,
-            "log_every": 1, "eval_every": 1, "ckpt_every": 2,
+            "log_every": 1, "eval_every": 0, "ckpt_every": 2,
         },
     }
     train(cfg)

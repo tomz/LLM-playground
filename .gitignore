@@ -18,3 +18,8 @@ microsoft_paper.pdf
 /tmux-client-*.log
 /tmux-server-*.log
 /midgpt/prepare.log
+
+# CI-generated environment and JUnit evidence (uploaded as job artifacts).
+**/test-environment.txt
+**/test-runtime.json
+**/test-results.xml

@@ -19,6 +19,9 @@ seed: 1337
 
 model:
   name: Qwen/Qwen2.5-Coder-3B
+  revision: 09d9bc5d376b0cfa0100a0694ea7de7232525803
+  tokenizer_revision: 09d9bc5d376b0cfa0100a0694ea7de7232525803
+  local_files_only: true
   dtype: bfloat16
   attn_impl: sdpa
   trust_remote_code: false
@@ -41,13 +44,17 @@ lora:
   use_rslora: true        # alpha/sqrt(r) scaling — lets the rank actually count
 
 dataset:
+  validation_fraction: 0.1
+  group_by: null  # Auto group metadata plus exact-prompt connectivity; never row-random leakage.
   source: hf
   hf_name: ise-uiuc/Magicoder-OSS-Instruct-75K
+  revision: 5f839b1f368a76b161028bb9edff055db34022b2
   lang_filter: python      # 38,284 of 75,197 examples
   max_examples: 2500       # ~10 minutes wall-clock at packed seq=1024
   format: chatml
 
 train:
+  loss_scope: all_tokens  # Explicit legacy objective; assistant_only needs generation markers.
   max_seq_len: 1024
   batch_size: 1            # bs=2 packed seq=1024 on 3B OOMs at ~15 GB; bs=1
                            # keeps peak ~10 GB and leaves room for activations
@@ -59,12 +66,12 @@ train:
   grad_clip: 1.0
   log_every: 10
   save_every: 100
-  packing: true            # the big win on a 16 GB card — ~2.5× tokens/step
+  packing: false  # SDPA baseline; boundary-aware flash-attention packing needs separate validation.
                            # for the same memory budget
   gradient_checkpointing: false   # 3B + r=16 LoRA + bs=2 fits without it
   # Liger Kernel: ~20% faster + big memory cut from FusedLinearCrossEntropy
   # over Qwen's ~150K vocab. Needs `pip install liger-kernel`.
-  use_liger_kernel: true
+  use_liger_kernel: false  # Optional fused backend requires its own parity and hardware validation.
   # NEFTune: embedding-noise regularizer, free quality bump for SFT.
   neftune_noise_alpha: 5
 

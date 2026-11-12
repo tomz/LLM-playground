@@ -98,7 +98,7 @@ def load_builtin(repeat: int = 8, use_chat: bool = True):
     return Dataset.from_list(rows)
 
 
-def load_mbpp(max_examples: int | None = None, use_chat: bool = True):
+def load_mbpp(max_examples: int | None = None, use_chat: bool = True, *, revision: str | None = None):
     """MBPP (sanitized): real Python tasks with `test_list` assertions.
 
     Each MBPP row has ``text`` (the task), ``code`` (a reference solution), and
@@ -108,9 +108,13 @@ def load_mbpp(max_examples: int | None = None, use_chat: bool = True):
     """
     import re
 
+    from cf_provenance import require_revision
+    revision = require_revision(revision, label="MBPP dataset")
+    if max_examples is not None and (type(max_examples) is not int or max_examples <= 0):
+        raise ValueError("max_examples must be a positive integer or null")
     from datasets import load_dataset
 
-    ds = load_dataset("mbpp", "sanitized", split="train")
+    ds = load_dataset("mbpp", "sanitized", split="train", revision=revision)
     if max_examples:
         ds = ds.select(range(min(max_examples, len(ds))))
 
@@ -119,9 +123,18 @@ def load_mbpp(max_examples: int | None = None, use_chat: bool = True):
         m = re.search(r"def\s+(\w+)\s*\(", code)
         entry = m.group(1) if m else ""
         asserts = ex.get("test_list", [])
+        import ast
+        if not entry or not isinstance(asserts, list) or not asserts or any(not isinstance(a, str) for a in asserts):
+            raise ValueError("MBPP tasks require an entry point and nonempty assertions")
+        try:
+            trees = [ast.parse(a).body for a in asserts]
+        except SyntaxError as exc:
+            raise ValueError("invalid MBPP assertion syntax") from exc
+        if any(not body or any(not isinstance(node, ast.Assert) for node in body) for body in trees):
+            raise ValueError("MBPP test_list must contain assertion statements")
         # The MBPP asserts call the function by name directly; wrap them so the
-        # reward harness can `check(entry)` uniformly.
-        body = "\n".join("    " + a for a in asserts) if asserts else "    pass"
+        # reward harness can `check(entry)` uniformly. Never invent a passing test.
+        body = "\n".join("    " + a for a in asserts)
         test = f"def check(fn):\n{body}\n"
         return {
             "prompt": _to_prompt(ex["text"], use_chat),
@@ -139,5 +152,5 @@ def load(cfg: dict):
     if src == "builtin":
         return load_builtin(repeat=cfg.get("repeat", 8), use_chat=use_chat)
     if src == "mbpp":
-        return load_mbpp(cfg.get("max_examples"), use_chat=use_chat)
+        return load_mbpp(cfg.get("max_examples"), use_chat=use_chat, revision=cfg.get("revision"))
     raise ValueError(f"unknown GRPO dataset source: {src}")

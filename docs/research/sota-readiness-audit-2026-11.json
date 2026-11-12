@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "assessed_on": "2026-11-11",
+  "scope": "current dirty working tree; documentation-only audit",
+  "base_git_revision": "d020dd366770379bdf04cd2ac300c915cee4c25b",
+  "runtime_fingerprint": {
+    "file_count": 372,
+    "sha256": "7a8f6cba362bd2b187809f2d184c9231c3697c0d4b4347e0bf9c98166dc985a8",
+    "method": "Sort unique git ls-files --cached --others --exclude-standard paths. Select existing .py/.toml/.yml/.yaml files and requirements.txt. SHA256 update with UTF-8 path, NUL byte, then file bytes for each path."
+  },
+  "observed_distribution_versions": {
+    "python": "3.14.4",
+    "torch": "2.12.0",
+    "transformers": "5.8.0",
+    "peft": "0.19.1",
+    "trl": "1.3.0",
+    "datasets": "4.8.5",
+    "accelerate": "1.13.0",
+    "pytest": "9.0.3",
+    "lm_eval": null,
+    "evalplus": null
+  },
+  "declared_installed_mismatches": [
+    {"project": "coder-finetune", "dependency": "transformers", "declared": ">=4.45,<5.0", "observed": "5.8.0"},
+    {"project": "coder-finetune", "dependency": "trl", "declared": ">=0.11,<0.20", "observed": "1.3.0"},
+    {"project": "coder-finetune", "dependency": "datasets", "declared": ">=3.0,<4.0", "observed": "4.8.5"}
+  ],
+  "fresh_tests": {
+    "command_per_project": "CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 .venv/bin/python -m pytest -q tests",
+    "coder_finetune_extra_env": {"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"},
+    "projects": [
+      {"name": "nanogpt-edu", "passed": 213, "skipped": 0},
+      {"name": "midgpt", "passed": 151, "skipped": 0},
+      {"name": "distgpt", "passed": 172, "skipped": 4},
+      {"name": "coder-finetune", "passed": 172, "skipped": 1},
+      {"name": "frontier-platform", "passed": 454, "skipped": 15}
+    ],
+    "total_passed": 1162,
+    "total_skipped": 20,
+    "failures": 0
+  },
+  "probes": [
+    {
+      "id": "A01",
+      "finding": "F2",
+      "kind": "actual loader wiring counterexample, not full TP training",
+      "procedure": "Create two 64-token uint16 shards containing only 0 and only 1. Construct StreamingLoader(seq_len=4,micro_batch=1,rank=0 or 1,world_size=2,seed=7,device='cpu'). Compare next input batches.",
+      "observed": {"equal": false, "rank0": [[0,0,0,0]], "rank1": [[1,1,1,1]]}
+    },
+    {
+      "id": "A02",
+      "finding": "F5",
+      "kind": "actual eval helper with synthetic model and loader",
+      "procedure": "Pass a fresh real StreamingLoader with seq_len=4,batch=1 to _eval_one_batch using a trusted nn.Module returning x.float().mean()+1 and no PP/process group. Inspect cursor before/after.",
+      "observed": {"cursor_before": 0, "cursor_after": 5, "loss": 1.0}
+    },
+    {
+      "id": "A03",
+      "finding": "F5",
+      "kind": "actual checkpoint selector",
+      "procedure": "Create a fresh CheckpointManager in a temporary directory, mkdir its step_000000999 path without checkpoint contents, then call latest().",
+      "observed": {"selected_step": 999, "checkpoint_files_present": false}
+    },
+    {
+      "id": "A04",
+      "finding": "F4",
+      "kind": "deterministic RNG-restoration mechanism, not full DDP training",
+      "procedure": "Seed torch.Generator instances with 7 and 1000010. Save rank0 state, set both generators to it as the checkpoint load path does, compare next torch.randint draws.",
+      "observed": {"initial_states_differ": true, "next_draws_equal_after_shared_restore": true, "draws": [41615,13892,25721,75286,53283,35347,59287,22279]}
+    },
+    {
+      "id": "A05",
+      "finding": "F6",
+      "kind": "actual tiny CPU training through research.harness.run_candidate",
+      "procedure": "Use trusted temporary 16-token-vocabulary shards and candidate config with block_size=4,batch_size=2,grad_accum=1,n_layer=1,d_model=8,n_head=n_kv_head=2,d_ffn=16,float32. Run seed=7,eval_iters=1 with token budgets 1 and 10.",
+      "observed": [{"requested_tokens": 1, "trained_tokens": 8}, {"requested_tokens": 10, "trained_tokens": 8}]
+    },
+    {
+      "id": "A06",
+      "finding": "F7",
+      "kind": "actual TorchEngine sampler",
+      "procedure": "Call TorchEngine._sample on logits log([0.60,0.25,0.15]) with temperature=1 and top_p=0.7. The minimal nucleus should retain token IDs 0 and 1.",
+      "observed": {"sampled_token": 0, "returned_logprob": 0.0, "retained_support_from_source": [0], "expected_support": [0,1]}
+    },
+    {
+      "id": "A07",
+      "finding": "F7",
+      "kind": "actual multi-agent helper with instrumented trusted callback",
+      "procedure": "Call run_parallel with one callback that records invocation and returns ('answer',20), under token_budget=10.",
+      "observed": {"callback_invocations": 1, "reported_tokens": 0, "stopped_reason": "token_budget"}
+    },
+    {
+      "id": "A08",
+      "finding": "F7",
+      "kind": "actual async rollout packing with injected deterministic engine",
+      "procedure": "Use group_size=1,max_new_tokens=3,seq_len=5; prompt IDs [1,2,3,4]. An injected engine returns tokens 5,6,7 and a done event. Decode IDs with comma joins. Inspect GroupRollout.",
+      "observed": {"learner_ids": [[1,2,3,4,5]], "response_mask": [[0.0,0.0,0.0,0.0,1.0]], "reward_text": ["5,6,7"]}
+    },
+    {
+      "id": "A09",
+      "finding": "F10",
+      "kind": "actual import-order counterexample in a fresh Python process",
+      "procedure": "Import stdlib platform first, then prepend frontier-platform to sys.path and import platform.serving.engine.",
+      "observed": {"exception": "ModuleNotFoundError", "message": "No module named 'platform.serving'; 'platform' is not a package"}
+    },
+    {
+      "id": "A10",
+      "finding": "F1",
+      "kind": "actual DCP model/AdamW checkpoint round trip on CPU",
+      "procedure": "Train nn.Linear(2,2) for one AdamW update at lr=.01 on ones, seed=7. Save via CheckpointManager.save at step0. Construct a fresh Linear and AdamW, then call CheckpointManager.load. Compare weights and optimizer state entry counts.",
+      "observed": {"saved_optimizer_state_entries": 2, "restored_optimizer_state_entries": 0, "model_weights_equal": true, "next_step": 1}
+    }
+  ],
+  "limits": [
+    "No runtime or configuration implementation changes were authorized or made for this audit.",
+    "No new model/dataset downloads, paid API calls, GPU workloads, or full multi-node parity experiments.",
+    "No untrusted generated Python was executed as an audit probe.",
+    "Fresh unit suites and targeted probes are not exhaustive correctness or security certification.",
+    "Upstream references are pinned and inspected; their performance results were not reproduced locally."
+  ]
+}

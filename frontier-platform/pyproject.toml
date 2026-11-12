@@ -1,12 +1,28 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=68", "wheel>=0.41"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "frontier-platform"
-version = "0.0.1"
-description = "Architecture-only blueprint for a frontier LLM training platform"
+version = "0.1.0"
+description = "Executable CPU reference paths and design interfaces for an LLM platform"
+readme = "README.md"
 requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.4,<3",
+    "numpy>=1.26,<3",
+    "PyYAML>=6,<7",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10", "setuptools>=68", "wheel>=0.41"]
+tokenizer = ["tokenizers>=0.20,<1"]
+plots = ["matplotlib>=3.8,<4"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["frontier_platform", "frontier_platform.*"]
+namespaces = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

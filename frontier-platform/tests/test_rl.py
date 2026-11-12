@@ -1,4 +1,4 @@
-"""RLVR / GRPO skeleton tests (see platform/rl, docs/15-reasoning-rl-rlvr.md)."""
+"""RLVR / GRPO skeleton tests (see frontier_platform/rl, docs/15-reasoning-rl-rlvr.md)."""
 from __future__ import annotations
 import math
 from pathlib import Path
@@ -6,11 +6,11 @@ from pathlib import Path
 import pytest  # noqa: F401
 import torch
 
-from platform.model.config import ModelConfig
-from platform.model.transformer import Transformer
-from platform.rl.grpo import GRPOConfig, group_advantages, grpo_step, run_grpo
-from platform.rl.rollout import sample_group
-from platform.rl.verifiers import (
+from frontier_platform.model.config import ModelConfig
+from frontier_platform.model.transformer import Transformer
+from frontier_platform.rl.grpo import GRPOConfig, group_advantages, grpo_step, run_grpo
+from frontier_platform.rl.rollout import sample_group
+from frontier_platform.rl.verifiers import (
     CodeUnitTestVerifier,
     MathExactVerifier,
     ProbabilityRewardVerifier,
@@ -19,7 +19,7 @@ from platform.rl.verifiers import (
     reward_contains,
     reward_regex,
 )
-from platform.tokenizer.bytes import BytesTokenizer
+from frontier_platform.tokenizer.bytes import BytesTokenizer
 
 
 def _tiny_cfg() -> ModelConfig:
@@ -74,7 +74,7 @@ def test_length_penalty_is_nonpositive():
 
 def test_make_verifier_registry_and_code_verifier():
     assert make_verifier("contains", target="ok")("p", "ok") == 1.0
-    code_v = make_verifier("code_tests", tests=["assert f(1) == 1"])
+    code_v = make_verifier("code_tests", tests=["assert f(1) == 1"], trusted_test_only=True)
     assert isinstance(code_v, CodeUnitTestVerifier)
     # Correct solution passes the hidden test; wrong one fails. Runs in sandbox.
     good = code_v("p", "def f(x):\n    return x")
@@ -229,7 +229,7 @@ def test_grpo_step_runs_and_metrics_finite():
     cfg_m = _tiny_cfg()
     torch.manual_seed(0)
     policy = Transformer(cfg_m)
-    from platform.alignment._common import clone_for_reference
+    from frontier_platform.alignment._common import clone_for_reference
     ref = clone_for_reference(policy)
     tok = BytesTokenizer()
     prompts = [tok.encode("Q: x"), tok.encode("Q: y")]
@@ -269,7 +269,7 @@ def test_grpo_kl_estimator_nonnegative_and_zero_at_ref():
     cfg_m = _tiny_cfg()
     torch.manual_seed(0)
     policy = Transformer(cfg_m)
-    from platform.alignment._common import clone_for_reference
+    from frontier_platform.alignment._common import clone_for_reference
     ref = clone_for_reference(policy)  # identical weights -> KL must be ~0
     tok = BytesTokenizer()
     roll = sample_group(
@@ -292,7 +292,7 @@ def test_grpo_clipped_objective_bounds_ratio():
     cfg_m = _tiny_cfg()
     torch.manual_seed(0)
     policy = Transformer(cfg_m)
-    from platform.alignment._common import clone_for_reference
+    from frontier_platform.alignment._common import clone_for_reference
     ref = clone_for_reference(policy)
     tok = BytesTokenizer()
     roll = sample_group(
@@ -316,7 +316,7 @@ def test_gspo_unknown_level_rejected():
     cfg_m = _tiny_cfg()
     torch.manual_seed(0)
     policy = Transformer(cfg_m)
-    from platform.alignment._common import clone_for_reference
+    from frontier_platform.alignment._common import clone_for_reference
     ref = clone_for_reference(policy)
     tok = BytesTokenizer()
     roll = sample_group(policy, [tok.encode("Q: x")], group_size=4, max_new_tokens=5,
@@ -340,7 +340,7 @@ def test_gspo_sequence_ratio_is_one_at_reference():
     cfg_m = _tiny_cfg()
     torch.manual_seed(0)
     policy = Transformer(cfg_m)
-    from platform.alignment._common import clone_for_reference
+    from frontier_platform.alignment._common import clone_for_reference
     ref = clone_for_reference(policy)
     tok = BytesTokenizer()
     roll = sample_group(policy, [tok.encode("Q: x")], group_size=4, max_new_tokens=5,
@@ -359,7 +359,7 @@ def test_gspo_sequence_ratio_lower_variance_than_token():
     sequence-level ratio is far less dispersed than the token-level one, because
     it is one length-normalized number per sequence instead of many independent
     per-token ratios. We verify the helper directly on synthetic log-prob deltas."""
-    from platform.rl.grpo import _sequence_importance_ratio
+    from frontier_platform.rl.grpo import _sequence_importance_ratio
     torch.manual_seed(0)
     N, T = 8, 16
     logp = torch.randn(N, T) * 0.5
@@ -377,7 +377,7 @@ def test_gspo_sequence_ratio_lower_variance_than_token():
 def test_gspo_respects_response_mask_in_length_norm():
     """Length normalization must divide by the number of *response* tokens, not
     the padded width — masked (prompt/pad) positions must not dilute the ratio."""
-    from platform.rl.grpo import _sequence_importance_ratio
+    from frontier_platform.rl.grpo import _sequence_importance_ratio
     logp = torch.tensor([[1.0, 1.0, 0.0, 0.0]])   # only first 2 tokens are response
     base = torch.zeros(1, 4)
     mask = torch.tensor([[1.0, 1.0, 0.0, 0.0]])
@@ -394,7 +394,7 @@ def test_gspo_end_to_end_step_updates(tmp_path):
     cfg_m = _tiny_cfg()
     torch.manual_seed(0)
     policy = Transformer(cfg_m)
-    from platform.alignment._common import clone_for_reference
+    from frontier_platform.alignment._common import clone_for_reference
     ref = clone_for_reference(policy)
     tok = BytesTokenizer()
     roll = sample_group(policy, [tok.encode("Q: x"), tok.encode("Q: y")],
@@ -440,7 +440,7 @@ def test_run_grpo_e2e_increases_verifier_reward(tmp_path):
 # ---------- reward shaping ----------
 
 def test_format_reward_rewards_think_answer_structure():
-    from platform.rl.reward import format_reward
+    from frontier_platform.rl.reward import format_reward
     full = format_reward("<think>reasoning</think>\\boxed{42}")
     partial = format_reward("<think>reasoning</think> 42")
     none = format_reward("just an answer 42")
@@ -449,7 +449,7 @@ def test_format_reward_rewards_think_answer_structure():
 
 
 def test_soft_length_penalty_ramps():
-    from platform.rl.reward import soft_length_penalty
+    from frontier_platform.rl.reward import soft_length_penalty
     short = "w " * 10
     long = "w " * 5000
     assert soft_length_penalty(short, target_tokens=512) == 0.0
@@ -457,7 +457,7 @@ def test_soft_length_penalty_ramps():
 
 
 def test_soft_length_penalty_uses_real_tokenizer():
-    from platform.rl.reward import soft_length_penalty
+    from frontier_platform.rl.reward import soft_length_penalty
     tok = BytesTokenizer()
     text = "hello world"  # 2 whitespace words, but 11 bytes/tokens
     # With the byte tokenizer the token count (11) exceeds a tiny target where the
@@ -470,7 +470,7 @@ def test_soft_length_penalty_uses_real_tokenizer():
 
 
 def test_repetition_penalty_catches_loops():
-    from platform.rl.reward import repetition_penalty
+    from frontier_platform.rl.reward import repetition_penalty
     varied = "the quick brown fox jumps over the lazy dog today"
     looped = "go go go go go go go go go go"
     assert repetition_penalty(varied) == pytest.approx(0.0, abs=0.2) or repetition_penalty(varied) > -0.2
@@ -478,7 +478,7 @@ def test_repetition_penalty_catches_loops():
 
 
 def test_answer_spam_guard_penalizes_shotgun():
-    from platform.rl.reward import answer_spam_guard
+    from frontier_platform.rl.reward import answer_spam_guard
     ok = "\\boxed{42}"
     spam = "\\boxed{1}\\boxed{2}\\boxed{3}\\boxed{4}\\boxed{5}"
     assert answer_spam_guard(ok, max_candidates=3) == 0.0
@@ -486,7 +486,7 @@ def test_answer_spam_guard_penalizes_shotgun():
 
 
 def test_composite_reward_blends_and_clips():
-    from platform.rl.reward import CompositeReward, RewardConfig
+    from frontier_platform.rl.reward import CompositeReward, RewardConfig
     base = MathExactVerifier(42)
     comp = CompositeReward(base, RewardConfig())
     bd = comp.breakdown("2+40=?", "<think>2+40</think>\\boxed{42}")
@@ -499,7 +499,7 @@ def test_composite_reward_blends_and_clips():
 
 
 def test_grpo_logs_reward_breakdown(tmp_path):
-    from platform.rl.reward import CompositeReward
+    from frontier_platform.rl.reward import CompositeReward
     cfg_m = _tiny_cfg()
     base = tmp_path / "base.pt"
     _save_base_ckpt(base, cfg_m)
@@ -517,14 +517,14 @@ def test_grpo_logs_reward_breakdown(tmp_path):
 # ---------- cold-start reasoning-SFT ----------
 
 def test_format_trace_builds_reasoning_format():
-    from platform.rl.coldstart import format_trace
+    from frontier_platform.rl.coldstart import format_trace
     ex = format_trace("2+2?", "add two and two", "4")
     assert ex["prompt"] == "2+2?"
     assert "<think>" in ex["response"] and "\\boxed{4}" in ex["response"]
 
 
 def test_run_coldstart_reduces_loss_and_saves(tmp_path):
-    from platform.rl.coldstart import ColdStartConfig, format_trace, run_coldstart
+    from frontier_platform.rl.coldstart import ColdStartConfig, format_trace, run_coldstart
     cfg_m = _tiny_cfg()
     base = tmp_path / "base.pt"
     _save_base_ckpt(base, cfg_m)
@@ -549,7 +549,7 @@ def test_run_coldstart_reduces_loss_and_saves(tmp_path):
 
 def test_coldstart_then_grpo_pipeline(tmp_path):
     """End-to-end: reasoning-SFT cold-start -> GRPO loads its checkpoint."""
-    from platform.rl.coldstart import ColdStartConfig, format_trace, run_coldstart
+    from frontier_platform.rl.coldstart import ColdStartConfig, format_trace, run_coldstart
     cfg_m = _tiny_cfg()
     base = tmp_path / "base.pt"
     _save_base_ckpt(base, cfg_m)

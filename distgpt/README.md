@@ -14,7 +14,17 @@ Real code (not pseudocode) for training **1B–70B** parameter GPTs across **mul
 - **W&B + JSONL logging**, loss-spike monitor, async checkpoint upload
 - **Slurm + torchrun-elastic** launchers
 
-This code is real and self-consistent. It will not actually finish a 70B run on your laptop — you need a cluster. But every code path is implemented, not stubbed.
+The integrated trainer supports explicit, tested configurations rather than every
+possible composition. See [the November repair contracts and support matrix](docs/repair-contracts-2026-11.md)
+for complete-state checkpointing, independent validation, CPU/Gloo parity, and
+tiny real CUDA FSDP evidence. PP, mixed DP×TP, and other unvalidated combinations
+fail before allocation; their lower-level experiments remain available.
+
+The small runnable recipes are `configs/repair_cpu.yaml` and
+`configs/repair_fsdp.yaml`. Large-model sizes and throughput targets below are
+architecture/sizing targets, not proof those recipes or every composition have
+been validated. Use the [pinned test profile](../docs/testing-and-reproducibility.md)
+for acceptance tests.
 
 ## Layout
 
@@ -78,7 +88,7 @@ distgpt/
 ## Quickstart (single node, 8 GPUs, FSDP only)
 
 ```bash
-pip install -r requirements.txt
+pip install -c constraints-ci.txt -r requirements.txt
 # Tokenize some data (or symlink a directory of *.bin uint16 shards)
 python -m distgpt.data.prepare_dummy --out data/tiny --tokens 50000000
 
@@ -161,12 +171,124 @@ sidecar `.venv-pascal/` and PCI-unbind workarounds that got it running.
 
 ## Resumable rollout and verifier work queue
 
-`distgpt/eval/rollout_queue.py` defines the backend contract for stateful rollout
-workers: deterministic ordering, exclusive leases, retry after expiration,
-stale-worker rejection, idempotent completion, dead-lettering, parent lineage,
-and schema-versioned snapshot/restore. The shipped implementation is in-memory
-and CPU-testable; Redis/etcd production adapters must preserve the same state
-machine. It does not pretend to be a distributed database.
+**The October/November harvest is a runnable local rollout/checker pipeline,
+not an async RL trainer.** `distgpt/eval/rollout_queue.py` implements deterministic
+ordering, fenced exclusive leases, heartbeat, bounded retries/dead-lettering,
+parent lineage, and atomic versioned snapshots. `distgpt/eval/rollout_worker.py`
+actually invokes generator and verifier callbacks, checks policy provenance,
+and retains per-attempt costs even when work fails or returns too late.
+
+### Offline CPU demo
+
+From `distgpt/`, with Python 3.10+ (the demo uses only the standard library):
+
+```bash
+python -m distgpt.eval.rollout_worker --snapshot out/rollout-queue.json
+python -m distgpt.eval.rollout_worker --snapshot out/rollout-queue.json --resume
+
+# Permit behavior-policy version 0 while the learner is at version 1.
+python -m distgpt.eval.rollout_worker --current-policy-version 1 --max-policy-lag 1 \
+    --snapshot out/rollout-lag.json
+
+# Stop admission at lifetime token/attempt/grader/wall allowances.
+python -m distgpt.eval.rollout_worker --max-tokens 16 --max-attempts 4 \
+    --max-wall-s 2 --max-grader-calls 2 --max-grader-cost 2 \
+    --snapshot out/rollout-budget.json
+```
+
+The default jobs emit 3 and 64 integer tokens respectively. The checker compares
+all tokens with the expected sequences. A successful fresh run reports two
+completions, 2 input tokens, 67 output tokens, and 2 grader calls, with separate
+`short` and `long` domain totals. Wall time is measured, not a benchmark. Grader
+cost is a configurable accounting unit (default 1 per invocation), **not money
+spent**. No model download, network request, paid API, GPU, or sleep is involved.
+`--resume` restores the queue without resubmitting jobs or resetting accounting;
+without it, the demo starts fresh and replaces the specified snapshot.
+
+### Callback and acceptance contract
+
+`LocalWorker(queue, generator, verifier, ...)` accepts a
+`generator(item, meter) -> Generation` and
+`verifier(item, generation, meter) -> dict`. Call `meter.tokens(...)` before
+processing input or emitting output, including partial work that may raise an
+exception. The runner charges the configured grader cost and one grader call
+**before** invoking the verifier, so checker exceptions still count. It measures
+attempt wall time through success, exceptions, and late responses. Token charges
+are cooperative reservations; unused reservations are not refunded.
+
+Each work item declares `domain`, `policy_version`, and `logprob_version`.
+Generation returns the actual versions and one finite, nonpositive log-prob per
+metered output token. Requested and actual versions must match; log-probs must
+belong to the behavior-policy version. `StalenessPolicy(current_version, max_lag)`
+accepts only `0 <= current_version - policy_version <= max_lag`, checking again
+after verification. Future policies, mismatched provenance, and expired leases
+are rejected regardless of lag tolerance. These version tags are trusted callback
+metadata, not proof of which weights actually ran. The deterministic demo has
+selected-token log-probs of zero; it does not estimate neural-model likelihoods.
+A checker verdict such as `{"correct": false}` is a valid completed evaluation,
+not a worker failure. Exceptions trigger retries up to the queue's limit.
+
+`queue.attempts` retains requested/actual versions, domain, outcome/reason, input
+and output tokens, wall seconds, grader calls, and grader cost for each lease.
+`queue.totals(domain=None)` sums **all attempts**, not just accepted completions.
+Cumulative usage reports cannot decrease and repeated reports do not double count;
+late reports for known expired leases remain chargeable. `Budget` allowances apply
+to lifetime queue totals across restore. Retry count and run-wide attempt count
+are separate limits. Reclaimed leases retain their last reported usage; unreported
+work from a killed process is unknown, not inferred as free or recovered exactly.
+
+### Fences, snapshots, and compatibility
+
+Keep the `Lease` returned by `acquire` and send its fence on every mutation:
+
+```python
+lease = queue.acquire("worker-0", now=10.0, lease_s=30.0)
+if lease is not None:
+    queue.complete(lease.item.item_id, lease.worker_id, {"reward": 1}, now=11.0,
+                   lease_token=lease.token, attempt=lease.item.attempt)
+```
+
+`complete`, `fail`, and `heartbeat` require the keyword-only `lease_token` for
+authorization; the optional `attempt` is an additional consistency check. Tokens
+are unique per acquisition and persist across restore. Worker-ID-only and
+attempt-only calls return `False`, even on an initial attempt: a restored pending
+checkpoint can issue a different acquisition with the same worker and attempt.
+This deliberate API tightening closes stale messages from reused identities.
+Completion acknowledgments with the original token are idempotent and never
+overwrite the first committed result.
+
+Snapshots use schema v2, reject non-finite serialized values, fsync a temporary
+file, and atomically replace the destination in the same directory. V1 snapshots
+are supported: pending/completed/failed items survive, but active leases are
+invalidated and requeued with incremented attempts (or dead-lettered at the
+limit). Old v1 completion records remain readable but cannot authenticate duplicate
+acknowledgments. V1 contains no usage history; migration cannot reconstruct costs.
+Lease deadlines use caller-supplied epoch seconds; local duration accounting uses
+a monotonic clock. Times, retry counts, and budgets are validated before use.
+
+### Production boundaries and tests
+
+This is a **single-process, synchronous, cooperative** reference implementation.
+It is not thread/process-safe, a Redis/etcd adapter, a multiprocess durable DB, a
+sandbox, or an RL optimizer. Snapshot replacement is not a transaction log: work
+since the last saved checkpoint can be lost. Use one authoritative queue and
+snapshot; do not fork or roll back live queue histories. A production backend must
+atomically transact leases, fences, completions, and usage, and persist admissions
+before dispatch. Worker version checks do not replace trusted model identity.
+
+Callbacks must terminate and meter their work honestly. Wall budgets are checked
+between operations and before committing results; they cannot interrupt a hung
+callback and can overshoot by one callback's runtime. The runner drains available
+jobs without polling or waiting for live leases to expire. Use an external process
+supervisor and transactional backend for hard timeouts, concurrent dispatch, and
+crash-durable metering. Model-backed generation and async learner integration are
+not included.
+
+```bash
+python -m pytest -q tests/test_rollout_queue.py tests/test_rollout_fencing.py \
+    tests/test_rollout_worker.py
+CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=1 python -m pytest -q
+```
 
 ## What's *not* in scope
 

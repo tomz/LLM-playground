@@ -1,56 +1,12 @@
-import sys, pathlib
-
-_REPO = str(pathlib.Path(__file__).resolve().parents[1])
-# pytest may have already imported our local `platform/` as the stdlib name
-# (because the repo root is on sys.path). Evict it, strip repo from sys.path,
-# import torch (which needs stdlib `platform`), then restore.
-for _m in [k for k in list(sys.modules) if k == "platform" or k.startswith("platform.")]:
-    del sys.modules[_m]
-_orig_path = list(sys.path)
-sys.path[:] = [p for p in sys.path if p not in ("", ".", _REPO)]
-try:
-    import torch  # noqa: F401  (binds torch to stdlib platform)
-    _HAVE_TORCH = True
-except ModuleNotFoundError:
-    _HAVE_TORCH = False
-sys.path[:] = [_REPO] + _orig_path
-for _m in [k for k in list(sys.modules) if k == "platform" or k.startswith("platform.")]:
-    del sys.modules[_m]
+"""Shared CPU fixtures; no stdlib import interception is needed."""
+from __future__ import annotations
 
 import pytest
 
-# The data/tokenizer fixtures below don't need torch, but the model fixtures
-# do. Stub them out with skips if torch is unavailable so the pure-Python
-# test suite (e.g. tests/test_simulation.py) still collects and runs.
-if not _HAVE_TORCH:
-    @pytest.fixture
-    def tmp_corpus_dir(tmp_path):
-        pytest.skip("torch not installed")
-
-    @pytest.fixture
-    def tiny_tokenizer():
-        pytest.skip("torch not installed")
-
-    @pytest.fixture
-    def tiny_shards(tmp_path):
-        pytest.skip("torch not installed")
-
-    @pytest.fixture
-    def tiny_model_cfg():
-        pytest.skip("torch not installed")
-
-    @pytest.fixture
-    def tiny_model():
-        pytest.skip("torch not installed")
-
-    @pytest.fixture
-    def gpu_or_skip():
-        pytest.skip("torch not installed")
-else:
-    from platform.data.synthetic import write_corpus
-    from platform.data.acquire import LocalFilesSource
-    from platform.data.shard import tokenize_and_shard
-    from platform.tokenizer.bytes import BytesTokenizer
+from frontier_platform.data.acquire import LocalFilesSource
+from frontier_platform.data.shard import tokenize_and_shard
+from frontier_platform.data.synthetic import write_corpus
+from frontier_platform.tokenizer.bytes import BytesTokenizer
 
 
 @pytest.fixture
@@ -75,7 +31,7 @@ def tiny_shards(tmp_path, tmp_corpus_dir, tiny_tokenizer):
 
 @pytest.fixture
 def tiny_model_cfg():
-    from platform.model.config import ModelConfig
+    from frontier_platform.model.config import ModelConfig
     return ModelConfig(
         vocab_size=512, n_layer=4, n_head=4, n_kv_head=2,
         d_model=128, d_ffn=384, max_seq_len=128,
@@ -85,23 +41,21 @@ def tiny_model_cfg():
 
 @pytest.fixture
 def tiny_model(tiny_model_cfg):
-    import torch
+    torch = pytest.importorskip("torch")
     torch.manual_seed(0)
-    from platform.model.transformer import Transformer
+    from frontier_platform.model.transformer import Transformer
     return Transformer(tiny_model_cfg)
 
 
 @pytest.fixture
 def gpu_or_skip():
-    import torch
+    torch = pytest.importorskip("torch")
     if not torch.cuda.is_available():
         pytest.skip("CUDA not available")
-    # PyTorch build may not support our GPU's compute capability.
     try:
         major, _ = torch.cuda.get_device_capability(0)
         supported = torch.cuda.get_arch_list()
         if supported and not any(f"sm_{major}" in s for s in supported):
-            # Try a tiny op to confirm.
             torch.zeros(1, device="cuda") + 1
     except Exception as e:
         pytest.skip(f"CUDA present but unusable: {e}")

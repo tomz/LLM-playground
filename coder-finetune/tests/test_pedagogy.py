@@ -139,10 +139,12 @@ def test_eval_summary_names_metric_by_n_samples():
     assert s5["pass@5"] == pytest.approx(0.8)
 
 
-def test_eval_summary_handles_zero_problems():
-    """Edge case: n=0 must not divide-by-zero."""
+def test_eval_summary_has_no_score_for_zero_problems():
+    """No assessed problems means no score, not a measured zero pass rate."""
     s = build_eval_summary("m", n=0, passes=0, n_samples=1, temperature=0.0, seed=None)
-    assert s["pass@1"] == 0.0
+    assert s["pass@1"] is None
+    assert s["scope"] == "unverified-aggregate"
+    assert s["complete_benchmark_artifact"] is False
 
 
 def test_write_json_summary_roundtrips(tmp_path):

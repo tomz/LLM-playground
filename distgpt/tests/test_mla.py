@@ -199,7 +199,7 @@ def test_trainer_runs_with_mla(tmp_path: Path):
             "warmup_steps": 1, "total_steps": 3,
         },
         "train": {"micro_batch": 2, "grad_accum": 1,
-                    "log_every": 1, "eval_every": 99, "ckpt_every": 99},
+                    "log_every": 1, "eval_every": 0, "ckpt_every": 99},
     }
     train(cfg)
     log = (Path(cfg["out_dir"]) / "log.jsonl").read_text().splitlines()

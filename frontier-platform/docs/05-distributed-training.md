@@ -26,7 +26,7 @@
 
 ## Backend
 
-We wrap one of: Megatron-Core, NVIDIA NeMo, DeepSpeed, or PyTorch native (FSDP2 + TP via DTensor). The `platform/training/parallel.py` interface lets us swap.
+We wrap one of: Megatron-Core, NVIDIA NeMo, DeepSpeed, or PyTorch native (FSDP2 + TP via DTensor). The `frontier_platform/training/parallel.py` interface lets us swap.
 
 ## MFU target
 

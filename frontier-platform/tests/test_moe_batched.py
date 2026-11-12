@@ -19,8 +19,8 @@ import time
 import pytest
 import torch
 
-from platform.model.config import ModelConfig
-from platform.model.transformer import MoEFFN, Transformer
+from frontier_platform.model.config import ModelConfig
+from frontier_platform.model.transformer import MoEFFN, Transformer
 
 
 def _cfg(**overrides) -> ModelConfig:

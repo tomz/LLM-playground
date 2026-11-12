@@ -18,7 +18,7 @@
 
 Every leading 2025 model is a **large sparse MoE** (DeepSeek-V3 671B-total /
 37B-active, Llama-4, Qwen3). Dense is now the exception, used for small tiers and
-ablations. The model code (`platform/model/transformer.py`, `MoEFFN`) implements
+ablations. The model code (`frontier_platform/model/transformer.py`, `MoEFFN`) implements
 the frontier recipe — enable it with `moe_num_experts > 1`:
 
 - **Fine-grained experts** (`moe_expert_d_ffn` smaller than `d_ffn`): many narrow

@@ -2,10 +2,10 @@ from __future__ import annotations
 import asyncio
 import torch
 
-from platform.model.config import ModelConfig
-from platform.model.transformer import Transformer
-from platform.serving.engine import Engine, EngineConfig, GenRequest
-from platform.serving.router import Router, Tier
+from frontier_platform.model.config import ModelConfig
+from frontier_platform.model.transformer import Transformer
+from frontier_platform.serving.engine import Engine, EngineConfig, GenRequest
+from frontier_platform.serving.router import Router, Tier
 
 
 def _async_collect(gen):

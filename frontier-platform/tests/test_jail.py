@@ -1,4 +1,4 @@
-"""Tests for the jailed sandbox wrap (platform/rl/jail.py).
+"""Tests for the jailed sandbox wrap (frontier_platform/rl/jail.py).
 
 These tests assert two things:
 
@@ -17,7 +17,7 @@ import tempfile
 
 import pytest
 
-from platform.rl.jail import (
+from frontier_platform.rl.jail import (
     BubblewrapJailer,
     FirejailJailer,
     NoJailer,
@@ -26,7 +26,7 @@ from platform.rl.jail import (
     detect_jailer,
     run_in_jailed_sandbox,
 )
-from platform.rl.sandbox import SandboxLimits, run_in_sandbox
+from frontier_platform.rl.sandbox import SandboxLimits, run_in_sandbox
 
 
 # ---- detection / registry ---------------------------------------------------
@@ -236,11 +236,11 @@ def test_code_verifier_can_use_jailed_sandbox():
     """The :class:`CodeUnitTestVerifier` doesn't grow a new API: callers wrap
     with ``run_in_jailed_sandbox`` directly. Verify the verifier's logic still
     works when the underlying sandbox is jailed."""
-    from platform.rl.verifiers import CodeUnitTestVerifier
-    v = CodeUnitTestVerifier(tests=["assert solve(4) == 16"])
+    from frontier_platform.rl.verifiers import CodeUnitTestVerifier
+    v = CodeUnitTestVerifier(trusted_test_only=True, tests=["assert solve(4) == 16"])
     # The verifier imports run_in_sandbox lazily inside __call__ — see
-    # platform/rl/verifiers.py — so monkey-patching the sandbox module works.
-    import platform.rl.sandbox as sb_mod
+    # frontier_platform/rl/verifiers.py — so monkey-patching the sandbox module works.
+    import frontier_platform.rl.sandbox as sb_mod
     orig_runner = sb_mod.run_in_sandbox
 
     def _jailed_runner(sol, test, limits=None, *, jailer=None):

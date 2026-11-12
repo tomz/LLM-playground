@@ -2,7 +2,7 @@
 
 > **Version note.** This is a second pass of `17-frontier-model-gap-research.md`.
 > v1 was written from the design docs; v2 was written after reading the actual
-> implementation (`platform/**/*.py`), running the simulator at frontier scale
+> implementation (`frontier_platform/**/*.py`), running the simulator at frontier scale
 > (`1t` and `2t` presets), and enumerating the exact `NotImplementedError` and
 > toy-vs-production boundaries in the code. Where v1 said "the repo has X",
 > v2 names the file and says how *real* the X actually is.
@@ -35,37 +35,37 @@ in order:
 
 1. **A real distributed runtime.** The current MoE forward is a Python
    `for e in range(self.n_experts)` loop on one device
-   (`platform/model/transformer.py:314`), and `ParallelEngine` raises
+   (`frontier_platform/model/transformer.py:314`), and `ParallelEngine` raises
    `NotImplementedError` for any `tp>1` or `pp>1`
-   (`platform/training/parallel.py:35-42`). No expert parallel, no
+   (`frontier_platform/training/parallel.py:35-42`). No expert parallel, no
    tensor/pipeline parallel, no FSDP. **You cannot run the 1T MoE on the
    cluster the simulator prices.**
 2. **A real post-training compute plant.** GRPO + sandboxed verifier +
    async actor-learner all exist as toy-functional skeletons
-   (`platform/rl/grpo.py`, `sandbox.py`, `async_rollout.py`), but the
+   (`frontier_platform/rl/grpo.py`, `sandbox.py`, `async_rollout.py`), but the
    simulator's RLVR phase costs $35k against a $35M pretrain — that is two
    orders of magnitude smaller than the o1/R1-class post-training spend the
    field has moved to, and the code lacks the throughput backbone (no vLLM
    wrapper — `serving/engine.py:48` raises `NotImplementedError`) to scale
    rollouts.
 3. **A synthetic + reasoning-trace data factory.** The classical pipeline is
-   strong (`platform/data/{dedup,decontaminate,filter}.py` are real, not
-   stubs), but `platform/data/synthetic.py` is **literally a 16-line random
+   strong (`frontier_platform/data/{dedup,decontaminate,filter}.py` are real, not
+   stubs), but `frontier_platform/data/synthetic.py` is **literally a 16-line random
    word generator for tests** — the largest single capability gap in the repo.
 4. **Native multimodality, not adapter multimodality.** The VLM
-   (`platform/model/vision.py`) is a LLaVA-style late-fusion adapter; there
+   (`frontier_platform/model/vision.py`) is a LLaVA-style late-fusion adapter; there
    is no audio, no video, no document/chart/OCR pipeline, and no multimodal
    data path.
 5. **Real safety/eval harnesses for agentic and reasoning surfaces.** The
    red-team suite is **5 hardcoded prompts and a refusal regex**
-   (`platform/safety/redteam.py:25-39`); the classifier is a **keyword
-   counter** (`platform/safety/classifiers.py:13-24`); the eval harness falls
+   (`frontier_platform/safety/redteam.py:25-39`); the classifier is a **keyword
+   counter** (`frontier_platform/safety/classifiers.py:13-24`); the eval harness falls
    back to perplexity on 5 small tasks if `lm-evaluation-harness` is missing
-   (`platform/eval/harness.py:62-81`). The 2026 frontier suite numbers in the
+   (`frontier_platform/eval/harness.py:62-81`). The 2026 frontier suite numbers in the
    simulator come from **closed-form sigmoid predictors**, not real
    benchmark runs.
 6. **Real FP8 / sparse-attention / 1M-context.** Precision policy is wired
-   end-to-end and TE-ready (`platform/training/precision.py`), but the *real*
+   end-to-end and TE-ready (`frontier_platform/training/precision.py`), but the *real*
    FP8 numerics path needs Transformer Engine on Hopper/Blackwell; sparse
    attention for the 1M-context tier (DeepSeek-V3.2) is open.
 
@@ -106,13 +106,13 @@ Two things to read out of this:
   That is a *toy* RLVR phase. The o1/R1-class post-training shift the field
   has made implies post-training compute that **rivals or exceeds**
   pretraining for reasoning models. The simulator's RLVR cost is calibrated
-  to the toy GRPO loop in `platform/rl/`, not to a frontier production run.
+  to the toy GRPO loop in `frontier_platform/rl/`, not to a frontier production run.
   The gap doc (`docs/14` §1) is correct that this is the largest missing
   *subsystem*; the simulator numbers above are correct on the toy budget,
   not on the frontier budget.
 
 Also: the simulator's safety predictor (a closed-form `cap * 0.55 + noise`
-function, `platform/sim/eval_sim.py:91-97`) hits BLOCK on CBRN, cyber,
+function, `frontier_platform/sim/eval_sim.py:91-97`) hits BLOCK on CBRN, cyber,
 persuasion, and autonomy at the 1T/2T scale — which is the *intended*
 behavior of the RSP gate, not a regression. But it tells you something real:
 **a frontier-scale model coming out of this blueprint requires real
@@ -131,88 +131,88 @@ not to dunk on the skeleton. Skeleton is appropriate for a blueprint.
 
 | Subsystem | File | What's real | What's still toy |
 |---|---|---|---|
-| Decoder transformer (RoPE, RMSNorm, SwiGLU, GQA) | `platform/model/transformer.py` | Real PyTorch modules, runs on CPU/GPU. SDPA used for attention. | Single device. No FlashAttention call, no fused kernels. |
-| Multi-head Latent Attention (MLA) | `platform/model/transformer.py:139-220` (`MLAttention`) | Real low-rank KV latent + decoupled RoPE, real incremental KV cache. KV-byte accounting via `ModelConfig.kv_bytes_per_token()`. | Same single-device caveat. |
-| MoE FFN (fine-grained + shared + aux-free) | `platform/model/transformer.py:230-330` (`MoEFFN`) | Real top-k routing, real aux-free bias update, real z-loss, expert-count monitoring. | **Forward is a Python `for e in range(self.n_experts)` loop, line 314.** No all-to-all dispatch, no expert parallel, no capacity-factor token dropping. Correctness reference, not a runtime. |
-| Multi-Token Prediction heads | `platform/model/transformer.py:355-364, 401-417` | Real train-time auxiliary heads + loss, gated on `self.training` so inference is unchanged. | No speculative-decode wiring in the serving engine (that uses the priced model only). |
+| Decoder transformer (RoPE, RMSNorm, SwiGLU, GQA) | `frontier_platform/model/transformer.py` | Real PyTorch modules, runs on CPU/GPU. SDPA used for attention. | Single device. No FlashAttention call, no fused kernels. |
+| Multi-head Latent Attention (MLA) | `frontier_platform/model/transformer.py:139-220` (`MLAttention`) | Real low-rank KV latent + decoupled RoPE, real incremental KV cache. KV-byte accounting via `ModelConfig.kv_bytes_per_token()`. | Same single-device caveat. |
+| MoE FFN (fine-grained + shared + aux-free) | `frontier_platform/model/transformer.py:230-330` (`MoEFFN`) | Real top-k routing, real aux-free bias update, real z-loss, expert-count monitoring. | **Forward is a Python `for e in range(self.n_experts)` loop, line 314.** No all-to-all dispatch, no expert parallel, no capacity-factor token dropping. Correctness reference, not a runtime. |
+| Multi-Token Prediction heads | `frontier_platform/model/transformer.py:355-364, 401-417` | Real train-time auxiliary heads + loss, gated on `self.training` so inference is unchanged. | No speculative-decode wiring in the serving engine (that uses the priced model only). |
 | QK-norm | `GQAttention.__init__` (`qk_norm` flag) | Real per-head RMSNorm on Q/K before SDPA. | — |
-| LLaVA-style VLM | `platform/model/vision.py` | Real ViT + projector + image-token prepend; loss masking on text positions; `VisionEncoder.from_pretrained` loads SigLIP via HF transformers when available. | Falls back to random-init in-house ViT when HF unavailable. No audio, video, doc/chart pipeline. |
-| KV cache | `platform/model/kv_cache.py` + `Transformer.forward_with_cache` | Real incremental decode for GQA and MLA. Bitwise-close vs. full re-encode in tests. | — |
+| LLaVA-style VLM | `frontier_platform/model/vision.py` | Real ViT + projector + image-token prepend; loss masking on text positions; `VisionEncoder.from_pretrained` loads SigLIP via HF transformers when available. | Falls back to random-init in-house ViT when HF unavailable. No audio, video, doc/chart pipeline. |
+| KV cache | `frontier_platform/model/kv_cache.py` + `Transformer.forward_with_cache` | Real incremental decode for GQA and MLA. Bitwise-close vs. full re-encode in tests. | — |
 
 ### 1.2 Training — single-process correctness
 
 | Subsystem | File | What's real | What's still toy |
 |---|---|---|---|
-| AdamW + cosine LR + grad-clip | `platform/training/optim.py` | Real. | — |
-| Muon optimizer | `platform/training/muon.py` | Real 5-step Newton-Schulz, real param partitioning (2D hidden vs. IO/embed via name markers). | Single-GPU path only (no distributed all-gather variant). |
-| Precision policy | `platform/training/precision.py` | Real `PrecisionPolicy.create("fp8")` resolves to `transformer_engine` + `te.fp8_autocast` *when* TE is installed; otherwise bf16/fp32 with a one-time warning. The trainer's `forward_backward` wraps every forward in `self.precision.autocast()`. | The *fallback* path is exercised today; the *real* FP8 numerics path is exercised only on Hopper/Blackwell with TE installed. So FP8 is "interface-ready", not "validated". |
-| Parallel engine | `platform/training/parallel.py` | Real DDP wrap if `dp>1`. | **`tp>1` or `pp>1` raises `NotImplementedError` (line 39-42).** No FSDP, no ZeRO. The doc (`docs/05`) describes Megatron-Core / NeMo / DeepSpeed; the code wraps DDP. |
-| Trainer.fit | `platform/training/trainer.py` | Real loop with spike monitor, rewind controller, checkpoint manager, eval hooks. | Synthetic / single-rank. |
-| Checkpointing | `platform/training/checkpoint.py` | Real, async save. | Single-rank shards. |
-| Spike monitor + rewind | `platform/training/stability.py` | Real rolling-stat detector, rewind via checkpoint mgr. | — |
+| AdamW + cosine LR + grad-clip | `frontier_platform/training/optim.py` | Real. | — |
+| Muon optimizer | `frontier_platform/training/muon.py` | Real 5-step Newton-Schulz, real param partitioning (2D hidden vs. IO/embed via name markers). | Single-GPU path only (no distributed all-gather variant). |
+| Precision policy | `frontier_platform/training/precision.py` | Real `PrecisionPolicy.create("fp8")` resolves to `transformer_engine` + `te.fp8_autocast` *when* TE is installed; otherwise bf16/fp32 with a one-time warning. The trainer's `forward_backward` wraps every forward in `self.precision.autocast()`. | The *fallback* path is exercised today; the *real* FP8 numerics path is exercised only on Hopper/Blackwell with TE installed. So FP8 is "interface-ready", not "validated". |
+| Parallel engine | `frontier_platform/training/parallel.py` | Real DDP wrap if `dp>1`. | **`tp>1` or `pp>1` raises `NotImplementedError` (line 39-42).** No FSDP, no ZeRO. The doc (`docs/05`) describes Megatron-Core / NeMo / DeepSpeed; the code wraps DDP. |
+| Trainer.fit | `frontier_platform/training/trainer.py` | Real loop with spike monitor, rewind controller, checkpoint manager, eval hooks. | Synthetic / single-rank. |
+| Checkpointing | `frontier_platform/training/checkpoint.py` | Real, async save. | Single-rank shards. |
+| Spike monitor + rewind | `frontier_platform/training/stability.py` | Real rolling-stat detector, rewind via checkpoint mgr. | — |
 
 ### 1.3 Post-training — algorithmically right, productionally thin
 
 | Subsystem | File | What's real | What's still toy |
 |---|---|---|---|
-| SFT (assistant-token loss mask) | `platform/alignment/sft.py` | Real loss-masked SFT. | — |
-| Reward model (Bradley-Terry) | `platform/alignment/reward_model.py` | Real BT loss + scalar head. | — |
-| DPO/IPO/KTO | `platform/alignment/dpo.py` | Real DPO sigmoid + variants. | — |
-| PPO (GAE, KL-to-ref, value head) | `platform/alignment/ppo.py` | Real PPO update. | Synchronous, in-process, single-GPU. |
-| GRPO learner | `platform/rl/grpo.py` | **Real per-token clipped surrogate, real k3 KL estimator, real DAPO-style decoupled `clip_higher`, real group-relative advantage, real correct treatment of behavior-vs-current logp ratio under async skew.** This is the cleanest part of the post-training stack. | Single-process, ~10 steps in tests. |
-| Verifiers (math/regex/code) | `platform/rl/verifiers.py` | Real sympy-based symbolic equivalence; `MathExactVerifier` tries boxed → numeric → symbolic → string; `CodeUnitTestVerifier` runs candidates against held-out tests. | Verifier *coverage* is math + regex + Python code. No formal proof checkers, no SQL/JSON validators in code, no browser/CAS/theorem verifiers. |
-| Sandbox | `platform/rl/sandbox.py` | **Real subprocess + POSIX `RLIMIT_CPU` / `RLIMIT_AS` / `RLIMIT_FSIZE` + wall-clock timeout + scrubbed env + `os.setsid()`.** Honestly documents itself as "not a complete jail". | No gVisor, no Firecracker, no nsjail, no network namespace. Read-only host FS is reachable. |
-| Async rollout | `platform/rl/async_rollout.py` | Real `asyncio` actor-learner over the in-process `TorchEngine`, with weight-version tracking + `RolloutBuffer` queue. The interface is the same one a vLLM/SGLang actor would implement. | The backing Engine is the in-process Torch one (the `vllm` branch in `serving/engine.py:43-48` raises `NotImplementedError`). So this is "right shape, wrong scale". |
-| Reasoning SFT cold-start | `platform/rl/coldstart.py` | Real R1-style cold-start loop. | Toy scale. |
-| Reward shaping | `platform/rl/reward.py` | **Real `CompositeReward` with format reward + soft length penalty + repetition penalty + `answer_spam_guard` (anti-shotgun) + reward clipping + per-component `.breakdown()` for monitoring.** Better than most public OSS RLHF stacks. | — |
-| Agentic env | `platform/rl/agentic.py` | Real `ToolEnv` + `<\|tool_call\|>` JSON parsing + balanced-brace JSON extraction + terminal sparse reward + `Trajectory` accounting. | Built-in tools are `calculator` and `lookup`. No browser, no shell, no real code-edit env, no SWE-bench harness. |
+| SFT (assistant-token loss mask) | `frontier_platform/alignment/sft.py` | Real loss-masked SFT. | — |
+| Reward model (Bradley-Terry) | `frontier_platform/alignment/reward_model.py` | Real BT loss + scalar head. | — |
+| DPO/IPO/KTO | `frontier_platform/alignment/dpo.py` | Real DPO sigmoid + variants. | — |
+| PPO (GAE, KL-to-ref, value head) | `frontier_platform/alignment/ppo.py` | Real PPO update. | Synchronous, in-process, single-GPU. |
+| GRPO learner | `frontier_platform/rl/grpo.py` | **Real per-token clipped surrogate, real k3 KL estimator, real DAPO-style decoupled `clip_higher`, real group-relative advantage, real correct treatment of behavior-vs-current logp ratio under async skew.** This is the cleanest part of the post-training stack. | Single-process, ~10 steps in tests. |
+| Verifiers (math/regex/code) | `frontier_platform/rl/verifiers.py` | Real sympy-based symbolic equivalence; `MathExactVerifier` tries boxed → numeric → symbolic → string; `CodeUnitTestVerifier` runs candidates against held-out tests. | Verifier *coverage* is math + regex + Python code. No formal proof checkers, no SQL/JSON validators in code, no browser/CAS/theorem verifiers. |
+| Sandbox | `frontier_platform/rl/sandbox.py` | **Real subprocess + POSIX `RLIMIT_CPU` / `RLIMIT_AS` / `RLIMIT_FSIZE` + wall-clock timeout + scrubbed env + `os.setsid()`.** Honestly documents itself as "not a complete jail". | No gVisor, no Firecracker, no nsjail, no network namespace. Read-only host FS is reachable. |
+| Async rollout | `frontier_platform/rl/async_rollout.py` | Real `asyncio` actor-learner over the in-process `TorchEngine`, with weight-version tracking + `RolloutBuffer` queue. The interface is the same one a vLLM/SGLang actor would implement. | The backing Engine is the in-process Torch one (the `vllm` branch in `serving/engine.py:43-48` raises `NotImplementedError`). So this is "right shape, wrong scale". |
+| Reasoning SFT cold-start | `frontier_platform/rl/coldstart.py` | Real R1-style cold-start loop. | Toy scale. |
+| Reward shaping | `frontier_platform/rl/reward.py` | **Real `CompositeReward` with format reward + soft length penalty + repetition penalty + `answer_spam_guard` (anti-shotgun) + reward clipping + per-component `.breakdown()` for monitoring.** Better than most public OSS RLHF stacks. | — |
+| Agentic env | `frontier_platform/rl/agentic.py` | Real `ToolEnv` + `<\|tool_call\|>` JSON parsing + balanced-brace JSON extraction + terminal sparse reward + `Trajectory` accounting. | Built-in tools are `calculator` and `lookup`. No browser, no shell, no real code-edit env, no SWE-bench harness. |
 
 ### 1.4 Data — pipeline is genuinely real; sources and synthetic are not
 
 | Subsystem | File | What's real | What's still toy |
 |---|---|---|---|
-| Acquire | `platform/data/acquire.py` | Real `LocalFilesSource`, real `JsonlSource`. | **`CommonCrawlSource`, `GitHubSource`, `ArxivSource`, `WikipediaSource` all raise `NotImplementedError`.** Web/code/papers/wiki ingestion is a stub. |
-| Extract | `platform/data/extract.py` | (Skeleton; the doc calls out `trafilatura`/`resiliparse`/`nougat`/AST extractors.) | — |
-| Filter (Gopher + classifier + tox) | `platform/data/filter.py` | **Real Gopher heuristics, real FineWeb-Edu-style composite score, real keyword-based toxicity scoring, real fasttext lazy-load hook.** | Quality classifier is heuristic, not a trained fastText model. Detoxify hook is detection-only (no model loaded). |
-| Dedup (exact / MinHash-LSH / suffix-array) | `platform/data/dedup.py` | **Real exact SHA-1 dedup, real MinHash-LSH (`MinHashDeduper`), real toy substring dedup.** Production-shaped API, single-process scale. | `substring_dedup` is O(N²) in chars (the docstring says use the Rust suffix-array impl for real scale). MinHash is single-process. |
-| Decontamination | `platform/data/decontaminate.py` | **Real 13-gram blake2b-hashed contamination detector with per-eval-set attribution and a reportable hit count.** Production-shaped, scales to ~10s of millions of n-grams in a `set[int]`. | Single-process set; production would use a Bloom filter / sharded index. |
-| **Synthetic** | `platform/data/synthetic.py` | **Nothing real.** **The entire file is a 16-line deterministic word-bag generator for tests.** | This is the biggest data gap in the repo. |
-| Loader / shard / mix | `platform/data/{loader,shard,mix}.py` | Real streaming, real sharded layout, real mix weighting. | — |
+| Acquire | `frontier_platform/data/acquire.py` | Real `LocalFilesSource`, real `JsonlSource`. | **`CommonCrawlSource`, `GitHubSource`, `ArxivSource`, `WikipediaSource` all raise `NotImplementedError`.** Web/code/papers/wiki ingestion is a stub. |
+| Extract | `frontier_platform/data/extract.py` | (Skeleton; the doc calls out `trafilatura`/`resiliparse`/`nougat`/AST extractors.) | — |
+| Filter (Gopher + classifier + tox) | `frontier_platform/data/filter.py` | **Real Gopher heuristics, real FineWeb-Edu-style composite score, real keyword-based toxicity scoring, real fasttext lazy-load hook.** | Quality classifier is heuristic, not a trained fastText model. Detoxify hook is detection-only (no model loaded). |
+| Dedup (exact / MinHash-LSH / suffix-array) | `frontier_platform/data/dedup.py` | **Real exact SHA-1 dedup, real MinHash-LSH (`MinHashDeduper`), real toy substring dedup.** Production-shaped API, single-process scale. | `substring_dedup` is O(N²) in chars (the docstring says use the Rust suffix-array impl for real scale). MinHash is single-process. |
+| Decontamination | `frontier_platform/data/decontaminate.py` | **Real 13-gram blake2b-hashed contamination detector with per-eval-set attribution and a reportable hit count.** Production-shaped, scales to ~10s of millions of n-grams in a `set[int]`. | Single-process set; production would use a Bloom filter / sharded index. |
+| **Synthetic** | `frontier_platform/data/synthetic.py` | **Nothing real.** **The entire file is a 16-line deterministic word-bag generator for tests.** | This is the biggest data gap in the repo. |
+| Loader / shard / mix | `frontier_platform/data/{loader,shard,mix}.py` | Real streaming, real sharded layout, real mix weighting. | — |
 
 ### 1.5 Eval — falls back to perplexity
 
 | Subsystem | File | What's real | What's still toy |
 |---|---|---|---|
-| Eval harness | `platform/eval/harness.py` | Lazy-loads `lm-evaluation-harness` if installed; otherwise falls back to numpy cross-entropy / perplexity. Real contamination report via §1.4 decontamination. | The "fast" path is 5 zero-shot tasks (`FAST_TASKS`); the "full" path needs `lm_eval` installed (not a default dep). |
-| Arena ELO | `platform/eval/arena.py` | Real Bradley-Terry ELO from pairwise judgments. | — |
-| Contamination | `platform/eval/contamination.py` | Real, see §1.4. | — |
+| Eval harness | `frontier_platform/eval/harness.py` | Lazy-loads `lm-evaluation-harness` if installed; otherwise falls back to numpy cross-entropy / perplexity. Real contamination report via §1.4 decontamination. | The "fast" path is 5 zero-shot tasks (`FAST_TASKS`); the "full" path needs `lm_eval` installed (not a default dep). |
+| Arena ELO | `frontier_platform/eval/arena.py` | Real Bradley-Terry ELO from pairwise judgments. | — |
+| Contamination | `frontier_platform/eval/contamination.py` | Real, see §1.4. | — |
 
 ### 1.6 Safety — RSP shape is right, content is heuristics
 
 | Subsystem | File | What's real | What's still toy |
 |---|---|---|---|
-| Pre-deployment gate | `platform/safety/gates.py` | **Real `preflight(card, thresholds)` that reads a JSON red-team report and returns PASS/BLOCK with per-category failed list. This is the right RSP gate shape.** | Reads a report; doesn't run the eval itself. |
-| Classifiers (input/output sandwich) | `platform/safety/classifiers.py` | Shape is right (input + output `_score` with max). | **Implementation is `tokens-in-bad-word-list / token-count * 10`.** No Llama-Guard, no trained model. |
-| Red-team harness | `platform/safety/redteam.py` | Shape is right (suite → probes → refusal-detect → rate). | **5 hardcoded prompts across 5 named suites, refusal detected by a regex of "I can't / sorry but / unable to".** No HarmBench, no AdvBench, no AnyMisuse, no METR runtime, no Cybench, no multi-turn. |
+| Pre-deployment gate | `frontier_platform/safety/gates.py` | **Real `preflight(card, thresholds)` that reads a JSON red-team report and returns PASS/BLOCK with per-category failed list. This is the right RSP gate shape.** | Reads a report; doesn't run the eval itself. |
+| Classifiers (input/output sandwich) | `frontier_platform/safety/classifiers.py` | Shape is right (input + output `_score` with max). | **Implementation is `tokens-in-bad-word-list / token-count * 10`.** No Llama-Guard, no trained model. |
+| Red-team harness | `frontier_platform/safety/redteam.py` | Shape is right (suite → probes → refusal-detect → rate). | **5 hardcoded prompts across 5 named suites, refusal detected by a regex of "I can't / sorry but / unable to".** No HarmBench, no AdvBench, no AnyMisuse, no METR runtime, no Cybench, no multi-turn. |
 
 ### 1.7 Serving — single-process TorchEngine + KV cache + simulator
 
 | Subsystem | File | What's real | What's still toy |
 |---|---|---|---|
-| Engine API | `platform/serving/engine.py` | Real `Engine` dispatch with `torch` backend wired. | **vLLM branch raises `NotImplementedError` (line 48). TRT-LLM, SGLang likewise.** |
-| TorchEngine | `platform/serving/torch_engine.py` | **Real prefill + incremental decode using `Transformer.forward_with_cache`. Real temperature / top-p / logprob return (matches what vLLM/SGLang return). The actor's importance ratios in GRPO are correct against these logprobs.** | Single process, no continuous batching, no paged KV, no prefix cache across requests. |
-| Router | `platform/serving/router.py` | Real tier selector with TTFT budget + cost-min tiebreaker. | — |
+| Engine API | `frontier_platform/serving/engine.py` | Real `Engine` dispatch with `torch` backend wired. | **vLLM branch raises `NotImplementedError` (line 48). TRT-LLM, SGLang likewise.** |
+| TorchEngine | `frontier_platform/serving/torch_engine.py` | **Real prefill + incremental decode using `Transformer.forward_with_cache`. Real temperature / top-p / logprob return (matches what vLLM/SGLang return). The actor's importance ratios in GRPO are correct against these logprobs.** | Single process, no continuous batching, no paged KV, no prefix cache across requests. |
+| Router | `frontier_platform/serving/router.py` | Real tier selector with TTFT budget + cost-min tiebreaker. | — |
 
 ### 1.8 Simulator — by far the most mature subsystem
 
 | Subsystem | File | What's real |
 |---|---|---|
-| Orchestrator | `platform/sim/orchestrator.py` | Real end-to-end glue: data → tokenizer → pretrain → align → reasoning_rl → agentic_rl → eval → safety → serving, with measured-TFLOPs calibration hook. |
-| Pretrain pricing | `platform/sim/pretrain_sim.py` | Real chinchilla-loss steps + MFU + active-param FLOPs + precision speedup + node-failure sampling + downtime accounting. |
-| Reasoning-RL pricing | `platform/sim/reasoning_rl_sim.py` | Real rollout-FLOPs + update-FLOPs + verifier-CPU + cold-start label $. The *reasoning_quality* lift feeds the eval predictors (this is the unique part). |
-| Agentic-RL pricing | `platform/sim/agentic_rl_sim.py` | Real turn × tokens × tool-CPU pricing + saturating-lift model that depends on base + reasoning capability. |
-| Serving pricing | `platform/sim/serving_sim.py` | Real MLA KV-throughput multiplier + truncated-geometric speculative-decode multiplier (matches the nanogpt-edu MTP benchmark). |
-| Eval predictors (2024 + 2026) | `platform/sim/scaling.py` | Closed-form sigmoid predictors for MMLU/HumanEval/GSM8K/SWE-bench/ARC-AGI-2/HLE/MMMU, with post-training and modality lifts. Calibrated to public 2025 reports. |
+| Orchestrator | `frontier_platform/sim/orchestrator.py` | Real end-to-end glue: data → tokenizer → pretrain → align → reasoning_rl → agentic_rl → eval → safety → serving, with measured-TFLOPs calibration hook. |
+| Pretrain pricing | `frontier_platform/sim/pretrain_sim.py` | Real chinchilla-loss steps + MFU + active-param FLOPs + precision speedup + node-failure sampling + downtime accounting. |
+| Reasoning-RL pricing | `frontier_platform/sim/reasoning_rl_sim.py` | Real rollout-FLOPs + update-FLOPs + verifier-CPU + cold-start label $. The *reasoning_quality* lift feeds the eval predictors (this is the unique part). |
+| Agentic-RL pricing | `frontier_platform/sim/agentic_rl_sim.py` | Real turn × tokens × tool-CPU pricing + saturating-lift model that depends on base + reasoning capability. |
+| Serving pricing | `frontier_platform/sim/serving_sim.py` | Real MLA KV-throughput multiplier + truncated-geometric speculative-decode multiplier (matches the nanogpt-edu MTP benchmark). |
+| Eval predictors (2024 + 2026) | `frontier_platform/sim/scaling.py` | Closed-form sigmoid predictors for MMLU/HumanEval/GSM8K/SWE-bench/ARC-AGI-2/HLE/MMMU, with post-training and modality lifts. Calibrated to public 2025 reports. |
 
 **Bottom line of §1:** the **shapes** are right almost everywhere, the
 **MoE/MLA/MTP/Muon/QK-norm/precision/GRPO/sandbox/rollout/agentic** code is
@@ -231,7 +231,7 @@ Numbering follows the in-repo `docs/14` so cross-references stay easy. Severity:
 ### 2.1 Real distributed runtime ($/O) — 🟥 the hidden show-stopper
 
 The blueprint's design (`docs/05`) describes the right composition (DP × FSDP ×
-TP × PP × SP × EP × CP), but `platform/training/parallel.py:39-42` explicitly:
+TP × PP × SP × EP × CP), but `frontier_platform/training/parallel.py:39-42` explicitly:
 
 ```python
 if cfg.tp > 1 or cfg.pp > 1:
@@ -240,7 +240,7 @@ if cfg.tp > 1 or cfg.pp > 1:
     )
 ```
 
-And the MoE forward (`platform/model/transformer.py:314`) is:
+And the MoE forward (`frontier_platform/model/transformer.py:314`) is:
 
 ```python
 for e in range(self.n_experts):
@@ -250,7 +250,7 @@ for e in range(self.n_experts):
 
 This is fine for tests with 8-128 experts on one device. It will not run the
 1T MoE the simulator prices on a 32k-GPU cluster. The closest thing in the
-repo is `platform/sim/real_train.py` (a calibration probe), which is
+repo is `frontier_platform/sim/real_train.py` (a calibration probe), which is
 explicitly a *single-device* TFLOP/s measurement.
 
 **What this looks like as work.** Pick a backend — Megatron-Core, NeMo,
@@ -293,7 +293,7 @@ verifier classes), the GRPO learner code does not change.
 
 ### 2.3 Synthetic + reasoning-trace + agentic-trajectory data factory (D/R) — 🟥 biggest single gap
 
-`platform/data/synthetic.py` is **16 lines of word-bag generator for tests.**
+`frontier_platform/data/synthetic.py` is **16 lines of word-bag generator for tests.**
 This is the largest single gap in the repo. The classical data pipeline
 (`acquire`, `extract`, `filter`, `dedup`, `decontaminate`, `mix`, `shard`,
 `loader`) is real and good (§1.4). The thing that has actually changed about
@@ -303,7 +303,7 @@ reasoning traces, agentic trajectories.
 
 **Minimum factory shape** (no equivalent in repo today):
 
-- `platform/data/synthetic/`:
+- `frontier_platform/data/synthetic/`:
   - teacher orchestration (calls one or many models),
   - generation policies (rephrasing, textbook, story-grounding, reasoning),
   - rejection sampling against verifiers (re-uses `rl/verifiers.py`),
@@ -330,7 +330,7 @@ problems. They require people, not just GPU-hours.
 
 ### 2.4 Native multimodality vs. adapter multimodality ($/R/D) — 🟥
 
-`platform/model/vision.py` is honestly described in `docs/16` as **MM-1**: a
+`frontier_platform/model/vision.py` is honestly described in `docs/16` as **MM-1**: a
 LLaVA-style adapter (ViT/SigLIP → projector → image-tokens-prepended). That
 is a defensible *baseline*; it is not what a Gemini- or GPT-5-class flagship
 does. The current implementation is also missing:
@@ -338,7 +338,7 @@ does. The current implementation is also missing:
 - The tokenizer contract for image patches / VQ codes (the bytes tokenizer
   is text-only; the special token vocabulary doesn't reserve image
   placeholders beyond `<|image|>`/`<|image_end|>` as conventions).
-- An interleaved image-text data pipeline (no `platform/data/multimodal.py`).
+- An interleaved image-text data pipeline (no `frontier_platform/data/multimodal.py`).
 - Audio / video / document / chart / OCR encoders and pipelines.
 - A multimodal eval suite that runs on real datasets (MMMU/MathVista/
   ChartQA/DocVQA/RealWorldQA/video QA). The simulator predicts MMMU above
@@ -351,13 +351,13 @@ for a research demo; native multimodality is what the flagships ship.
 
 ### 2.5 Agentic capability is a 2-tool toy env (R/D) — 🟧
 
-`platform/rl/agentic.py` is well-shaped: terminal sparse reward,
+`frontier_platform/rl/agentic.py` is well-shaped: terminal sparse reward,
 tool-call/tool-result JSON, balanced-brace JSON extraction, agent↔env
 multi-turn loop, `Trajectory` accounting with `malformed` count. The two
 built-in tools are `calculator` and `lookup`. There is no real coding
 sandbox env, no browser env, no shell, no file-editing env, no SWE-bench
 harness, no long-horizon planning env. The agentic-RL simulator
-(`platform/sim/agentic_rl_sim.py`) prices the cost shape correctly
+(`frontier_platform/sim/agentic_rl_sim.py`) prices the cost shape correctly
 (turns × tokens × tool-CPU) and computes an `agentic_quality` lift, but
 again — that lift drives a *closed-form predictor*, not a real SWE-bench
 run.
@@ -390,22 +390,22 @@ open:
 
 ### 2.8 FP8/NVFP4 numerics ($) — 🟧
 
-`platform/training/precision.py` is the model citizen here: a single
+`frontier_platform/training/precision.py` is the model citizen here: a single
 `PrecisionPolicy` resolves `fp8` to `transformer_engine`'s `fp8_autocast`
 under `te.fp8_autocast` when TE is installed, falls back to bf16 / fp32
 otherwise, and the trainer wraps every forward in `self.precision.autocast()`
-(`platform/training/parallel.py:60-66`). The fallback is exercised; the FP8
+(`frontier_platform/training/parallel.py:60-66`). The fallback is exercised; the FP8
 path needs Transformer Engine on Hopper/Blackwell — at which point you also
 need the per-tile/per-block scaling, accumulation policy, loss-scaling,
 checkpoint conversion, communication-precision policy, and the regression
 tests that DeepSeek-V3 wrote a whole report about. The simulator already
 prices FP8 / NVFP4 throughput (`precision_speedup()` in
-`platform/sim/scaling.py`); the *numerics* are interface-ready, not
+`frontier_platform/sim/scaling.py`); the *numerics* are interface-ready, not
 validated.
 
 ### 2.9 Optimizer & training tricks ($/R) — ✅ ported
 
-`platform/training/muon.py` is a real port of the modded-nanogpt Muon
+`frontier_platform/training/muon.py` is a real port of the modded-nanogpt Muon
 optimizer with the right param-partitioning rules (`split_muon_params`
 excludes embeddings, lm_head, MTP heads, and MoE gates). MTP is in the
 model and gated to train-only. QK-norm is in `GQAttention`. The
@@ -413,28 +413,28 @@ model and gated to train-only. QK-norm is in `GQAttention`. The
 
 ### 2.10 Real eval harness vs. simulated predictors (D/O) — 🟧
 
-`platform/eval/harness.py` will hand the suite to `lm-evaluation-harness`
+`frontier_platform/eval/harness.py` will hand the suite to `lm-evaluation-harness`
 **if installed**; if not, it falls back to 5 zero-shot tasks
 (HellaSwag/ARC-Easy/PIQA/BoolQ/OpenBookQA) for the fast path and
 perplexity for the full path. The 2026 frontier suite (SWE-bench Verified,
 ARC-AGI-2, HLE, MMMU) is **only in the simulator**, where each is a
 closed-form sigmoid predictor with `reasoning_quality` / `agentic_quality`
-/ `multimodal` modifiers (see `platform/sim/scaling.py:124-180`). A real
+/ `multimodal` modifiers (see `frontier_platform/sim/scaling.py:124-180`). A real
 frontier program needs these wired into the actual harness as gating
 checkpoint evals.
 
 ### 2.11 Safety harness vs. RSP discipline (O/D) — 🟧
 
-The *gate* (`platform/safety/gates.py`) is the right shape: a `preflight`
+The *gate* (`frontier_platform/safety/gates.py`) is the right shape: a `preflight`
 function reads a model card + red-team report, compares per-category scores
 to per-category thresholds, and returns PASS/BLOCK. This is the RSP
 discipline that distinguishes a real frontier program from a research
 project. But the *content* is:
 
-- 5 hardcoded prompts in 5 named suites (`platform/safety/redteam.py:25-39`).
+- 5 hardcoded prompts in 5 named suites (`frontier_platform/safety/redteam.py:25-39`).
 - Refusal detection by regex.
 - Input/output classifier as a `bad-word-token-count / total-tokens * 10`
-  heuristic (`platform/safety/classifiers.py:13-24`).
+  heuristic (`frontier_platform/safety/classifiers.py:13-24`).
 
 For a frontier deployment that gate needs HarmBench / AdvBench / Cybench /
 WMDP / METR-agent / multimodal-jailbreak / chain-of-thought-monitor /
@@ -465,7 +465,7 @@ the blueprint are genuinely strong and would not be the bottleneck.
   with real incremental KV, MTP, Muon, QK-norm, RoPE-extension hooks — all
   named and implemented at toy-functional scale. A new team would not have
   to argue about whether to use these.
-- **Algorithmic correctness of GRPO.** `platform/rl/grpo.py` is cleaner than
+- **Algorithmic correctness of GRPO.** `frontier_platform/rl/grpo.py` is cleaner than
   many public OSS RLHF stacks: per-token importance ratio against the
   *behavior* policy (correct under async actor-learner skew), k3 KL
   estimator (always ≥0), decoupled clip ranges (DAPO-style), broadcast
@@ -488,7 +488,7 @@ the blueprint are genuinely strong and would not be the bottleneck.
   filling in.
 - **Observability + reliability math.** `docs/11` does the MTBF math
   correctly (1 GPU failure / 21h on 4096 GPUs at 10y MTBF); the simulator
-  enforces it (`platform/sim/cluster.py:55-65`).
+  enforces it (`frontier_platform/sim/cluster.py:55-65`).
 - **Numerical/precision separation.** `PrecisionPolicy` is a clean
   abstraction that makes the FP8 swap a one-liner when the hardware arrives.
 
@@ -503,7 +503,7 @@ unlock others.
 
 1. Pick a distributed backend (Megatron-Core is the lowest-risk choice for
    MoE at scale; NeMo / DeepSpeed / Megatron-LM are alternatives). Replace
-   `platform/training/parallel.py` with a real wrapper.
+   `frontier_platform/training/parallel.py` with a real wrapper.
 2. Real expert-parallel MoE dispatch (Megatron-MoE / DeepSpeed-MoE / Tutel
    / NVIDIA-NeMo MoE). Reshardable expert checkpoints.
 3. Real FP8 numerics validation on Hopper/Blackwell with Transformer
@@ -522,7 +522,7 @@ unlock others.
 1. Real source connectors: replace `acquire.py` `NotImplementedError`s
    with `warcio` over S3 (CommonCrawl), GHArchive (GitHub), arxiv OAI-PMH,
    wikiextractor. Multilingual via mC4/CulturaX.
-2. Replace `platform/data/synthetic.py` (the 16-line word generator) with
+2. Replace `frontier_platform/data/synthetic.py` (the 16-line word generator) with
    a real synthetic-data factory: teacher orchestration, rejection
    sampling, verifier filtering, contamination integration, diversity
    tracking, lineage, licensing.
@@ -556,7 +556,7 @@ unlock others.
 
 1. Reasoning SFT cold-start at scale (R1-style).
 2. RLVR/GRPO at frontier scale: many actors, learner, verifier fleet, KL
-   monitor, length monitor, reward-component logging. The `platform/rl/`
+   monitor, length monitor, reward-component logging. The `frontier_platform/rl/`
    code is the right starting point; the rollout backend is vLLM/SGLang
    (Phase 0).
 3. Agentic RL: real sandboxed coding env, real browser env, real shell

@@ -1,6 +1,17 @@
 # coder-finetune
 
-Fine-tune open-weights code models on a single consumer GPU. Tiers:
+Fine-tune code models on reviewed, versioned data. Start with the
+[current repair profile](examples/repair_profile.md) and
+[project-local installation/test contract](../docs/testing-and-reproducibility.md).
+The tested HF profile requires explicit revisions, supervision and validation;
+code evaluation is default-deny without an explicitly provisioned isolated executor.
+
+The hardware/timing table below records earlier configurations and measurements.
+The migrated SDPA recipes disable packing and optional fused kernels; historical
+speed/VRAM figures are not measurements of the repaired profile. No pretrained
+Qwen model was fine-tuned or benchmarked during this repair.
+
+Historical tiers and sizing context:
 
 | Config                  | Base                     | Method | VRAM peak | Wall-clock         |
 |-------------------------|--------------------------|--------|----------:|-------------------:|
@@ -18,47 +29,43 @@ Uses HuggingFace `transformers` + `peft` + `trl`; no custom training loop.
 
 ## Three training tracks — the post-training ladder
 
-`SFT  →  DPO/ORPO  →  GRPO/RLVR` — cheapest and most stable first.
+`SFT  →  DPO  →  GRPO/RLVR` — cheapest and most stable first.
 
 1. **SFT (`train.py`)** — supervised fine-tune on demonstrations (full / LoRA /
    QLoRA via TRL `SFTTrainer`). Teaches format and style.
-2. **DPO/ORPO (`cf_pref/dpo_train.py`)** — *offline preference optimization*.
-   Takes a fixed dataset of `(prompt, chosen, rejected)` pairs and raises the
-   policy's log-prob margin of `chosen` over `rejected` — no reward model, no
-   sampling, no code execution. **DPO** (Rafailov et al.) measures the margin
-   against a frozen reference; with a LoRA adapter the reference is just the base
-   model with adapters disabled, so no second model copy is loaded. **ORPO**
-   (Hong et al.) folds the same signal into SFT with an odds-ratio penalty and is
-   reference-free. **SimPO** (`pref.objective: simpo`) is a third, reference-free
-   pairwise objective routed through TRL's `DPOTrainer` (`loss_type: simpo`) — no
-   reference model to sync. **KTO** consumes *unary* desirable/undesirable labels
-   instead of pairs; its reference loss lives in `cf_pref/objectives.py` and a
-   binary data adapter in `cf_pref/binary.py` derives a tiny KTO set from the
-   built-in pairs. This is the cheap, stable rung you run *before* online RL.
+2. **DPO (`cf_pref/dpo_train.py`)** — offline preference optimization on
+   `(prompt, chosen, rejected)` pairs, without code execution. The tested adapter
+   supports sigmoid DPO. Full fine-tuning uses a frozen copy of the supplied
+   model, not an implicit reload of a possibly different base; PEFT uses its
+   adapter-disabled base without a second full copy. ORPO and SimPO are rejected
+   by this trainer profile rather than mapped to nonexistent TRL loss modes.
+   Their standalone mathematical helpers, and the unary KTO reference helpers,
+   remain educational experiments—not validated trainer integrations.
 3. **RLVR / GRPO (`cf_rl/grpo_train.py`)** — *RL against a verifiable reward*:
    sample G completions per prompt, **run each against hidden unit tests**,
    standardize the rewards within the group, take a clipped policy step (GRPO —
-   DeepSeek-R1 / DeepSeekMath). The reward is deterministic (a verifier), so it
-   can't be gamed the way a learned reward model can. Reuses the same LoRA/QLoRA
-   plumbing as `train.py` and the HumanEval subprocess sandbox as the verifier.
+   DeepSeek-R1 / DeepSeekMath). Verifier rewards can still be gamed. Isolation,
+   task validity, and reward integrity need independent tests. Code rewards use
+   an explicitly provisioned local Docker executor; unavailable execution aborts
+   rather than becoming a fabricated zero reward.
 
 ```bash
 # SFT first (optional), then DPO, then GRPO on top:
 .venv/bin/python -m cf_pref.dpo_train --config configs/dpo_3050.yaml
 .venv/bin/python -m cf_rl.grpo_train  --config configs/grpo_3050.yaml
-.venv/bin/python eval/run_humaneval.py --model out/grpo_3050/final
+.venv/bin/python eval/run_humaneval.py --model out/grpo_3050/final --python-image "${PYTHON_IMAGE:?Set a reviewed local immutable image ID}" --problems examples/python_eval_smoke.json --benchmark local-python
 ```
 
 The DPO preference set carries two candidate answers per prompt instead of one
 gold answer (`cf_pref/pairs.py`: a dependency-free `builtin` set that pairs each
 task's correct solution against a realistic near-miss bug, or any HF preference
 set in `{prompt, chosen, rejected}` form). The built-in `chosen`/`rejected`
-labels are cross-checked against the RLVR unit-test verifier in the test suite,
-so the preference signal is provably correct.
+labels are host-authored educational fixtures. Test coverage does not prove
+that arbitrary preference labels, generated programs, or reward tasks are correct.
 
-> **TRL note:** TRL 1.x removed the standalone `ORPOTrainer`. `pref.objective:
-> dpo` works on every supported TRL; `orpo` raises a clear, actionable error if
-> your TRL doesn't ship it (pin `trl<0.12` for ORPO).
+> **Compatibility:** the tested profile supports sigmoid DPO. ORPO/SimPO trainer
+> integrations require a separately implemented and validated profile. Do not
+> downgrade TRL underneath the current stack or silently discard objective fields.
 
 The GRPO prompt set carries unit tests instead of gold answers
 (`cf_rl/prompts.py`: a dependency-free `builtin` set, or real `mbpp` tasks).
@@ -75,55 +82,47 @@ via `grpo.epsilon_high`. **GRPO executes model-generated code every step — tha
 
 ## Sandbox & safety
 
-The HumanEval eval and the GRPO reward both `exec()` model-generated code
-locally — the eval to score it, GRPO *every step* because the verifier is the
-reward. The README has always said "not a security boundary, run untrusted
-models in Docker"; the in-process executor (`eval/run_humaneval.py`) is a
-**safety floor**, not a jail. Concretely, each program runs in its own
-subprocess with (POSIX, best-effort):
+Model-generated Python is default-deny without an explicit
+`DockerPythonExecutor`. The evaluator and code-reward entrypoints preflight a
+reviewed **local immutable image ID** and local daemon before loading models or
+data. No image is pulled, and there is no fallback to host `fork`, `spawn`, or
+`exec`. The old `mp_mode`/`start_method` switches are not supported.
 
-| Bound | Default | What it stops |
-|-------|---------|---------------|
-| `RLIMIT_FSIZE` | `0` | writing files to disk |
-| `RLIMIT_NOFILE` | `64` | exhausting file descriptors |
-| `RLIMIT_CPU` | `2× timeout` | CPU-pegging busy loops (backstop under the wall-clock kill) |
-| `RLIMIT_AS` | `1 GiB` *(spawn only)* | runaway memory allocation |
-| wall-clock `timeout` | `5 s` | hangs / infinite loops (the primary kill) |
-| stdout/stderr | silenced | a chatty `print()` flooding the trainer log |
+The executor requests non-root execution, a read-only root filesystem, no network,
+no added capabilities, no-new-privileges, bounded memory/CPU/PIDs/source/output,
+a whole-job deadline and cleanup. It mounts only the temporary job inputs, not
+the repository, home directory or Docker socket. Results distinguish assessed
+success/failure from unavailable or failed infrastructure; unassessed work must
+not be scored as an ordinary zero reward. `run_one` returns a typed result, not
+the old Boolean/message tuple.
 
-What it does **not** do: it is not a syscall jail, not a network sandbox, and
-not a container. For *untrusted* models, two escalations:
-
-- **`mp_mode='spawn'`** (`run_one(..., mp_mode='spawn')`) — a fresh interpreter
-  that doesn't inherit the parent's heap / fds / imported modules. ~100 ms vs
-  ~10 ms per call; the default stays `fork` for speed since the rlimit floor
-  applies in both modes. Spawn also gets the `RLIMIT_AS` memory ceiling (a fork
-  child inherits the parent's multi-GiB address space, so bounding it would
-  SIGKILL before `exec()` even runs).
-- **Docker / gVisor / Firecracker** — the real boundary. Wrap the whole eval /
-  trainer for anything you didn't train yourself.
-
-Kill causes are surfaced in the result message (`"timeout"`,
-`"killed-SIGKILL"`, `"killed-SIGXFSZ"`, …) so a debugging run can tell an
-rlimit kill from a wall-clock timeout from an ordinary test failure.
+These are implementation and negative-test contracts, **not a security
+certification**. Docker access and a trusted local image were unavailable during
+this repair, so live containment tests remain explicit opt-in skips. Validate
+filesystem/network denial, descendants, output caps, cleanup and test tampering
+on the deployment backend before using untrusted outputs. Stronger VM/syscall
+isolation may be appropriate. The separate Lean adapter also remains externally
+gated. See [the repair profile](examples/repair_profile.md) for safe commands,
+local fixtures and the required operator prerequisites.
 
 
 ## Speed & quality knobs (opt-in, config-driven)
 
-Recent SOTA add-ons that plug into the existing TRL/PEFT stack. All default
-**off** for clean A/B comparisons; the `lora_5060ti.yaml` recipe turns them on.
+Optional PEFT and noise settings remain explicit. Kernel and serving backends
+need their own version, numerical and hardware validation; speedups are not
+additive or guaranteed. The repaired SDPA baseline disables packing and Liger.
 
-| Knob | Where | Effect | Cost |
-|------|-------|--------|------|
-| **Liger Kernel** | `train.use_liger_kernel: true` | Fused Triton RMSNorm/RoPE/SwiGLU + FusedLinearCrossEntropy. ~20% faster, up to ~60% less memory. The fused linear-CE is a big deal over Qwen's ~150K vocab (never materializes full logits). *Exact*, not approximate. | needs `pip install liger-kernel` + Triton GPU |
-| **DoRA** | `lora.use_dora: true` | Weight-decomposed LoRA — better quality at low rank (our r=16). | ~10–20% slower step |
-| **rsLoRA** | `lora.use_rslora: true` | `alpha/sqrt(r)` scaling so higher ranks actually help. | free |
-| **NEFTune** | `train.neftune_noise_alpha: 5` | Embedding-noise regularizer; better instruction-following. | free, train-only |
-| **Unsloth** | `model.use_unsloth: true` | ~2× faster / ~70% less memory fast-path via custom kernels. Replaces the loader; great for the 7B QLoRA recipe. | heavier dep; `pip install unsloth` |
-| **vLLM rollouts (GRPO)** | `grpo.use_vllm: true` | Delegates GRPO's rollout generation to vLLM (paged attention + continuous batching). ~3–8× faster rollouts — the single biggest GRPO speedup, since the step is generation-heavy (G samples/prompt). | needs `pip install vllm`; one-time engine warm-up |
+| Knob | Where | Current contract | Validation needed |
+|------|-------|------------------|-------------------|
+| **Liger Kernel** | `train.use_liger_kernel` | Optional fused-loss/kernel path; off in repaired recipes | Loss/gradient parity and workload memory/throughput |
+| **DoRA** | `lora.use_dora` | Alternate adapter parameterization | Held-out quality, regressions and step cost |
+| **rsLoRA** | `lora.use_rslora` | Rank-scaled adapters; no automatic quality guarantee | Matched-rank/budget comparison |
+| **NEFTune** | `train.neftune_noise_alpha` | Training-time embedding noise | Held-out and retention checks |
+| **Unsloth** | `model.use_unsloth` | Rejected by the tested loader profile | Separately reviewed loader/profile |
+| **vLLM rollouts** | `grpo.use_vllm` | Optional backend, not live-validated here | Version, behavior-probability, cancellation and throughput evidence |
 
 ```bash
-# 5060 Ti recipe now ships with Liger + DoRA + rsLoRA + NEFTune enabled:
+# Repaired recipe: packing/Liger off; other PEFT/noise settings remain explicit:
 CUDA_VISIBLE_DEVICES=0 .venv/bin/python train.py --config configs/lora_5060ti.yaml
 ```
 
@@ -164,11 +163,11 @@ CUDA_VISIBLE_DEVICES=0 .venv/bin/python train.py --config configs/lora_hicap.yam
 coder-finetune/
 ├── configs/        # YAML per recipe (SFT + dpo_3050.yaml + grpo_3050.yaml)
 ├── cf_data/        # SFT dataset loaders (HF datasets + your own repo + synthetic)
-├── cf_pref/        # DPO/ORPO/SimPO pairs + KTO objectives/binary adapter + dpo_train.py
+├── cf_pref/        # DPO/SimPO pairs + KTO objectives/binary adapter + dpo_train.py
 ├── cf_rl/          # RLVR/GRPO: verifiable reward + prompt sets + grpo_train.py
 ├── cf_dist.py      # read-only view of the DDP topology (WORLD_SIZE/RANK), launcher-set
 ├── train.py        # SFT / LoRA / QLoRA via TRL SFTTrainer
-├── eval/           # HumanEval+ runner with Docker sandbox (also the RL verifier)
+├── eval/           # HumanEval subprocess verifier; separate jailed Lean adapter and offline comparison
 ├── infer/          # merge LoRA, export for vLLM
 └── tests/          # 106 tests — bug regressions, sandbox, DPO/SimPO/KTO/GRPO + DDP-env/launcher + LoRA-Without-Regret pins
 ```
@@ -177,13 +176,13 @@ coder-finetune/
 
 ```bash
 python -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -c constraints-ci.txt -r requirements.txt
 
 # 1. Tiny full-finetune of 0.5B on a small built-in dataset
 .venv/bin/python train.py --config configs/tiny.yaml
 
 # 2. Eval HumanEval+ pass@1
-.venv/bin/python eval/run_humaneval.py --model out/tiny --n-samples 1
+.venv/bin/python eval/run_humaneval.py --model out/tiny --n-samples 1 --python-image "${PYTHON_IMAGE:?Set a reviewed local immutable image ID}" --problems examples/python_eval_smoke.json --benchmark local-python
 
 # 2b. Reproducible pass@5, saving every completion + a machine-readable summary
 .venv/bin/python eval/run_humaneval.py --model out/tiny \
@@ -266,7 +265,8 @@ topology `accelerate`/`torchrun` publish (it never calls `init_process_group`):
   the model, shard the batch — see [Multi-GPU](#multi-gpu-single-node-ddp)), but
   each GPU still holds a full model replica. To shard one model across GPUs
   (FSDP/TP/PP) or train 70B+, use `distgpt` / `frontier-platform`.
-- Not safe to run untrusted generated code outside the provided Docker sandbox.
+- Not safe to run untrusted generated Python without an operator-provided
+  container or stronger sandbox. The new Docker adapter is for Lean only.
 
 ## Recent changes (Tier 8)
 
@@ -339,7 +339,43 @@ Two dependency-free evaluator modules implement the July–August harvest:
 - `eval/structured_proof.py` validates theorem/certificate/citation JSON, checks
   that the certificate targets the requested theorem, and delegates checking to
   an injected external verifier. Formal validity and novelty review are separate
-  release conditions; a real Lean process belongs in the existing jail.
+  release conditions. The optional `DockerLeanChecker` now supplies a dedicated
+  fail-closed Lean jail; the existing HumanEval subprocess runner is not a jail.
+
+### October–November: bounded offline harvest
+
+See [the runnable guide and measured results](examples/oct_nov_harvest.md) for
+commands, trust boundaries, accepted proof syntax, and artifact definitions.
+No dependencies were added and neither path downloads models or images.
+
+- **Lean adapter:** `eval/lean_jail.py`, exposed by
+  `python -m eval.structured_proof`, requires a trusted local immutable image ID.
+  It uses a closed four-certificate language, a host-owned theorem/premise
+  wrapper, resource-bounded Docker execution, and hashed evidence. It never
+  pulls an image or falls back to host Lean. Real Lean integration is currently
+  **unverified** here because Docker daemon access is denied and no local Lean
+  image was supplied; the optional integration test skips without one.
+- **Specialization smoke:** `eval/specialization.py` compares the same tiny CPU
+  classifier baseline against full supervised training and rank-one readout
+  LoRA on disjoint train/held-out/regression tasks. All attempts and failures,
+  accuracy, calibration, costs, and local model checkpoints are recorded. This
+  is educational, **not an LFM3 or language-model benchmark**.
+
+From `coder-finetune/`, using an existing environment with PyTorch:
+
+```bash
+CUDA_VISIBLE_DEVICES='' HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  timeout 120 .venv/bin/python -m eval.specialization \
+  --config configs/specialization_smoke.json \
+  --output out/harvest-specialization-smoke
+
+CUDA_VISIBLE_DEVICES='' HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  .venv/bin/python -m pytest -q tests
+```
+
+The output directory must be new. The guide also shows reloading a saved local
+model and checking `examples/lean_submission.json` against
+`configs/lean_contract.json` using an operator-supplied local image.
 
 - **9.5 — the capstone: a real two-GPU NCCL run** ([`examples/5060ti_2gpu_ddp.md`](examples/5060ti_2gpu_ddp.md)).
   9.4 proves the *wiring* on gloo/CPU with CUDA hidden; this escalates it to

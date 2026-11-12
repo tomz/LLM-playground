@@ -77,7 +77,7 @@ train:
   micro_batch: 2
   grad_accum: 1
   log_every: 1
-  eval_every: 99
+  eval_every: 0  # smoke only; configure distinct val_dir before enabling evaluation
   ckpt_every: 99
   compile: false
   fp8: off

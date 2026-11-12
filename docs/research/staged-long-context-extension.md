@@ -4,7 +4,7 @@
 only; the recipe itself is *ideal*-tier (multi-node) · **Source:** MAI-Thinking-1
 deep dive, [§4 / Appendix B](./mai-thinking-1-deep-dive.md#4-long-context-extension-appendix-b--a-clean-reusable-recipe)
 ([src 37](../2026-06-sota-llm-agi.md#sources)); long-context eval machinery in
-[`platform/eval/long_context.py`](../../frontier-platform/platform/eval/long_context.py).
+[`platform/eval/long_context.py`](../../frontier-platform/frontier_platform/eval/long_context.py).
 
 > **What this note is.** The standalone engineering note the June SOTA edition
 > flagged as "still to write" — the cheap, concrete recipe to adopt *the moment a
@@ -97,7 +97,7 @@ The evaluation side of this recipe is **already in the repo** — the MAI Tier-2
 harvest landed the long-context eval adapters this note's quality claims are
 stated against:
 
-- [`eval/long_context.py`](../../frontier-platform/platform/eval/long_context.py)
+- [`eval/long_context.py`](../../frontier-platform/frontier_platform/eval/long_context.py)
   — **`CodeNLLAdapter`** (position-bucketed code NLL — the exact metric the
   "32K→256K matches 128K" claim is measured on), **`RetrievalNLLAdapter`**
   (needle-in-haystack by LM loss), **`LongContextQAAdapter`**
@@ -169,5 +169,5 @@ train past `block_size 1024`." Concretely, promote from note → build when:
 - June SOTA edition, [Tier 3 — "Staged long-context extension"](../2026-06-sota-llm-agi.md#tier-3--research-bets-track-dont-build-yet)
   and the `frontier-platform` roadmap row.
 - Long-context eval machinery already in-repo:
-  [`platform/eval/long_context.py`](../../frontier-platform/platform/eval/long_context.py)
+  [`platform/eval/long_context.py`](../../frontier-platform/frontier_platform/eval/long_context.py)
   (MAI Tier-2 harvest item #7).

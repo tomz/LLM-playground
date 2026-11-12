@@ -1,8 +1,8 @@
-torch>=2.4         # FSDP2 + DTensor + pipelining stable in 2.4+
-numpy
-pyyaml
-tqdm
-# optional
-# wandb
-# transformer-engine
-# flash-attn
+# Runtime bounds match pyproject.toml; use requirements-test.txt for CPU CI.
+# The current DCP/DTensor repair is tested against the Torch 2.12 API family.
+torch>=2.12,<2.13
+numpy>=1.26,<3
+PyYAML>=6,<7
+tqdm>=4.66,<5
+# Optional HF export: pip install -e '.[hf]'
+# CUDA precision kernels and multi-node recipes require separate validation.

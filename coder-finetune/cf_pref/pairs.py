@@ -121,10 +121,14 @@ def _normalize(ds, source_name: str):
     raise ValueError(f"don't know how to normalize columns {cols} from {source_name}")
 
 
-def load_hf(name: str, max_examples: int | None = None):
+def load_hf(name: str, max_examples: int | None = None, *, revision: str | None = None):
+    from cf_provenance import require_revision
+    revision = require_revision(revision, label="preference dataset")
+    if max_examples is not None and (type(max_examples) is not int or max_examples <= 0):
+        raise ValueError("max_examples must be a positive integer or null")
     from datasets import load_dataset
 
-    ds = load_dataset(name, split="train")
+    ds = load_dataset(name, split="train", revision=revision)
     if max_examples:
         ds = ds.select(range(min(max_examples, len(ds))))
     return _normalize(ds, name)
@@ -136,5 +140,5 @@ def load(cfg: dict):
     if src == "builtin":
         return load_builtin(repeat=cfg.get("repeat", 50), use_chat=use_chat)
     if src == "hf":
-        return load_hf(cfg["hf_name"], cfg.get("max_examples"))
+        return load_hf(cfg["hf_name"], cfg.get("max_examples"), revision=cfg.get("revision"))
     raise ValueError(f"unknown preference dataset source: {src}")

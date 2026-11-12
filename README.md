@@ -3,15 +3,20 @@
 A monorepo of five self-contained PyTorch projects that walk the full
 educational arc of building, training, fine-tuning, and serving GPT-class
 language models — from a ~10M-parameter character-level toy you can train on
-a laptop CPU, up to an architecture-only blueprint for a frontier-scale
-(500B+) training platform.
+a laptop CPU, up to executable reference components and an architecture
+blueprint for a frontier-scale (500B+) training platform.
 
 Each subproject is **independent**: its own README, its own dependencies,
 its own tests. Pick the one that matches the scale you care about.
 
-For a code- and test-backed review of the full monorepo, including the most
-important correctness risks and a prioritized consolidation plan, see the
-[**June 2026 repository architecture assessment**](./docs/repository-assessment-2026-06.md).
+For a code- and test-backed review of the pre-repair monorepo, verified correctness
+and reproducibility gaps, and project-specific SOTA roadmaps, see the
+[**November 2026 SOTA-readiness assessment**](./docs/repository-assessment-2026-11.md).
+The subsequent [**repair and enhancement pass**](./docs/2026-11-repair-pass.md)
+maps all ten findings to implemented fixes, CPU/GPU correctness evidence,
+supported configurations, and remaining external validation gates.
+The [June assessment](./docs/repository-assessment-2026-06.md) remains available
+as the earlier baseline.
 
 ## SOTA Watch — monthly LLM & AGI digest
 
@@ -19,13 +24,20 @@ important correctness risks and a prioritized consolidation plan, see the
 LLM/AGI models, papers, benchmarks, training, fine-tuning, and inference. A
 secondary harvest lens maps techniques onto all five projects, from minimal
 hardware to ideal-scale systems. Latest edition:
-[**2026-09 — draft, month to date through September 13**](./docs/2026-09-sota-llm-agi.md)
-— *capable agents, cheaper state, and evidence about control*. The refresh adds
-DeepSeek-V4.1-Flash's released weights and cache architecture, independent
-Artificial Analysis results, Astra's September 9 safety revision, updated pricing
-and service notices, and Anthropic's retrospective misuse disclosure. It preserves
-the first-week launches and five-project roadmap while separating external
-evidence from local implementation and benchmark claims. Prior editions:
+[**2026-11 — draft, month-to-date through November 11**](./docs/2026-11-sota-llm-agi.md)
+— *frontier access, heterogeneous RL, and verifiable scientific work*. It covers
+Claude Fable/Mythos 5.2, broader Gemini 4 Carbon access, Kimi K3.1 Pro weight
+artifacts, Inkling 2 Small's training account and pending weights, and restricted
+GPT-6 Cyber. Access, benchmark conditions, scientific verification, and total
+cost remain distinct. The accompanying [November harvest](./docs/2026-11-harvest.md)
+adds tested local accounting, verification, rollout workers, routing, and bounded
+CPU experiments across all five projects. Live Lean and pretrained-LLM
+specialization remain unverified; no frontier-model reproduction is claimed.
+Prior editions:
+[2026-10](./docs/2026-10-sota-llm-agi.md) (retrospective full month: cheaper
+specialists, open-weight agents, and world-model previews),
+[2026-09](./docs/2026-09-sota-llm-agi.md) (full month: longer-horizon agents,
+cheaper state, and harder integration contracts),
 [2026-08](./docs/2026-08-sota-llm-agi.md) (AI-generated mathematics and formal
 certificates), [2026-07](./docs/2026-07-sota-llm-agi.md) (persistent, auditable
 agents), [2026-06](./docs/2026-06-sota-llm-agi.md) (open-weight reasoning and
@@ -347,9 +359,9 @@ honesty: none produced a flashy "we beat it" headline — each surfaced the
 |---|---|---|---|
 | [`nanogpt-edu/`](./nanogpt-edu) | 10M–100M | A correct transformer + training loop in ~500 lines: RoPE, RMSNorm, SwiGLU, AMP, cosine LR. | 1 GPU or CPU |
 | [`midgpt/`](./midgpt) | 124M–1.5B | GPT-2 scale with the real production toolbox: `tiktoken` BPE, gradient checkpointing, gradient accumulation, DDP, resumable runs, HellaSwag eval. | 1–8 GPUs, single node |
-| [`distgpt/`](./distgpt) | 1B–70B | Real multi-node training: FSDP2 + Tensor Parallel + Pipeline Parallel on a 3D device mesh, sharded DCP checkpoints, loss-spike rewind, streaming dataloader. | Multi-node cluster |
-| [`coder-finetune/`](./coder-finetune) | 0.5B–7B | Post-training on a single consumer GPU: full FT, LoRA, and QLoRA via HuggingFace `transformers` + `peft` + `trl`, **plus GRPO/RLVR with verifiable unit-test rewards**. HumanEval+ in a Docker sandbox. | 1 consumer GPU (≥6 GB) |
-| [`frontier-platform/`](./frontier-platform) | 1B–500B+ | Architecture-only blueprint: data acquisition → filtering → dedup → tokenizer → pretrain → SFT → RLHF/DPO → eval → red-team → serving → observability. Interfaces + design docs; bodies are `NotImplementedError`. | Design doc; no GPUs required |
+| [`distgpt/`](./distgpt) | 1B–70B | Distributed-training laboratory: explicit supported topology recipes, complete-state DCP restart, held-out validation, and FSDP2/TP/PP experiments. Unsupported compositions fail explicitly; see the support matrix. | CPU parity tests through multi-node GPU recipes |
+| [`coder-finetune/`](./coder-finetune) | 0.5B–7B | Full FT, LoRA/QLoRA and preference/RL experiments via HF/TRL. Base HumanEval or local tasks use an explicit trusted local-container executor; this is not an EvalPlus result. | GPU training plus isolated evaluator workers |
+| [`frontier-platform/`](./frontier-platform) | 1B–500B+ | Executable CPU reference components and design interfaces for data → training → alignment → evaluation → serving, with explicit production replacement boundaries. | CPU references; separately provisioned backend/GPU validation |
 
 ## The complexity ladder
 
@@ -384,7 +396,7 @@ python -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```bash
 # GPT-2 scale on one node
 cd midgpt
-pip install -r requirements.txt
+pip install -c constraints-ci.txt -r requirements.txt
 python prepare.py --dataset wikitext103
 torchrun --standalone --nproc_per_node 8 train.py --config configs/gpt2_350m.yaml
 ```
@@ -392,16 +404,20 @@ torchrun --standalone --nproc_per_node 8 train.py --config configs/gpt2_350m.yam
 ```bash
 # Fine-tune a code model on a consumer GPU
 cd coder-finetune
-pip install -r requirements.txt
+pip install -c constraints-ci.txt -r requirements.txt
 python train.py --config configs/lora.yaml
-python eval/run_humaneval.py --model out/lora --n-samples 1
+# Evaluation requires an operator-reviewed LOCAL image and local task file.
+: "${PYTHON_IMAGE:?Set a trusted local immutable sha256 image ID}"
+: "${PROBLEMS_JSONL:?Set the path to a reviewed local Python task set}"
+python eval/run_humaneval.py --model out/lora/final --n-samples 1 \
+  --python-image "$PYTHON_IMAGE" --problems "$PROBLEMS_JSONL" --benchmark local-python
 ```
 
 ```bash
-# Multi-node FSDP2 + TP + PP
+# Distributed training: choose a validated recipe from the support matrix.
 cd distgpt
 pip install -e .
-# launch via Slurm or torchrun-elastic — see distgpt/scripts/
+# See distgpt/README.md before selecting FSDP/TP/PP combinations or launching jobs.
 ```
 
 ```bash
@@ -413,14 +429,21 @@ $EDITOR docs/00-overview.md
 
 ## Testing
 
-Every subproject ships `pytest` smoke tests:
+Every subproject ships independent `pytest` contract and integration tests.
+Use its `requirements-test.txt` and `constraints-ci.txt` for the pinned CPU
+profile; see [testing and reproducibility](./docs/testing-and-reproducibility.md)
+for installation, backend prerequisites, and the evidence CI records.
 
 ```bash
-cd <subproject> && pytest
+cd <subproject>
+CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  .venv/bin/python -m pytest -q -ra tests
 ```
 
-Tests run without installing the package — they use a `sys.path` shim so
-you can iterate without a reinstall.
+Source-tree tests support local iteration. CI additionally builds the installable
+projects and checks wheel imports outside the checkout, including stdlib-first
+imports for `frontier_platform`. Dependency installation failures are fatal;
+external GPU/container integrations remain explicit, separately reported gates.
 
 To run **everything** (pytest in each subproject + ruff at the root) in one
 shot:
@@ -461,12 +484,17 @@ LLM-playground/
 
 ## Status
 
-These are study projects. `nanogpt-edu`, `midgpt`, `distgpt`, and
-`coder-finetune` are runnable code. `frontier-platform` is a design doc with
-typed skeletons — every public function has a signature and a docstring,
-but most bodies raise `NotImplementedError`. Running a real frontier model
-takes thousands of GPUs and tens of millions of dollars; this repo is the
-map, not the territory.
+These are study and reference projects, not a production frontier-model service.
+`nanogpt-edu`, `midgpt`, `distgpt`, and `coder-finetune` contain runnable training
+and evaluation paths; their supported configurations and external prerequisites
+are documented per project. `frontier-platform` combines executable CPU reference
+components with intentionally unimplemented production interfaces. Its Python
+package is `frontier_platform`, distinct from the standard-library `platform`.
+
+A tested reference, a live backend integration, and a production deployment are
+different evidence levels. GPU/multi-node recipes, generated-code isolation,
+large-model quality, and simulator estimates need their own validation; passing
+the CPU suites does not certify them.
 
 ## License
 

@@ -1,5 +1,5 @@
 import pytest
-from platform.tokenizer.bytes import BytesTokenizer
+from frontier_platform.tokenizer.bytes import BytesTokenizer
 
 
 def test_bytes_tokenizer_roundtrip():
@@ -16,7 +16,7 @@ def test_bytes_tokenizer_specials_distinct():
 
 
 def test_bpe_train_either_works_or_says_so(tmp_path):
-    from platform.tokenizer import bpe
+    from frontier_platform.tokenizer import bpe
     corpus = tmp_path / "c.txt"
     corpus.write_text("the quick brown fox " * 200)
     try:

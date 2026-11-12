@@ -4,7 +4,7 @@ Covers:
 - back-compat (run_suite/run_all/SUITES return the same shape as before)
 - probe + suite registry
 - judges (regex / classifier / ensemble / callable)
-- report builder integrates with platform.safety.gates.preflight
+- report builder integrates with frontier_platform.safety.gates.preflight
 """
 from __future__ import annotations
 
@@ -12,9 +12,9 @@ import json
 
 import pytest
 
-from platform.safety.classifiers import OutputClassifier
-from platform.safety.gates import ModelCard, default_thresholds, preflight
-from platform.safety.redteam import (
+from frontier_platform.safety.classifiers import OutputClassifier
+from frontier_platform.safety.gates import ModelCard, default_thresholds, preflight
+from frontier_platform.safety.redteam import (
     SUITES,
     CallableJudge,
     ClassifierJudge,
@@ -31,7 +31,7 @@ from platform.safety.redteam import (
     run_suite,
     write_report,
 )
-from platform.safety.redteam.probes import CATEGORIES
+from frontier_platform.safety.redteam.probes import CATEGORIES
 
 
 # ----- back-compat ----------------------------------------------------------

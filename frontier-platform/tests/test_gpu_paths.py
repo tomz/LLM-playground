@@ -14,17 +14,17 @@ import math
 import pytest
 import torch
 
-from platform.alignment._common import clone_for_reference, compute_logps
-from platform.alignment.dpo import dpo_loss
-from platform.alignment.ppo import PPOConfig, ValueHead, ppo_step, rollout
-from platform.alignment.reward_model import RewardModel
-from platform.model.config import ModelConfig
-from platform.model.transformer import MoEFFN, Transformer
-from platform.serving.engine import Engine, EngineConfig, GenRequest
-from platform.tokenizer.bytes import BytesTokenizer
-from platform.training.checkpoint import CheckpointManager
-from platform.training.optim import OptimConfig, build_optimizer
-from platform.training.parallel import ParallelConfig, ParallelEngine
+from frontier_platform.alignment._common import clone_for_reference, compute_logps
+from frontier_platform.alignment.dpo import dpo_loss
+from frontier_platform.alignment.ppo import PPOConfig, ValueHead, ppo_step, rollout
+from frontier_platform.alignment.reward_model import RewardModel
+from frontier_platform.model.config import ModelConfig
+from frontier_platform.model.transformer import MoEFFN, Transformer
+from frontier_platform.serving.engine import Engine, EngineConfig, GenRequest
+from frontier_platform.tokenizer.bytes import BytesTokenizer
+from frontier_platform.training.checkpoint import CheckpointManager
+from frontier_platform.training.optim import OptimConfig, build_optimizer
+from frontier_platform.training.parallel import ParallelConfig, ParallelEngine
 
 
 def _tiny_cfg(vocab: int = 512) -> ModelConfig:

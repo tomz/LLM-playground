@@ -19,6 +19,81 @@ python train.py --config configs/tiny.py # ~10M params, ~5 min on 1 GPU, ~1h on 
 python sample.py --ckpt out/ckpt.pt --prompt "ROMEO:"
 ```
 
+## Oct/Nov harvest: isolated hybrid ablation
+
+`hybrid.py` adds an **opt-in educational analogue**, inspired by the short
+convolution / local attention / global attention mix discussed in the
+[October SOTA report](../docs/2026-10-sota-llm-agi.md). It is **not an LFM3
+reproduction**: no released weights, exact layer recipe, training data,
+specialist distillation, or hardware-specific kernels are reproduced.
+`model.py`, the default GPT configuration, and `research/harness.py` are unchanged.
+
+Run from this directory with the installed environment:
+
+```bash
+# CPU FP32 only, no downloads or APIs. Default: 4,096 tokens per arm per seed.
+CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  .venv/bin/python hybrid_ablation.py --out out/hybrid-ablation.json
+
+# Optional local text; split raw bytes 90/10 BEFORE sampling windows.
+.venv/bin/python hybrid_ablation.py --text data/input.txt \
+  --train-tokens 4096 --seeds 7 17 27 --out out/hybrid-text.json
+
+# All subproject tests, with GPU use disabled.
+CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  .venv/bin/python -m pytest -q tests
+```
+
+The baseline has three global-attention blocks; the hybrid replaces the first
+two mixers with a gated, left-padded depthwise convolution and causal local
+attention. Both reuse GPT's RMSNorm, SwiGLU, RoPE and tied embeddings. Width,
+depth, optimizer, learning rate, training examples/order, held-out examples,
+and per-arm token budget are identical. Common components initialize identically
+for a paired seed. Parameter counts, FLOPs and elapsed time are **not** matched.
+Budgets must be positive integers divisible by `batch_size * block_size`; the
+runner rejects invalid budgets instead of rounding or overshooting them.
+
+The default task consists of independently generated delayed-copy sequences,
+with separate training/held-out RNG streams. It tests the comparison plumbing,
+not natural-language quality. Optional local text uses a 256-entry byte
+vocabulary, with no window crossing the split. A contiguous split prevents
+boundary leakage but does not deduplicate repeated text. Evaluation uses the
+same fixed held-out examples for all seeds and arms, with no checkpoint selection.
+
+The JSON records all runs, configuration, source/data hashes, git state,
+Python/PyTorch/platform details, total parameters, exact training/eval tokens,
+held-out NLL and bits/token, training time, and warm forward latency samples
+(p50/p95/stdev). Latency is full-sequence forward at the recorded batch size,
+**not cached autoregressive decoding**. Seeds repeat model quality within this
+CPU environment; timing is noisy and cross-version bitwise equality is not promised.
+
+Memory fields count live parameter, gradient, optimizer-state and buffer/RoPE
+tensor payloads. They exclude activations, workspaces, data, Python objects and
+allocator overhead. CPU peak RSS and accelerator peak allocation are **null**
+(unmeasured / unused), not zero. Local attention uses a dense quadratic mask;
+this implementation does not demonstrate an efficient sliding-window kernel,
+KV-cache reduction, or lower peak memory.
+
+### Bounded CPU smoke evidence
+
+The checked-in [raw JSON](research/results/hybrid_cpu_smoke.json) records the
+command above with `--out research/results/hybrid_cpu_smoke.json`: one CPU
+thread, FP32, seeds 7/17/27, 4,096 training tokens and 512 held-out tokens per
+arm/seed, 20 timed forwards after three warmups. No hyperparameter search was
+performed. NLL is mean ± sample standard deviation over the three seeds;
+smaller is better.
+
+| Arm | Parameters | Held-out NLL | Accounted live tensor bytes |
+|---|---:|---:|---:|
+| Global GPT | 31,968 | 3.4378 ± 0.0101 | 512,628 |
+| Conv/local/global | 31,040 | 3.3689 ± 0.0151 | 497,776 |
+
+These six tiny runs establish runnable, token-matched behavior, not a general
+hybrid advantage. Real corpora, larger budgets, more seeds, controlled hardware
+measurements and efficient kernels remain external follow-up work. Domain and
+failed-branch accounting is documented in
+[research/README.md](research/README.md#full-attempt-provenance).
+
 ## Configs
 
 | Config        | Params | Layers | d_model | Train time (1× RTX 4090) |

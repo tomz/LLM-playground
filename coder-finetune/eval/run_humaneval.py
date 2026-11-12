@@ -1,472 +1,364 @@
-"""HumanEval pass@1 runner.
+"""Auditable base-HumanEval evaluation through an explicit local Docker backend.
 
-Loads the openai_humaneval dataset, generates one completion per problem,
-executes the generated code + reference test in a subprocess with a timeout
-and resource limits. Returns pass@1.
-
-IMPORTANT: this executes model-generated code locally. For untrusted models,
-run this inside a Docker container or gVisor sandbox. The default subprocess
-guard here is a safety floor, not a security boundary.
-
-What "safety floor" means concretely
-------------------------------------
-Each ``run_one`` spawns a child via multiprocessing and, on POSIX, applies
-``resource.setrlimit`` to bound:
-
-  * RLIMIT_AS    — virtual memory (default 1 GiB)
-  * RLIMIT_CPU   — CPU seconds       (default 2× wall-clock timeout)
-  * RLIMIT_FSIZE — file write size   (default 0 → can't write files)
-  * RLIMIT_NPROC — child processes   (opt-in via ``limits=``)
-  * RLIMIT_NOFILE — open fds          (default 64)
-
-stdout/stderr from the child are redirected to /dev/null so a chatty
-``print()`` in the generated code can't flood the trainer log. The default
-multiprocessing context is **``fork``** on POSIX (the historical behaviour
-— fast, ~10 ms startup); pass ``mp_mode='spawn'`` to ``run_one`` for a fresh
-interpreter that does not inherit the parent's heap, file descriptors, or
-imported modules. Recommended for *untrusted* models.
+This is NOT EvalPlus/HumanEval+. A subset is labeled as a subset. Every generated
+sample and every unknown infrastructure verdict is retained; unknowns suppress
+the headline score. No model output is ever executed on the host. The separately
+named eval.trusted_subprocess module exists only for reviewed legacy fixtures.
 """
 from __future__ import annotations
-import argparse, multiprocessing as mp, os, re, sys
+
+import argparse
+import hashlib
+import json
+import keyword
+import logging
+import math
 from pathlib import Path
+import re
+import sys
+import time
+from typing import Callable
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
+from cf_provenance import digest, environment_versions, file_sha256, require_revision, write_json
+from eval.python_jail import DockerPythonExecutor, PythonLimits, PythonResult
 
-# Default rlimit bag — POSIX only, no-op on Windows. Tunable per-call.
-# memory_bytes is None under ``fork`` because the child inherits the parent's
-# (possibly large) address space — setting RLIMIT_AS=1 GiB on a fork from a
-# pytest+HF process that's already at 5 GiB VSZ would SIGKILL the child
-# immediately, before exec() even starts. Spawn mode (a fresh interpreter)
-# gets a real ceiling — see ``_effective_limits``.
-DEFAULT_LIMITS = {
-    "memory_bytes": None,                      # set by mode (see _effective_limits)
-    "cpu_seconds": None,                       # filled in from timeout if None
-    "max_file_bytes": 0,                       # can't write to disk
-    "max_open_fds": 64,
-}
-# Memory ceiling when we know the child is a fresh interpreter (spawn).
-SPAWN_MEMORY_BYTES = 1 * 1024 * 1024 * 1024  # 1 GiB
+LOGGER = logging.getLogger(__name__)
+BASE_DATASET = "openai/openai_humaneval"
+BASE_IDS = frozenset(f"HumanEval/{index}" for index in range(164))
 
 
 def extract_code(text: str) -> str:
-    """Pull the first python code block from the model's output.
-
-    Three cases, in priority order:
-      1. A fenced ``` ```python ... ``` `` block → return the block contents.
-      2. No fence but the text starts at a ``def``/``async def``/``class``/
-         ``import`` line → return as-is (the model emitted pure code).
-      3. No fence, prose mixed in → return the longest contiguous *code-looking*
-         suffix starting from the first ``def``/``async def``/``class``/``import``
-         line. This stops the verifier from blowing up with ``SyntaxError`` on
-         outputs like ``Sure! Here you go:\\ndef f(): ...`` which previously
-         scored 0 (counted as wrong) instead of getting a fair eval.
-    """
-    m = re.search(r"```(?:python)?\n(.*?)```", text, re.DOTALL)
-    if m:
-        return m.group(1)
-    # No fence: try to recover the code body. Look for the first plausible
-    # Python statement at the start of a line.
-    code_start = re.search(r"^(?:async\s+def|def|class|import|from)\s",
-                           text, re.MULTILINE)
-    if code_start is None:
-        return text  # nothing code-like; let the verifier fail honestly
-    return text[code_start.start():]
-
-
-def _apply_rlimits(limits: dict) -> None:
-    """Apply POSIX resource limits in the child. Best-effort: a limit we can't
-    set (e.g. NPROC on a cgroup-restricted container) is skipped, not fatal —
-    the timeout + wall-clock kill remains a hard floor regardless."""
-    try:
-        import resource
-    except ImportError:
-        return  # Windows or otherwise unsupported
-
-    def _try(name, soft, hard=None):
-        if not hasattr(resource, name):
-            return
-        try:
-            resource.setrlimit(getattr(resource, name),
-                               (soft, hard if hard is not None else soft))
-        except (ValueError, OSError):
-            pass
-
-    if limits.get("memory_bytes"):
-        _try("RLIMIT_AS", int(limits["memory_bytes"]))
-    if limits.get("cpu_seconds"):
-        _try("RLIMIT_CPU", int(limits["cpu_seconds"]))
-    if limits.get("max_file_bytes") is not None:
-        _try("RLIMIT_FSIZE", int(limits["max_file_bytes"]))
-    if limits.get("max_open_fds"):
-        _try("RLIMIT_NOFILE", int(limits["max_open_fds"]))
-    if limits.get("max_processes"):
-        _try("RLIMIT_NPROC", int(limits["max_processes"]))
-
-
-def _exec_target(prog: str, q, limits: dict | None, silence: bool):
-    """Subprocess target: silence stdout/stderr, apply rlimits, exec(prog),
-    report pass/fail via Queue. Any SystemExit / KeyboardInterrupt / MemoryError
-    raised by rlimits firing is caught and reported as an error rather than
-    crashing the child silently.
-
-    Order matters: silencing happens *before* rlimits. If the parent forked
-    us with fd 1 pointing at a regular file (e.g. pytest's capfd capture file),
-    a subsequent ``print()`` from the model code would otherwise trip
-    RLIMIT_FSIZE=0 with EFBIG on what looks to the user like a successful
-    silencing. Redirecting fd 1/2 to /dev/null *first* makes the inherited
-    fd irrelevant.
-    """
-    if silence:
-        # Redirect *both* the fds and the Python-level sys.stdout/sys.stderr.
-        #   * fd 1/2 → /dev/null  — covers C extensions, subprocesses,
-        #     anything bypassing the Python streams.
-        #   * sys.stdout/stderr   — pytest's capfd replaces these with
-        #     capture-file-backed objects in the parent; under fork the
-        #     child inherits them and a plain print() bypasses fd 1
-        #     entirely, hitting the capture file (which is a regular file
-        #     subject to RLIMIT_FSIZE). Resetting both layers is the only
-        #     way to make this robust under any wrapping the parent did.
-        try:
-            devnull = os.open(os.devnull, os.O_WRONLY)
-            os.dup2(devnull, 1)
-            os.dup2(devnull, 2)
-            os.close(devnull)
-        except OSError:
-            pass
-        try:
-            # Rebind sys.stdout/sys.stderr to /dev/null at the Python level.
-            # Use 'w' so print() and other text-mode writers work.
-            null_fp = open(os.devnull, "w")
-            sys.stdout = null_fp
-            sys.stderr = null_fp
-        except OSError:
-            pass
-    if limits:
-        _apply_rlimits(limits)
-    try:
-        ns: dict = {}
-        exec(prog, ns)
-        q.put(("ok", None))
-    except BaseException as e:
-        # BaseException catches MemoryError, RecursionError, SystemExit from
-        # rlimit kills — all should be reported as failed, never propagate.
-        q.put(("err", f"{type(e).__name__}: {str(e)[:200]}"))
-
-
-def run_one(
-    program: str,
-    timeout: float = 5.0,
-    *,
-    limits: dict | None = None,
-    mp_mode: str | None = None,
-    silence_output: bool = True,
-) -> tuple[bool, str]:
-    """Execute ``program`` in a subprocess with rlimits + timeout.
-
-    ``mp_mode``: ``None`` (default — ``fork`` on POSIX for speed, ``spawn`` on
-    Windows) or ``'spawn'`` to force a fresh interpreter that doesn't inherit
-    the parent's heap / fds / imported modules. Spawn is ~100 ms slower per
-    call but is the right setting for *untrusted* models — and the rlimit
-    floor below applies in both modes.
-
-    ``limits``: override entries of ``DEFAULT_LIMITS``; pass ``{}`` to keep
-    defaults, ``None`` for defaults, ``False`` to disable rlimits entirely.
-    """
-    if mp_mode is None:
-        mp_mode = "fork" if sys.platform != "win32" else "spawn"
-    ctx = mp.get_context(mp_mode)
-
-    # Build the effective limits dict. cpu_seconds defaults to 2× wall-clock
-    # so a busy loop is killed by the wall-clock timeout (which is more
-    # accurate) but a CPU-pegging child can't outlive the parent's join() by
-    # much even if the parent itself crashes.
-    eff_limits: dict | None = None
-    if limits is not False:
-        eff_limits = dict(DEFAULT_LIMITS)
-        if eff_limits["cpu_seconds"] is None:
-            eff_limits["cpu_seconds"] = max(1, int(timeout * 2))
-        # Apply a memory ceiling only when we know it's safe — spawn-mode
-        # children start fresh and can be bounded; fork-mode children inherit
-        # the parent's address space (often gigabytes for a pytest+HF run)
-        # and would be SIGKILL'd before exec() if we tried to bound them.
-        if mp_mode == "spawn" and eff_limits.get("memory_bytes") is None:
-            eff_limits["memory_bytes"] = SPAWN_MEMORY_BYTES
-        if limits:
-            eff_limits.update(limits)
-
-    # Now that run_many is sequential (see its docstring for why), there is
-    # no thread contention on Queue()/Process()/start() — but we keep the
-    # creation+start grouped to mirror the historic behavior closely.
-    q = ctx.Queue()
-    p = ctx.Process(target=_exec_target,
-                    args=(program, q, eff_limits, silence_output))
-    p.start()
-    p.join(timeout)
-    if p.is_alive():
-        p.terminate(); p.join(1.0)
-        if p.is_alive():
-            p.kill()
-        return False, "timeout"
-    # Don't use q.empty() — it's documented as unreliable in multiprocessing
-    # and gave us flaky reward results under parallel run_many. Use a small
-    # blocking get() instead: the child has already exited (we passed join()),
-    # so any pending data is *already* in flight; a short timeout is enough.
-    import queue as _queue
-    try:
-        # 5-second drain timeout — generous to absorb scheduler jitter on
-        # CI / busy boxes. The child has already exited (we passed join()),
-        # so any pending data is *already* in flight in the queue's pipe;
-        # this only ever waits for the OS to deliver bytes.
-        status, msg = q.get(timeout=5.0)
-    except _queue.Empty:
-        # Common cause: rlimit kill (SIGKILL from RLIMIT_AS/CPU) before the
-        # child could put a result — surface a useful tag, not just "no-result".
-        if p.exitcode and p.exitcode < 0:
-            import signal
-            sig = -p.exitcode
-            name = signal.Signals(sig).name if 0 < sig < signal.NSIG else f"signal-{sig}"
-            return False, f"killed-{name}"
-        return False, "no-result"
-    return status == "ok", msg or ""
-
-
-def run_many(
-    programs: list[str],
-    timeout: float = 5.0,
-    *,
-    max_workers: int | None = None,
-    **run_one_kwargs,
-) -> list[tuple[bool, str]]:
-    """Run a batch of programs and return per-program (ok, msg) tuples.
-
-    Currently sequential — the natural threaded implementation hits Python's
-    fork-from-threads warning (deadlock-prone under 3.12+) and we measured a
-    real ~20% flake rate even with locking, because ``mp.Queue`` instances
-    created concurrently can deliver pickled results to the wrong consumer.
-    For untrusted models the right escape is a Docker pool, not in-process
-    threads; for trusted runs the sequential cost is ~50 ms × N, fine for
-    GRPO at consumer-GPU batch sizes.
-
-    The ``max_workers`` argument is accepted for forward compatibility
-    (callers in ``cf_rl.reward`` already pass it) but currently unused — a
-    future Tier could replace this with a ``ProcessPoolExecutor`` of
-    persistent workers each holding their own queue, which avoids the race.
-    """
-    del max_workers  # documented above
-    if not programs:
-        return []
-    return [run_one(p, timeout=timeout, **run_one_kwargs) for p in programs]
+    """Extract the first fenced Python block, or the first plausible code suffix."""
+    match = re.search(r"```(?:python)?\n(.*?)```", text, re.DOTALL)
+    if match:
+        return match.group(1)
+    start = re.search(r"^(?:async\s+def|def|class|import|from)\s", text, re.MULTILINE)
+    return text[start.start():] if start else text
 
 
 def build_program(prompt: str, completion: str, test: str, entry_point: str) -> str:
-    """Combine prompt + completion + test harness into one runnable program."""
+    """Assemble text only; both candidate and tests execute in the container."""
+    if not entry_point.isidentifier() or keyword.iskeyword(entry_point):
+        raise ValueError("entry_point must be a Python identifier")
     code = extract_code(completion)
-    # Prefer the model's full code if it redefined the function; else prepend prompt.
-    if f"def {entry_point}" not in code:
+    if re.search(rf"\bdef\s+{re.escape(entry_point)}\s*\(", code) is None:
         code = prompt + "\n" + code
     return code + "\n\n" + test + f"\n\ncheck({entry_point})\n"
 
 
+def run_one(program: str, timeout: float = 5.0, *, image: str | None = None,
+            executor: DockerPythonExecutor | None = None) -> PythonResult:
+    """Safe public execution API. Missing explicit image/backend is an error."""
+    if executor is None:
+        executor = DockerPythonExecutor(image, limits=PythonLimits(wall_seconds=timeout))
+    return executor.run(program)
+
+
+def run_many(programs: list[str], timeout: float = 5.0, *, image: str | None = None,
+             executor: DockerPythonExecutor | None = None) -> list[PythonResult]:
+    """Sequential, independently isolated candidate execution; no host fallback."""
+    if executor is None:
+        executor = DockerPythonExecutor(image, limits=PythonLimits(wall_seconds=timeout))
+    return executor.run_many(programs)
+
+
 def _eos_ids(tok) -> list[int]:
-    """Stop tokens that cover both the model's EOS and the chat-template's
-    turn-end (<|im_end|> for Qwen / ChatML). Without this, generation runs to
-    `max_new_tokens` after the answer ends — wasting wall-clock and polluting
-    completions with whatever the model rambles next. Mirrors `infer/generate.py`."""
-    ids: set[int] = set()
-    if tok.eos_token_id is not None:
-        ids.add(tok.eos_token_id)
+    """Collect explicit EOS/turn-end IDs without treating unknown tokens as EOS."""
+    ids = {tok.eos_token_id} if tok.eos_token_id is not None else set()
     for marker in ("<|im_end|>", "<|endoftext|>", "<|eot_id|>"):
-        try:
-            tid = tok.convert_tokens_to_ids(marker)
-            if isinstance(tid, int) and tid >= 0 and tid != tok.unk_token_id:
-                ids.add(tid)
-        except Exception:
-            pass
+        tid = tok.convert_tokens_to_ids(marker)
+        if isinstance(tid, int) and tid >= 0 and tid != tok.unk_token_id:
+            ids.add(tid)
     return sorted(ids)
 
 
-def quick_eval(model_path: str, n_problems: int = 20, n_samples: int = 1,
+def validate_problems(rows: list[dict]) -> list[dict]:
+    """Validate complete task identities before any expensive model loading."""
+    if not rows:
+        raise ValueError("evaluation requires at least one problem")
+    seen: set[str] = set()
+    for row in rows:
+        for field in ("task_id", "prompt", "test", "entry_point"):
+            if not isinstance(row.get(field), str) or not row[field]:
+                raise ValueError(f"each problem needs a nonempty string {field}")
+        if row["task_id"] in seen:
+            raise ValueError(f"duplicate task_id: {row['task_id']}")
+        seen.add(row["task_id"])
+        if not row["entry_point"].isidentifier() or keyword.iskeyword(row["entry_point"]):
+            raise ValueError("entry_point must be a Python identifier")
+    return rows
+
+
+def load_problem_set(*, problems_path: str | None = None, dataset_revision: str | None = None,
+                     benchmark: str = "humaneval-base") -> tuple[list[dict], dict]:
+    """Load a pinned base dataset or an operator-supplied local JSON/JSONL suite.
+
+    Local suites are content-hashed, not magically authenticated as canonical
+    HumanEval. EvalPlus has different tests/oracles and is explicitly rejected;
+    importing the package or renaming this dataset would not be an integration.
+    """
+    if benchmark not in {"humaneval-base", "local-python"}:
+        raise ValueError("this runner supports base HumanEval/local Python, not EvalPlus/HumanEval+")
+    if problems_path:
+        path = Path(problems_path)
+        if path.suffix == ".jsonl":
+            rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        else:
+            rows = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+            raise ValueError("local problems must be a list of task objects (or one per JSONL line)")
+        source = {"kind": "local-file", "sha256": file_sha256(path), "canonical_verified": False}
+    else:
+        if benchmark != "humaneval-base":
+            raise ValueError("local-python requires --problems")
+        revision = require_revision(dataset_revision, label="HumanEval dataset")
+        from datasets import load_dataset
+        rows = list(load_dataset(BASE_DATASET, split="test", revision=revision))
+        source = {"kind": "huggingface", "name": BASE_DATASET, "revision": revision,
+                  "split": "test", "canonical_verified": True}
+    rows = validate_problems(rows)
+    manifest = {"benchmark": benchmark, "source": source, "suite_sha256": digest(rows),
+                "available_task_ids": [row["task_id"] for row in rows],
+                "expected_base_task_ids": sorted(BASE_IDS) if benchmark == "humaneval-base" else None}
+    return rows, manifest
+
+
+def _generation_config(n_samples: int, max_new_tokens: int, temperature: float, top_p: float,
+                       seed: int | None, prompt_style: str) -> dict:
+    if type(n_samples) is not int or n_samples < 1:
+        raise ValueError("n_samples must be a positive integer")
+    if type(max_new_tokens) is not int or max_new_tokens < 1:
+        raise ValueError("max_new_tokens must be a positive integer")
+    if not math.isfinite(temperature) or temperature < 0 or not math.isfinite(top_p) or not 0 < top_p <= 1:
+        raise ValueError("temperature must be finite/nonnegative and top_p in (0, 1]")
+    if n_samples > 1 and temperature == 0:
+        raise ValueError("multiple samples require temperature > 0; never silently change sampling")
+    if prompt_style not in {"chat", "raw"}:
+        raise ValueError("prompt_style must be chat or raw")
+    return {"n_samples": n_samples, "max_new_tokens": max_new_tokens, "temperature": temperature,
+            "top_p": top_p, "seed": seed, "prompt_style": prompt_style,
+            "do_sample": temperature > 0, "num_return_sequences": n_samples}
+
+
+def summarize_records(records: list[dict], *, suite: dict, model: dict, generation: dict,
+                      evaluator: dict, selected_ids: list[str]) -> dict:
+    """No headline score for missing/unassessed samples; retain transparent bounds."""
+    n_samples = generation["n_samples"]
+    completed_ids = {row["task_id"] for row in records}
+    samples = [sample for row in records for sample in row["samples"]]
+    unknown = sum(sample["verdict"]["passed"] is None for sample in samples)
+    missing = (len(selected_ids) - len(completed_ids)) * n_samples
+    solved = sum(any(sample["verdict"]["passed"] is True for sample in row["samples"]) for row in records)
+    uncertain_tasks = sum(not any(s["verdict"]["passed"] is True for s in row["samples"])
+                          and any(s["verdict"]["passed"] is None for s in row["samples"]) for row in records)
+    uncertain_tasks += len(selected_ids) - len(completed_ids)
+    complete = not unknown and not missing and len(samples) == len(selected_ids) * n_samples
+    n = len(selected_ids)
+    metric = f"pass@{n_samples}"
+    all_supplied = set(selected_ids) == set(suite["available_task_ids"])
+    canonical_full = (suite["benchmark"] == "humaneval-base" and set(selected_ids) == BASE_IDS
+                      and suite["source"].get("canonical_verified", False))
+    scope = "full-base-suite" if canonical_full else ("all-supplied-tasks" if all_supplied else "subset")
+    return {"schema": "coder-finetune.code-eval/v1", "benchmark": suite["benchmark"], "scope": scope,
+            "is_evalplus": False, "suite": suite, "task_ids": selected_ids,
+            "model": model, "generation": generation, "evaluator": evaluator,
+            "versions": environment_versions(), "n": n, "passes": solved, "n_samples": n_samples,
+            "metric": metric, metric: solved / n if n and complete else None, "complete": complete,
+            "unknown_samples": unknown + missing,
+            "score_bounds": {"lower": solved / n if n else None,
+                             "upper": (solved + uncertain_tasks) / n if n else None},
+            "estimator": "fraction of tasks with >=1 passing sample; k equals the number generated",
+            "records": records}
+
+
+def evaluate_problems(problems: list[dict], generate: Callable, executor: DockerPythonExecutor, *,
+                      suite: dict, model: dict, generation: dict, on_record: Callable | None = None) -> dict:
+    """Test every sample, preserving generation errors and executor unknowns."""
+    validate_problems(problems)
+    records: list[dict] = []
+    n_samples = generation["n_samples"]
+    if type(n_samples) is not int or n_samples < 1:
+        raise ValueError("n_samples must be positive")
+    selected_ids = [problem["task_id"] for problem in problems]
+    for problem in problems:
+        started = time.monotonic()
+        generation_error = None
+        try:
+            generated = generate(problem)
+            if not isinstance(generated, list) or len(generated) != n_samples:
+                raise ValueError("generator returned the wrong sample count")
+        except Exception as exc:
+            generation_error = type(exc).__name__
+            generated = [None] * n_samples
+        generation_seconds = time.monotonic() - started
+        samples = []
+        for index, value in enumerate(generated):
+            if isinstance(value, str):
+                value = {"completion": value, "token_ids": None, "stop_reason": "unknown"}
+            if value is None or not isinstance(value, dict) or not isinstance(value.get("completion"), str):
+                samples.append({"sample_id": index, "completion": None, "token_ids": None,
+                                "stop_reason": "generation_error", "error_type": generation_error or "InvalidSample",
+                                "verdict": {"passed": None, "outcome": "generation_error"}})
+                continue
+            completion = value["completion"]
+            program = build_program(problem["prompt"], completion, problem["test"], problem["entry_point"])
+            try:
+                verdict = executor.run(program).to_dict()
+            except Exception as exc:
+                verdict = {"passed": None, "outcome": "runner_error", "error_type": type(exc).__name__}
+            samples.append({"sample_id": index, "completion": completion,
+                            "token_ids": value.get("token_ids"), "stop_reason": value.get("stop_reason", "unknown"),
+                            "extracted_code": extract_code(completion),
+                            "program_sha256": hashlib.sha256(program.encode()).hexdigest(), "verdict": verdict})
+        record = {"task_id": problem["task_id"], "prompt": problem["prompt"],
+                  "entry_point": problem["entry_point"], "test_sha256": digest(problem["test"]),
+                  "problem_sha256": digest(problem), "generation_seconds": generation_seconds, "samples": samples}
+        records.append(record)
+        if on_record:
+            on_record(record)
+    return summarize_records(records, suite=suite, model=model, generation=generation,
+                             evaluator=executor.identity(), selected_ids=selected_ids)
+
+
+def quick_eval(model_path: str, n_problems: int | None = None, n_samples: int = 1,
                max_new_tokens: int = 384, temperature: float = 0.2,
                seed: int | None = None, save_completions: str | None = None,
-               json_out: str | None = None) -> float:
-    """Returns pass@k on the first `n_problems` of HumanEval.
+               json_out: str | None = None, *, python_image: str | None = None,
+               executor: DockerPythonExecutor | None = None, problems_path: str | None = None,
+               dataset_revision: str | None = None, model_revision: str | None = None,
+               tokenizer_revision: str | None = None, benchmark: str = "humaneval-base",
+               prompt_style: str = "chat", top_p: float = 0.95,
+               local_files_only: bool = True) -> float | None:
+    """Run all supplied tasks by default; report a score only if fully assessed.
 
-    With ``n_samples=1`` (the default) this is pass@1. With ``n_samples>1`` the
-    model is sampled ``k`` times per problem and the problem counts as solved
-    if *any* sample passes (unbiased pass@k via the Chen-et-al. estimator
-    collapses to ``c >= 1`` for k=n_samples). Forces ``temperature>0`` when
-    ``n_samples>1`` so the samples aren't identical.
-
-    ``seed`` makes the run reproducible (was implicitly nondeterministic).
-
-    ``save_completions``: path to a JSONL file; one record per problem with the
-    prompt, every sampled completion, the extracted code, and pass/fail — so
-    you can actually *see* what the model wrote instead of just a score.
-    ``json_out``: path to a machine-readable summary (``{"pass@k": ..., "n":
-    ..., "passes": ...}``) so results are comparable across runs / commits.
+    A 20-task quick run remains available through n_problems=20, explicitly
+    labeled subset. Output artifacts are always written, not conditional on
+    whether a sample passes. This API never substitutes a host executor.
     """
-    from datasets import load_dataset
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    generation = _generation_config(n_samples, max_new_tokens, temperature, top_p, seed, prompt_style)
+    if n_problems is not None and (type(n_problems) is not int or n_problems < 1):
+        raise ValueError("n_problems must be positive or omitted for the full supplied suite")
+    if executor is None:
+        executor = DockerPythonExecutor(python_image)
+    executor.require_available()
+    problems, suite = load_problem_set(problems_path=problems_path, dataset_revision=dataset_revision, benchmark=benchmark)
+    if n_problems is not None:
+        if n_problems > len(problems):
+            raise ValueError("n_problems exceeds the supplied suite; do not silently clamp the request")
+        problems = problems[:n_problems]
+
     import torch
-
-    if n_samples > 1 and temperature <= 0:
-        # Otherwise every sample is identical greedy decode — pass@k == pass@1
-        # at higher wall-clock for no gain. Warn loudly rather than silently
-        # mis-report.
-        print(f"[eval] WARNING: n_samples={n_samples} with temperature=0 is "
-              "pointless (all samples identical). Bumping temperature to 0.2.")
-        temperature = 0.2
-
+    from infer.generate import _load
     if seed is not None:
         torch.manual_seed(seed)
-
-    print(f"[eval] loading model: {model_path}")
-    tok = AutoTokenizer.from_pretrained(model_path)
-    if tok.pad_token is None:
-        tok.pad_token = tok.eos_token
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dtype = torch.bfloat16 if device == "cuda" else torch.float32
-    model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=dtype).to(device).eval()
+    tok, model = _load(model_path, device, dtype, revision=model_revision,
+                       tokenizer_revision=tokenizer_revision, local_files_only=local_files_only)
+    eos_ids = _eos_ids(tok)
+    generation.update({"eos_token_ids": eos_ids, "pad_token_id": tok.pad_token_id,
+                       "model_generation_config": model.generation_config.to_dict()})
 
-    print("[eval] loading openai_humaneval")
-    ds = load_dataset("openai_humaneval", split="test")
-    n = min(n_problems, len(ds))
-    eos_ids = _eos_ids(tok) or tok.eos_token_id
-    passes = 0
-    records: list[dict] = []
-    for i in range(n):
-        ex = ds[i]
-        prompt = ex["prompt"]
-        msgs = [
-            {"role": "system", "content": "You are a Python coding assistant. Complete the function. Return only Python code."},
-            {"role": "user", "content": prompt},
-        ]
-        try:
-            text = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
-        except Exception:
-            text = prompt
-        ids = tok(text, return_tensors="pt").to(device)
-        # k samples per problem; problem counts as solved if any pass.
-        # num_return_sequences in one .generate() call is more efficient than
-        # a Python loop, and the KV cache is shared across the k beams.
+    def generate(problem: dict) -> list[dict]:
+        text = problem["prompt"]
+        if prompt_style == "chat":
+            messages = [{"role": "system", "content": "You are a Python coding assistant. Complete the function. Return only Python code."},
+                        {"role": "user", "content": text}]
+            # Missing/unsupported templates are errors, never a hidden raw fallback.
+            text = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        ids = tok(text, return_tensors="pt", add_special_tokens=(prompt_style == "raw")).to(device)
+        kwargs = {"max_new_tokens": max_new_tokens, "do_sample": temperature > 0,
+                  "pad_token_id": tok.pad_token_id, "eos_token_id": eos_ids or tok.eos_token_id,
+                  "num_return_sequences": n_samples}
+        if temperature > 0:
+            kwargs.update(temperature=temperature, top_p=top_p)
         with torch.no_grad():
-            out = model.generate(
-                **ids,
-                max_new_tokens=max_new_tokens,
-                do_sample=(temperature > 0),
-                temperature=max(temperature, 1e-5),
-                top_p=0.95,
-                pad_token_id=tok.pad_token_id,
-                eos_token_id=eos_ids,
-                num_return_sequences=n_samples,
-            )
-        any_pass = False
-        last_msg = ""
-        prompt_len = ids["input_ids"].shape[1]
-        samples: list[dict] = []
-        for s in range(n_samples):
-            completion = tok.decode(out[s, prompt_len:], skip_special_tokens=True)
-            program = build_program(prompt, completion, ex["test"], ex["entry_point"])
-            ok, msg = run_one(program)
-            last_msg = msg
-            # Record every sample when dumping completions (so a failing-then-
-            # passing pass@k run is fully visible), else just enough to score.
-            if save_completions:
-                samples.append({
-                    "completion": completion,
-                    "extracted_code": extract_code(completion),
-                    "passed": bool(ok),
-                    "msg": msg,
-                })
-            if ok:
-                any_pass = True
-                if not save_completions:
-                    break  # short-circuit: one pass is enough for pass@k
-        passes += int(any_pass)
-        if save_completions:
-            records.append({
-                "task_id": ex["task_id"],
-                "prompt": prompt,
-                "entry_point": ex["entry_point"],
-                "passed": bool(any_pass),
-                "samples": samples,
-            })
-        marker = "✓" if any_pass else "✗"
-        print(f"  [{i+1:3d}/{n}] {marker}  task={ex['task_id']}  {last_msg[:60]}")
-    score = passes / n
-    label = f"pass@{n_samples}" if n_samples > 1 else "pass@1"
-    print(f"[eval] {label} = {passes}/{n} = {score*100:.1f}%")
+            output = model.generate(**ids, **kwargs)
+        length = ids["input_ids"].shape[1]
+        samples = []
+        for row in output:
+            tokens = row[length:].tolist()
+            first_eos = next((i for i, token in enumerate(tokens) if token in eos_ids), None)
+            if first_eos is not None:
+                tokens = tokens[:first_eos + 1]
+            samples.append({"completion": tok.decode(tokens, skip_special_tokens=True), "token_ids": tokens,
+                            "stop_reason": "eos" if first_eos is not None else "length"})
+        return samples
 
-    if save_completions:
-        write_completions_jsonl(records, save_completions)
-        print(f"[eval] wrote {len(records)} completion records -> {save_completions}")
-    if json_out:
-        summary = build_eval_summary(model_path, n, passes, n_samples,
-                                     temperature, seed)
-        write_json_summary(summary, json_out)
-        print(f"[eval] wrote summary -> {json_out}")
-    return score
+    completions_path = Path(save_completions or "out/eval/samples.jsonl")
+    summary_path = json_out or "out/eval/summary.json"
+    completions_path.parent.mkdir(parents=True, exist_ok=True)
+    with completions_path.open("w", encoding="utf-8") as stream:
+        def save_record(record: dict) -> None:
+            stream.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
+            stream.flush()
+        summary = evaluate_problems(problems, generate, executor, suite=suite,
+                                    model=model._cf_provenance, generation=generation, on_record=save_record)
+    write_json_summary(summary, summary_path)
+    LOGGER.info("%s %s: %s=%s; unknown samples=%s; report=%s", benchmark, summary["scope"],
+                summary["metric"], summary[summary["metric"]], summary["unknown_samples"], summary_path)
+    return summary[summary["metric"]]
 
 
 def build_eval_summary(model_path: str, n: int, passes: int, n_samples: int,
                        temperature: float, seed: int | None) -> dict:
-    """Machine-readable eval summary. Pure function (no I/O) so it's unit-
-    testable; the ``pass@k`` key is named by ``n_samples`` so a downstream
-    diff tool can tell pass@1 from pass@5 runs apart."""
-    label = f"pass@{n_samples}" if n_samples > 1 else "pass@1"
-    return {
-        "model": model_path,
-        "n": n,
-        "passes": passes,
-        label: passes / n if n else 0.0,
-        "metric": label,
-        "n_samples": n_samples,
-        "temperature": temperature,
-        "seed": seed,
-    }
+    """Legacy aggregate helper; explicitly NOT a complete benchmark artifact."""
+    if n < 0 or not 0 <= passes <= n or n_samples < 1:
+        raise ValueError("invalid aggregate counts")
+    label = f"pass@{n_samples}"
+    return {"model": model_path, "benchmark": "humaneval-base", "scope": "unverified-aggregate",
+            "n": n, "passes": passes, label: passes / n if n else None, "metric": label,
+            "n_samples": n_samples, "temperature": temperature, "seed": seed,
+            "complete_benchmark_artifact": False}
 
 
 def write_json_summary(summary: dict, path: str) -> None:
-    """Write the eval summary as a single JSON object."""
-    import json
-
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    Path(path).write_text(json.dumps(summary, indent=2))
+    """Publish the complete machine-readable report atomically."""
+    write_json(path, summary)
 
 
 def write_completions_jsonl(records: list[dict], path: str) -> None:
-    """Write one JSON object per line (JSONL) — one record per problem, each
-    carrying its sampled completions + extracted code + pass/fail. JSONL (not a
-    single array) so a long run streams and is greppable line-by-line."""
-    import json
-
+    """Persist every task/sample/verdict, not only passing or executed samples."""
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        for rec in records:
-            f.write(json.dumps(rec) + "\n")
+    with Path(path).open("w", encoding="utf-8") as stream:
+        for record in records:
+            stream.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--model", required=True, help="path to model dir (HF format)")
-    ap.add_argument("--n-problems", type=int, default=20)
-    ap.add_argument("--n-samples", type=int, default=1,
-                    help="samples per problem; >1 enables pass@k (any-pass wins)")
-    ap.add_argument("--temperature", type=float, default=0.2)
-    ap.add_argument("--max-new-tokens", type=int, default=384)
-    ap.add_argument("--seed", type=int, default=None,
-                    help="seed for reproducible sampling (default: None = nondet)")
-    ap.add_argument("--save-completions", default=None,
-                    help="path to dump per-problem completions as JSONL "
-                         "(prompt + samples + extracted code + pass/fail)")
-    ap.add_argument("--json-out", default=None,
-                    help="path to write a machine-readable {pass@k, n, ...} summary")
-    args = ap.parse_args()
-    quick_eval(args.model, args.n_problems, args.n_samples,
-               args.max_new_tokens, args.temperature, seed=args.seed,
-               save_completions=args.save_completions, json_out=args.json_out)
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--model-revision")
+    parser.add_argument("--tokenizer-revision")
+    parser.add_argument("--python-image", required=True, help="explicitly trusted local sha256 image ID; never pulled")
+    parser.add_argument("--python-path", default="/usr/local/bin/python3")
+    parser.add_argument("--docker-socket", default="/var/run/docker.sock")
+    parser.add_argument("--problems", help="local JSON/JSONL problem set, content-hashed in the report")
+    parser.add_argument("--dataset-revision", help="immutable HF commit SHA when loading canonical base HumanEval")
+    parser.add_argument("--benchmark", choices=["humaneval-base", "local-python"], default="humaneval-base")
+    parser.add_argument("--n-problems", type=int, default=None, help="omit for all supplied tasks; a subset is never labeled full")
+    parser.add_argument("--n-samples", type=int, default=1)
+    parser.add_argument("--temperature", type=float, default=0.2)
+    parser.add_argument("--top-p", type=float, default=0.95)
+    parser.add_argument("--max-new-tokens", type=int, default=384)
+    parser.add_argument("--seed", type=int)
+    parser.add_argument("--prompt-style", choices=["chat", "raw"], default="chat")
+    parser.add_argument("--allow-model-download", action="store_true", help="opt in to loading pinned model/tokenizer from HF")
+    parser.add_argument("--save-completions", default="out/eval/samples.jsonl")
+    parser.add_argument("--json-out", default="out/eval/summary.json")
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    executor = DockerPythonExecutor(args.python_image, python_path=args.python_path, docker_socket=args.docker_socket)
+    quick_eval(args.model, args.n_problems, args.n_samples, args.max_new_tokens, args.temperature,
+               seed=args.seed, save_completions=args.save_completions, json_out=args.json_out,
+               executor=executor, problems_path=args.problems, dataset_revision=args.dataset_revision,
+               model_revision=args.model_revision, tokenizer_revision=args.tokenizer_revision,
+               benchmark=args.benchmark, prompt_style=args.prompt_style, top_p=args.top_p,
+               local_files_only=not args.allow_model_download)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 """CPU contract tests for the July–August 2026 frontier harvest."""
 from __future__ import annotations
 
-from platform.infra.research_artifacts import (
+from frontier_platform.infra.research_artifacts import (
     ResearchArtifact,
     ResearchCost,
     read_artifacts,
@@ -9,13 +9,13 @@ from platform.infra.research_artifacts import (
     total_research_cost,
     write_artifacts,
 )
-from platform.safety.selfplay_redteam import (
+from frontier_platform.safety.selfplay_redteam import (
     build_cases,
     evaluate_defense,
     selfplay_curriculum,
 )
-from platform.serving.multi_agent import run_parallel
-from platform.serving.programmatic_tools import ToolCall, ToolPlan, execute_plan
+from frontier_platform.serving.multi_agent import run_parallel
+from frontier_platform.serving.programmatic_tools import ToolCall, ToolPlan, execute_plan
 
 
 def _artifact(**overrides):

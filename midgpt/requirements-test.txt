@@ -1,0 +1,11 @@
+# Includes real HF export dependencies, not only mocked integrations.
+-c constraints-ci.txt
+-r requirements.txt
+transformers
+safetensors
+tokenizers
+pytest
+pytest-timeout
+packaging
+setuptools
+wheel

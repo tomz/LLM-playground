@@ -69,3 +69,31 @@ def evaluate_submission(
                                "certificate targets a different theorem")
     valid, message = checker(submission.theorem, submission.certificate)
     return ProofEvaluation(True, bool(valid), True, novelty_reviewed, message)
+
+
+def main() -> None:
+    """Check a submission against a separate trusted host contract, offline."""
+    import argparse
+    from dataclasses import asdict
+    from pathlib import Path
+
+    from .lean_jail import DockerLeanChecker, LeanContract
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--contract", type=Path, required=True)
+    parser.add_argument("--submission", type=Path, required=True)
+    parser.add_argument("--image", required=True, help="locally installed sha256 image ID")
+    parser.add_argument("--lean-path", default="/opt/lean/bin/lean")
+    parser.add_argument("--timeout", type=float, default=10)
+    args = parser.parse_args()
+    data = json.loads(args.contract.read_text())
+    contract = LeanContract(data["theorem"], tuple(data.get("premises", [])))
+    checker = DockerLeanChecker(contract, args.image, timeout=args.timeout, lean_path=args.lean_path)
+    result = evaluate_submission(args.submission.read_text(), contract.theorem, checker)
+    # CLI never grants novelty review. Persist stdout for an audit artifact.
+    print(json.dumps(asdict(result), indent=2))
+    raise SystemExit(0 if result.certificate_valid else 1)
+
+
+if __name__ == "__main__":
+    main()

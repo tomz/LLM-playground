@@ -1,4 +1,4 @@
-"""Async actor-learner rollout tests (platform/rl/async_rollout.py)."""
+"""Async actor-learner rollout tests (frontier_platform/rl/async_rollout.py)."""
 from __future__ import annotations
 
 import asyncio
@@ -7,12 +7,12 @@ from pathlib import Path
 
 import torch
 
-from platform.model.config import ModelConfig
-from platform.model.transformer import Transformer
-from platform.rl.async_rollout import AsyncRolloutConfig, AsyncRolloutEngine, RolloutBuffer
-from platform.rl.grpo import GRPOConfig, run_grpo_async
-from platform.rl.verifiers import reward_contains
-from platform.tokenizer.bytes import BytesTokenizer
+from frontier_platform.model.config import ModelConfig
+from frontier_platform.model.transformer import Transformer
+from frontier_platform.rl.async_rollout import AsyncRolloutConfig, AsyncRolloutEngine, RolloutBuffer
+from frontier_platform.rl.grpo import GRPOConfig, run_grpo_async
+from frontier_platform.rl.verifiers import reward_contains
+from frontier_platform.tokenizer.bytes import BytesTokenizer
 
 
 def _tiny_cfg() -> ModelConfig:

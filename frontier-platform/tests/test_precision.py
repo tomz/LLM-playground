@@ -1,11 +1,11 @@
-"""Precision policy tests (platform/training/precision.py)."""
+"""Precision policy tests (frontier_platform/training/precision.py)."""
 from __future__ import annotations
 
 import torch
 
-from platform.model.config import ModelConfig
-from platform.model.transformer import Transformer
-from platform.training.precision import (
+from frontier_platform.model.config import ModelConfig
+from frontier_platform.model.transformer import Transformer
+from frontier_platform.training.precision import (
     PrecisionPolicy,
     resolve_precision,
     cuda_supports_bf16,
@@ -55,7 +55,7 @@ def test_fp8_requested_runs_through_fallback_forward():
 
 
 def test_parallel_engine_uses_precision_policy():
-    from platform.training.parallel import ParallelConfig, ParallelEngine
+    from frontier_platform.training.parallel import ParallelConfig, ParallelEngine
     m = Transformer(ModelConfig(vocab_size=128, n_layer=2, n_head=2, n_kv_head=1,
                                 d_model=32, d_ffn=64, max_seq_len=32))
     opt = torch.optim.AdamW(m.parameters(), lr=1e-3)

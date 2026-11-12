@@ -1,11 +1,23 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "distgpt"
 version = "0.0.1"
+description = "Distributed GPT training reference with explicit topology and restart contracts"
+readme = "README.md"
 requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.12,<2.13",
+    "numpy>=1.26,<3",
+    "PyYAML>=6,<7",
+    "tqdm>=4.66,<5",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=9,<10", "pytest-timeout>=2.4,<3"]
+hf = ["transformers>=5.8,<5.9", "safetensors>=0.8,<0.9"]
 
 [tool.setuptools.packages.find]
 include = ["distgpt*"]

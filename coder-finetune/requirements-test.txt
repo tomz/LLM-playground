@@ -1,0 +1,8 @@
+# Real Transformers/TRL integration is required, not an optional silent skip.
+-c constraints-ci.txt
+-r requirements.txt
+pytest
+pytest-timeout
+packaging
+setuptools
+wheel

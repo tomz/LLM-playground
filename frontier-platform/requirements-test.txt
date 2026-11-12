@@ -1,0 +1,11 @@
+# Project-local package with CPU integration dependencies.
+-c constraints-ci.txt
+-e .[test]
+tokenizers
+safetensors
+requests
+pytest
+pytest-timeout
+packaging
+setuptools
+wheel
